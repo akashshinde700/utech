@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+  <style>
+    @page { size: 794px 1123px; margin: 0; }
+    :root {
+      /* Violet cascade palette (hue ~262, tier-disciplined to match body PDF) */
+      --c-bg: #ffffff;
+      --c-accent: #7c3aed;      /* XS tier accent - brand violet */
+      --c-mid: #4e4170;         /* M tier structural fill */
+      --c-text: #2b2a33;        /* slate-dark title text */
+      --c-muted: #64748b;       /* slate muted */
+      --c-tint: #f5f3fa;        /* XL/L tier tint */
+    }
+    html, body {
+      margin: 0; padding: 0;
+      width: 794px; height: 1123px;
+      background: var(--c-bg);
+      color: var(--c-text);
+      font-family: 'Inter', 'Liberation Sans', Arial, sans-serif;
+    }
+    @media screen {
+      html { height: auto; display: flex; justify-content: center; min-height: 100vh; background: #eceaf2; }
+      body { transform-origin: top center; scale: min(1, calc(100vw / 794), calc(100vh / 1123)); margin: 0 auto; box-shadow: 0 0 60px rgba(43,42,51,0.18); }
+    }
+    .cover { width: 794px; height: 1123px; position: relative; border: none; outline: none; box-shadow: none; }
+
+    /* Layer 1 - background (clipped) : faint 50px grid, violet at 2% */
+    .layer-1 { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
+    .grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(to right, rgba(124, 58, 237, 0.05) 0.5px, transparent 0.5px),
+        linear-gradient(to bottom, rgba(124, 58, 237, 0.05) 0.5px, transparent 0.5px);
+      background-size: 50px 50px;
+    }
+
+    /* Layer 2 - structure : ultra-thick left anchor line (6pt, accent) */
+    .layer-2 { position: absolute; inset: 0; z-index: 2; }
+    .anchor-line {
+      position: absolute;
+      left: 95px;                 /* 0.12 * W */
+      top: 112px;                 /* 0.10 * H */
+      bottom: 112px;              /* to 0.90 * H */
+      width: 8px;                 /* 6pt */
+      background: var(--c-accent);
+    }
+
+    /* Layer 3 - content : left edge 183px (anchor line + 2U clearance) */
+    .layer-3 { position: absolute; inset: 0; z-index: 3; }
+    .kicker {
+      position: absolute; left: 183px; top: 168px;    /* 0.15 * H */
+      font-size: 15pt; font-weight: 500;
+      letter-spacing: 4px; text-transform: uppercase;
+      color: var(--c-accent); opacity: 0.9;
+      max-width: 540px;
+    }
+    .hero {
+      position: absolute; left: 183px; top: 337px;    /* 0.30 * H */
+      font-size: 45pt; font-weight: 900; line-height: 1.15;
+      color: var(--c-text); max-width: 555px;
+      letter-spacing: -0.5px;
+    }
+    .summary {
+      position: absolute; left: 183px; top: 562px;    /* 0.50 * H */
+      font-size: 13.5pt; font-weight: 400; line-height: 1.65;
+      color: var(--c-muted); max-width: 476px;        /* 0.60 * W */
+      opacity: 0.95;
+    }
+    .meta {
+      position: absolute; left: 183px; top: 842px;    /* 0.75 * H */
+      max-width: 520px;
+    }
+    .meta .org {
+      font-size: 15pt; font-weight: 600; color: var(--c-mid);
+      margin-bottom: 10px;
+    }
+    .meta .ver {
+      font-size: 11.5pt; font-weight: 400; color: var(--c-muted);
+      letter-spacing: 1px;
+    }
+    .meta .tagline {
+      margin-top: 26px;
+      font-size: 9.5pt; font-weight: 400; letter-spacing: 3px;
+      text-transform: uppercase; color: var(--c-muted); opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <div class="cover">
+    <div class="layer-1"><div class="grid"></div></div>
+    <div class="layer-2"><div class="anchor-line"></div></div>
+    <div class="layer-3">
+      <div class="kicker">Simple Flow Guide &mdash; How Everything Works</div>
+      <div class="hero">UTech<br>Automation ERP</div>
+      <div class="summary">
+        A plain-language handbook for factory staff, supervisors and managers.
+        In short sentences and everyday words, it shows how an enquiry becomes a
+        quotation, how work is planned and checked, and how goods leave the gate
+        with a correct invoice &mdash; while stock stays right at every step.
+      </div>
+      <div class="meta">
+        <div class="org">U-Tech Automation Industries</div>
+        <div class="ver">Version 1.0 &nbsp;&middot;&nbsp; September 2026</div>
+        <div class="tagline">For everyday users &mdash; no technical words needed</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
