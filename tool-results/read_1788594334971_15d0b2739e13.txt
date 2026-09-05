@@ -1,0 +1,587 @@
+     1→import { useEffect, useState } from 'react';
+     2→import { Link, useParams } from 'react-router-dom';
+     3→import {
+     4→  Pencil, RotateCcw, Package, ClipboardList, AlertTriangle, User, FileText,
+     5→  Eye, Download, Upload, Image as ImageIcon, CheckCircle2, ListChecks,
+     6→  MessageSquare, Activity as ActivityIcon, Flag, Trash2,
+     7→} from 'lucide-react';
+     8→import api from '../../lib/api';
+     9→import PageHeader from '../../components/ui/PageHeader';
+    10→import Badge from '../../components/ui/Badge';
+    11→import PdfThumbnail from '../../components/pdf/PdfThumbnail';
+    12→import PdfViewerModal from '../../components/pdf/PdfViewerModal';
+    13→import AssignModal from '../../components/assignments/AssignModal';
+    14→import ImageLightbox from '../../components/gallery/ImageLightbox';
+    15→import ChecklistWidget from '../../components/jobcards/ChecklistWidget';
+    16→import WorkUpdatesPanel from '../../components/jobcards/WorkUpdatesPanel';
+    17→import ActivityTimeline from '../../components/jobcards/ActivityTimeline';
+    18→import { useAuth } from '../../store/auth';
+    19→import { date } from '../../lib/format';
+    20→import toast from 'react-hot-toast';
+    21→
+    22→const DOC_CATEGORIES = [
+    23→  { key: 'ASSEMBLY', label: 'Assembly' },
+    24→  { key: 'SUBASSEMBLY', label: 'Subassembly' },
+    25→  { key: 'SUBPART', label: 'Subparts' },
+    26→];
+    27→
+    28→const WORK_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'TESTING', 'COMPLETED'];
+    29→
+    30→function formatBytes(n) {
+    31→  if (!n) return '0 KB';
+    32→  const kb = n / 1024;
+    33→  return kb < 1024 ? `${kb.toFixed(0)} KB` : `${(kb / 1024).toFixed(1)} MB`;
+    34→}
+    35→
+    36→export default function JobcardView() {
+    37→  const { id } = useParams();
+    38→  const user = useAuth((s) => s.user);
+    39→  const [jc, setJc] = useState(null);
+    40→  const [loadError, setLoadError] = useState(null);
+    41→  const [attachments, setAttachments] = useState([]);
+    42→  const [revertReason, setRevertReason] = useState('');
+    43→  const [lightbox, setLightbox] = useState(null);
+    44→  const [pdfViewer, setPdfViewer] = useState(null);
+    45→  const [pdfViewerAssignIntent, setPdfViewerAssignIntent] = useState(false);
+    46→  const [assigning, setAssigning] = useState(null);
+    47→  const [assignmentsByAttachment, setAssignmentsByAttachment] = useState({});
+    48→  const [numPagesByAttachment, setNumPagesByAttachment] = useState({});
+    49→
+    50→  const isAdmin = ['SUPERADMIN', 'MANAGER'].includes(user?.role);
+    51→  const isOwner = jc && jc.assignedOperatorId === user?.id;
+    52→  const canEditProgress = isAdmin || isOwner;
+    53→
+    54→  // Anyone viewing a project they don't own and isn't admin only got here via
+    55→  // the Assignment chain (Department Head, or an operator who received a
+    56→  // specific document/pages) — they only ever see the documents (and, within
+    57→  // a document, only the pages) that were actually assigned to them. The
+    58→  // project owner / admin still sees everything.
+    59→  const scoped = !isAdmin && !isOwner;
+    60→  function myPagesForAttachment(attachmentId) {
+    61→    const rows = (assignmentsByAttachment[attachmentId] || []).filter((r) => r.assignedTo?.id === user?.id);
+    62→    if (!rows.length) return undefined; // not assigned to me at all
+    63→    if (rows.some((r) => !r.pageNumbers || !r.pageNumbers.length)) return null; // whole doc
+    64→    const set = new Set();
+    65→    rows.forEach((r) => (r.pageNumbers || []).forEach((p) => set.add(p)));
+    66→    return [...set].sort((a, b) => a - b);
+    67→  }
+    68→
+    69→  // total pages (client-detected via pdf.js on thumbnail load) vs. how many
+    70→  // are done / actively being worked on / just handed out / still free —
+    71→  // this is the "kitna baki, kitna hua" breakdown for PE/Dept Head/Plant
+    72→  // Head/Admin oversight, not just a plain assigned-vs-not count.
+    73→  function pageCoverage(attachmentId) {
+    74→    const total = numPagesByAttachment[attachmentId];
+    75→    const rows = assignmentsByAttachment[attachmentId] || [];
+    76→    const completedSet = new Set();
+    77→    const inProgressSet = new Set();
+    78→    const assignedSet = new Set(); // handed out but not started (ASSIGNED/REOPENED)
+    79→    for (const r of rows) {
+    80→      const pages = r.pageNumbers?.length ? r.pageNumbers : (total ? Array.from({ length: total }, (_, i) => i + 1) : []);
+    81→      const bucket = r.status === 'COMPLETED' ? completedSet : r.status === 'IN_PROGRESS' ? inProgressSet : assignedSet;
+    82→      pages.forEach((p) => bucket.add(p));
+    83→    }
+    84→    // a page can appear in more than one bucket if it was re-delegated at
+    85→    // different stages — completed wins, then in-progress, then assigned
+    86→    for (const p of completedSet) { inProgressSet.delete(p); assignedSet.delete(p); }
+    87→    for (const p of inProgressSet) assignedSet.delete(p);
+    88→    const takenCount = completedSet.size + inProgressSet.size + assignedSet.size;
+    89→    const remaining = total
+    90→      ? Array.from({ length: total }, (_, i) => i + 1).filter((p) => !completedSet.has(p) && !inProgressSet.has(p) && !assignedSet.has(p))
+    91→      : [];
+    92→    return {
+    93→      total, remaining,
+    94→      completedCount: completedSet.size, inProgressCount: inProgressSet.size, assignedCount: assignedSet.size,
+    95→      takenCount,
+    96→    };
+    97→  }
+    98→
+    99→  // { [pageNumber]: "Department (User)" } for every page already handed out —
+   100→  // passed into the PDF viewer's select mode so those pages show locked and
+   101→  // can't be assigned a second time by accident.
+   102→  function takenPagesFor(attachmentId) {
+   103→    const total = numPagesByAttachment[attachmentId];
+   104→    const rows = assignmentsByAttachment[attachmentId] || [];
+   105→    const map = {};
+   106→    for (const r of rows) {
+   107→      const label = `${r.department?.name || '—'} (${r.assignedTo?.name || '—'})`;
+   108→      if (r.pageNumbers?.length) {
+   109→        r.pageNumbers.forEach((p) => { map[p] = label; });
+   110→      } else if (total) {
+   111→        for (let p = 1; p <= total; p++) map[p] = label;
+   112→      }
+   113→    }
+   114→    return map;
+   115→  }
+   116→
+   117→  async function load() {
+   118→    try {
+   119→      const r = await api.get(`/jobcards/${id}`);
+   120→      setJc(r.data);
+   121→    } catch (err) {
+   122→      setLoadError(err.response?.status === 403 ? 'forbidden' : 'not-found');
+   123→    }
+   124→  }
+   125→  async function loadAttachments() {
+   126→    try {
+   127→      const r = await api.get(`/attachments/JOBCARD/${id}`);
+   128→      setAttachments(r.data);
+   129→      loadAssignments(r.data);
+   130→    } catch {
+   131→      // handled by the load() error state above
+   132→    }
+   133→  }
+   134→  useEffect(() => { load(); loadAttachments(); }, [id]);
+   135→
+   136→  // which pages of each PDF have already been assigned, and to which
+   137→  // department/user — shown under each card so the chain stays visible.
+   138→  async function loadAssignments(list) {
+   139→    const pdfIds = list.filter((a) => DOC_CATEGORIES.some((c) => c.key === a.category)).map((a) => a.id);
+   140→    if (!pdfIds.length) return;
+   141→    try {
+   142→      const results = await Promise.all(
+   143→        pdfIds.map((aid) => api.get('/assignments', { params: { attachmentId: aid } }).then((r) => [aid, r.data]))
+   144→      );
+   145→      setAssignmentsByAttachment(Object.fromEntries(results));
+   146→    } catch {
+   147→      // non-critical — cards just show without the assignment summary
+   148→    }
+   149→  }
+   150→
+   151→  async function fetchBlobUrl(a) {
+   152→    const r = await api.get(`/attachments/file/${a.id}`, { responseType: 'blob' });
+   153→    return URL.createObjectURL(new Blob([r.data], { type: a.mimeType }));
+   154→  }
+   155→
+   156→  async function downloadFile(a) {
+   157→    const url = await fetchBlobUrl(a);
+   158→    const link = document.createElement('a');
+   159→    link.href = url; link.download = a.filename;
+   160→    document.body.appendChild(link); link.click(); link.remove();
+   161→    URL.revokeObjectURL(url);
+   162→  }
+   163→
+   164→  async function openImage(a) {
+   165→    const url = await fetchBlobUrl(a);
+   166→    setLightbox({ url, alt: a.filename });
+   167→  }
+   168→
+   169→  async function deleteAttachment(a) {
+   170→    if (!confirm(`Permanently delete "${a.filename}"? This cannot be undone.`)) return;
+   171→    try {
+   172→      await api.delete(`/attachments/file/${a.id}`);
+   173→      toast.success('File deleted');
+   174→      setAttachments((prev) => prev.filter((x) => x.id !== a.id));
+   175→    } catch (err) {
+   176→      console.error(err);
+   177→      toast.error(err.response?.data?.message || 'Failed to delete file');
+   178→    }
+   179→  }
+   180→
+   181→  async function uploadGeneralFiles(e) {
+   182→    const files = Array.from(e.target.files || []);
+   183→    if (!files.length) return;
+   184→    const fd = new FormData();
+   185→    files.forEach((f) => fd.append('files', f));
+   186→    fd.append('category', 'GENERAL');
+   187→    try {
+   188→      await api.post(`/attachments/JOBCARD/${id}`, fd);
+   189→      toast.success('Uploaded');
+   190→      loadAttachments();
+   191→    } finally {
+   192→      e.target.value = '';
+   193→    }
+   194→  }
+   195→
+   196→  async function setWorkStatus(workStatus) {
+   197→    try {
+   198→      const r = await api.patch(`/jobcards/${id}/progress`, { workStatus });
+   199→      setJc(r.data);
+   200→    } catch {}
+   201→  }
+   202→
+   203→  async function markCompleted() {
+   204→    if (!confirm('Mark this project as completed?')) return;
+   205→    try {
+   206→      const r = await api.post(`/jobcards/${id}/complete`);
+   207→      setJc(r.data);
+   208→      toast.success('Marked as completed');
+   209→    } catch {}
+   210→  }
+   211→
+   212→  if (loadError) return (
+   213→    <div className="card p-10 text-center max-w-md mx-auto mt-10">
+   214→      <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-3" />
+   215→      <div className="font-semibold text-slate-800 mb-1">
+   216→        {loadError === 'forbidden' ? 'Not your project' : 'Project not found'}
+   217→      </div>
+   218→      <div className="text-sm text-slate-500 mb-4">
+   219→        {loadError === 'forbidden'
+   220→          ? 'This project is not assigned to you.'
+   221→          : "This project doesn't exist or was removed."}
+   222→      </div>
+   223→      <Link to="/" className="btn-secondary">Back to dashboard</Link>
+   224→    </div>
+   225→  );
+   226→
+   227→  if (!jc) return (
+   228→    <div className="flex items-center gap-2 text-sm text-slate-500 py-10">
+   229→      <div className="w-4 h-4 border-2 border-slate-300 border-t-brand-500 rounded-full animate-spin" />
+   230→      Loading…
+   231→    </div>
+   232→  );
+   233→
+   234→  async function doRevert() {
+   235→    if (!revertReason.trim()) return;
+   236→    try {
+   237→      await api.post(`/jobcards/${id}/revert`, { reason: revertReason });
+   238→      toast.success('Reverted'); setRevertReason(''); load();
+   239→    } catch {}
+   240→  }
+   241→
+   242→  const pdfAttachments = attachments.filter((a) => DOC_CATEGORIES.some((c) => c.key === a.category));
+   243→  const imageAttachments = attachments.filter((a) => a.mimeType?.startsWith('image/'));
+   244→  const generalAttachments = attachments.filter((a) => a.category === 'GENERAL' && !a.mimeType?.startsWith('image/'));
+   245→  const notCompleted = jc.status !== 'COMPLETED' && jc.status !== 'CANCELLED';
+   246→
+   247→  return (
+   248→    <div>
+   249→      <PageHeader
+   250→        title={`Project ${jc.number}`}
+   251→        subtitle={`${jc.party?.name || '—'} • ${date(jc.date)}`}
+   252→        action={isAdmin ? <Link to={`/jobcards/${id}/edit`} className="btn-secondary"><Pencil className="w-4 h-4" /> Edit</Link> : null}
+   253→      />
+   254→
+   255→      {lightbox && <ImageLightbox src={lightbox.url} alt={lightbox.alt} onClose={() => { URL.revokeObjectURL(lightbox.url); setLightbox(null); }} />}
+   256→      {pdfViewer && (
+   257→        <PdfViewerModal
+   258→          attachmentId={pdfViewer.id}
+   259→          filename={pdfViewer.filename}
+   260→          initialSelectMode={pdfViewerAssignIntent}
+   261→          allowedPages={scoped ? myPagesForAttachment(pdfViewer.id) : null}
+   262→          takenPages={pdfViewerAssignIntent ? takenPagesFor(pdfViewer.id) : null}
+   263→          onClose={() => { setPdfViewer(null); setPdfViewerAssignIntent(false); }}
+   264→          onDownload={() => downloadFile(pdfViewer)}
+   265→          onAssign={(pageNumbers) => { setAssigning({ attachment: pdfViewer, pageNumbers }); setPdfViewer(null); setPdfViewerAssignIntent(false); }}
+   266→        />
+   267→      )}
+   268→      {assigning && (
+   269→        <AssignModal
+   270→          attachment={assigning.attachment}
+   271→          pageNumbers={assigning.pageNumbers}
+   272→          onClose={() => setAssigning(null)}
+   273→          onSaved={loadAttachments}
+   274→        />
+   275→      )}
+   276→
+   277→      <div className="card p-6 max-w-6xl space-y-6">
+   278→        <div className="flex justify-between items-start">
+   279→          <div>
+   280→            <div className="flex items-center gap-2 mb-1">
+   281→              <ClipboardList className="w-4 h-4 text-slate-400" />
+   282→              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Project Number</span>
+   283→            </div>
+   284→            <div className="font-bold text-lg text-slate-900">{jc.projectNumber || '—'}</div>
+   285→          </div>
+   286→          <div className="flex items-center gap-2">
+   287→            <Badge status={jc.priority}>{jc.priority}</Badge>
+   288→            <Badge status={jc.status}>{jc.status}</Badge>
+   289→          </div>
+   290→        </div>
+   291→
+   292→        <div className="grid grid-cols-2 gap-3">
+   293→          <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-3 border border-slate-100">
+   294→            <User className="w-4 h-4 text-slate-400" />
+   295→            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Engineer</span>
+   296→            <span className="font-medium text-slate-900 text-sm">{jc.assignedOperator?.name || '—'}</span>
+   297→          </div>
+   298→          <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-3 border border-slate-100">
+   299→            <Flag className="w-4 h-4 text-slate-400" />
+   300→            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Deadline</span>
+   301→            <span className="font-medium text-slate-900 text-sm">{date(jc.endDate)}</span>
+   302→          </div>
+   303→        </div>
+   304→
+   305→        {jc.remarks && (
+   306→          <div>
+   307→            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Description</div>
+   308→            <div className="text-sm text-slate-700">{jc.remarks}</div>
+   309→          </div>
+   310→        )}
+   311→
+   312→        <div className="grid grid-cols-3 gap-4">
+   313→          {[
+   314→            { label: 'Ordered', value: Number(jc.qtyOrdered), color: 'text-blue-600' },
+   315→            { label: 'Produced', value: Number(jc.qtyProduced), color: 'text-emerald-600' },
+   316→            { label: 'Rejected', value: Number(jc.qtyRejected), color: 'text-red-600' },
+   317→          ].map((s) => (
+   318→            <div key={s.label} className="bg-slate-50 rounded-xl p-4 border border-slate-100 text-center">
+   319→              <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
+   320→              <div className="text-xs text-slate-500 font-medium uppercase tracking-wider mt-1">{s.label}</div>
+   321→            </div>
+   322→          ))}
+   323→        </div>
+   324→
+   325→        <div>
+   326→          <div className="flex items-center gap-2 mb-3">
+   327→            <Package className="w-4 h-4 text-brand-600" />
+   328→            <div className="font-semibold text-sm text-slate-800">Materials</div>
+   329→          </div>
+   330→          <div className="overflow-x-auto">
+   331→            <table className="min-w-full">
+   332→              <thead><tr><th className="table-th rounded-tl-lg">Item</th><th className="table-th">Qty</th><th className="table-th">UoM</th><th className="table-th rounded-tr-lg">Notes</th></tr></thead>
+   333→              <tbody>
+   334→                {jc.lines.length === 0 ? (
+   335→                  <tr><td colSpan={4} className="px-4 py-8 text-sm text-slate-400 text-center">No materials</td></tr>
+   336→                ) : jc.lines.map((l) => (
+   337→                  <tr key={l.id}><td className="table-td font-medium">{l.item?.name || l.itemName || '—'}</td><td className="table-td">{Number(l.qty)}</td><td className="table-td">{l.uomCode || '—'}</td><td className="table-td">{l.notes || '—'}</td></tr>
+   338→                ))}
+   339→              </tbody>
+   340→            </table>
+   341→          </div>
+   342→        </div>
+   343→
+   344→        {/* project files — PDF gallery, grouped by category with first-page thumbnails */}
+   345→        <div className="space-y-5">
+   346→          {DOC_CATEGORIES.map((cat) => {
+   347→            const catAttachments = pdfAttachments.filter((a) => a.category === cat.key
+   348→              && (!scoped || myPagesForAttachment(a.id) !== undefined));
+   349→            return (
+   350→              <div key={cat.key}>
+   351→                <div className="flex items-center gap-2 mb-3">
+   352→                  <FileText className="w-4 h-4 text-brand-600" />
+   353→                  <div className="font-semibold text-sm text-slate-800">{cat.label}</div>
+   354→                  <span className="text-xs text-slate-400">({catAttachments.length})</span>
+   355→                </div>
+   356→                {catAttachments.length === 0 ? (
+   357→                  <div className="text-xs text-slate-400">No files</div>
+   358→                ) : (
+   359→                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   360→                    {catAttachments.map((a) => (
+   361→                      <div key={a.id} className="border border-slate-200 rounded-xl overflow-hidden">
+   362→                        <PdfThumbnail
+   363→                          attachmentId={a.id}
+   364→                          className="w-full h-32 border-b border-slate-100"
+   365→                          onLoaded={(n) => setNumPagesByAttachment((prev) => (prev[a.id] === n ? prev : { ...prev, [a.id]: n }))}
+   366→                        />
+   367→                        <div className="p-2">
+   368→                          <div className="text-xs font-medium text-slate-700 truncate" title={a.filename}>{a.filename}</div>
+   369→                          <div className="text-[10px] text-slate-400">{date(a.createdAt)} • {formatBytes(a.size)}</div>
+   370→                          <div className="flex gap-1 mt-1.5">
+   371→                            <button type="button" className="btn-secondary !px-2 !py-0.5 !text-[11px] flex-1" onClick={() => setPdfViewer(a)}><Eye className="w-3 h-3" /> View</button>
+   372→                            <button type="button" className="btn-secondary !px-2 !py-0.5 !text-[11px] flex-1" onClick={() => downloadFile(a)}><Download className="w-3 h-3" /></button>
+   373→                            {isAdmin && <button type="button" className="btn-danger !px-2 !py-0.5 !text-[11px]" onClick={() => deleteAttachment(a)}><Trash2 className="w-3 h-3" /></button>}
+   374→                          </div>
+   375→                          <button type="button" className="btn-secondary !px-2 !py-0.5 !text-[11px] w-full mt-1" onClick={() => { setPdfViewer(a); setPdfViewerAssignIntent(true); }}>
+   376→                            <ListChecks className="w-3 h-3" /> Assign
+   377→                          </button>
+   378→
+   379→                          {(() => {
+   380→                            const { total, completedCount, inProgressCount, assignedCount, remaining } = pageCoverage(a.id);
+   381→                            if (!total) return null;
+   382→                            const pct = (n) => `${Math.round((n / total) * 100)}%`;
+   383→                            return (
+   384→                              <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-500">
+   385→                                <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-100 mb-1">
+   386→                                  {!!completedCount && <div className="bg-emerald-500" style={{ width: pct(completedCount) }} title={`${completedCount} completed`} />}
+   387→                                  {!!inProgressCount && <div className="bg-blue-500" style={{ width: pct(inProgressCount) }} title={`${inProgressCount} in progress`} />}
+   388→                                  {!!assignedCount && <div className="bg-amber-400" style={{ width: pct(assignedCount) }} title={`${assignedCount} not started`} />}
+   389→                                </div>
+   390→                                <span className="font-semibold text-slate-700">{total}</span> pages ·{' '}
+   391→                                <span className="font-semibold text-emerald-600">{completedCount}</span> done ·{' '}
+   392→                                <span className="font-semibold text-blue-600">{inProgressCount}</span> in progress ·{' '}
+   393→                                <span className="font-semibold text-amber-600">{assignedCount}</span> not started ·{' '}
+   394→                                <span className={`font-semibold ${remaining.length ? 'text-slate-500' : 'text-slate-400'}`}>{remaining.length}</span> unassigned
+   395→                                {!!remaining.length && (
+   396→                                  <div className="text-slate-400 truncate" title={`Unassigned: ${remaining.join(', ')}`}>
+   397→                                    Unassigned: {remaining.join(', ')}
+   398→                                  </div>
+   399→                                )}
+   400→                              </div>
+   401→                            );
+   402→                          })()}
+   403→
+   404→                          {!!assignmentsByAttachment[a.id]?.length && (
+   405→                            <div className="mt-1.5 pt-1.5 border-t border-slate-100 space-y-1">
+   406→                              {assignmentsByAttachment[a.id].map((asg) => (
+   407→                                <div key={asg.id} className="text-[10px] text-slate-500 leading-tight">
+   408→                                  <span className="font-medium text-slate-700">
+   409→                                    {asg.pageNumbers?.length ? `Page ${asg.pageNumbers.join(', ')}` : 'Whole doc'}
+   410→                                  </span>
+   411→                                  {' → '}{asg.department?.name || '—'} ({asg.assignedTo?.name || '—'})
+   412→                                  {' '}<span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">{asg.status}</span>
+   413→                                </div>
+   414→                              ))}
+   415→                            </div>
+   416→                          )}
+   417→                        </div>
+   418→                      </div>
+   419→                    ))}
+   420→                  </div>
+   421→                )}
+   422→              </div>
+   423→            );
+   424→          })}
+   425→        </div>
+   426→
+   427→        {/* images / reference files */}
+   428→        <div>
+   429→          <div className="flex items-center gap-2 mb-3">
+   430→            <ImageIcon className="w-4 h-4 text-brand-600" />
+   431→            <div className="font-semibold text-sm text-slate-800">Images / Reference Files</div>
+   432→          </div>
+   433→          {imageAttachments.length === 0 ? (
+   434→            <div className="text-xs text-slate-400">No images</div>
+   435→          ) : (
+   436→            <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+   437→              {imageAttachments.map((a) => (
+   438→                <ImageThumb key={a.id} attachment={a} onOpen={() => openImage(a)} />
+   439→              ))}
+   440→            </div>
+   441→          )}
+   442→        </div>
+   443→
+   444→        {/* generic attach files */}
+   445→        <div>
+   446→          <div className="flex items-center justify-between mb-3">
+   447→            <div className="flex items-center gap-2">
+   448→              <Upload className="w-4 h-4 text-brand-600" />
+   449→              <div className="font-semibold text-sm text-slate-800">Attach Files</div>
+   450→            </div>
+   451→            {canEditProgress && (
+   452→              <label className="btn-secondary !py-1 cursor-pointer">
+   453→                <Upload className="w-3.5 h-3.5" /> Upload
+   454→                <input type="file" multiple hidden onChange={uploadGeneralFiles} />
+   455→              </label>
+   456→            )}
+   457→          </div>
+   458→          {generalAttachments.length === 0 ? (
+   459→            <div className="text-xs text-slate-400">No files</div>
+   460→          ) : (
+   461→            <div className="flex flex-col gap-1.5">
+   462→              {generalAttachments.map((a) => (
+   463→                <div key={a.id} className="flex items-center gap-2 text-xs bg-slate-50 rounded-lg px-3 py-1.5">
+   464→                  <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+   465→                  <span className="truncate flex-1">{a.filename}</span>
+   466→                  <span className="text-slate-400">{formatBytes(a.size)}</span>
+   467→                  <button type="button" onClick={() => downloadFile(a)}><Download className="w-3.5 h-3.5 text-brand-600" /></button>
+   468→                </div>
+   469→              ))}
+   470→            </div>
+   471→          )}
+   472→        </div>
+   473→
+   474→        {/* task progress */}
+   475→        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+   476→          <div className="border border-slate-200 rounded-xl p-4">
+   477→            <div className="flex items-center gap-2 mb-3">
+   478→              <ListChecks className="w-4 h-4 text-brand-600" />
+   479→              <div className="font-semibold text-sm text-slate-800">Task Progress</div>
+   480→            </div>
+   481→            <div className="flex flex-wrap gap-1.5 mb-4">
+   482→              {WORK_STATUSES.map((ws) => (
+   483→                <button
+   484→                  key={ws} type="button" disabled={!canEditProgress}
+   485→                  onClick={() => setWorkStatus(ws)}
+   486→                  className={`text-xs px-2.5 py-1 rounded-full border ${jc.workStatus === ws ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'} ${canEditProgress ? '' : 'opacity-70'}`}
+   487→                >
+   488→                  {ws.replace('_', ' ')}
+   489→                </button>
+   490→              ))}
+   491→            </div>
+   492→            <ChecklistWidget jobcardId={id} checklist={jc.checklist} editable={canEditProgress} onUpdated={setJc} />
+   493→          </div>
+   494→
+   495→          <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-center">
+   496→            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Overall Progress</div>
+   497→            <div className="flex items-center gap-3">
+   498→              <div className="flex-1 h-3 rounded-full bg-slate-100 overflow-hidden">
+   499→                <div className="h-full bg-brand-600 transition-all" style={{ width: `${jc.progressPercent}%` }} />
+   500→              </div>
+   501→              <span className="text-lg font-bold text-brand-700">{jc.progressPercent}%</span>
+   502→            </div>
+   503→            {canEditProgress && notCompleted && (
+   504→              <button type="button" className="btn-primary mt-4 w-fit" onClick={markCompleted}>
+   505→                <CheckCircle2 className="w-4 h-4" /> Mark as Completed
+   506→              </button>
+   507→            )}
+   508→          </div>
+   509→        </div>
+   510→
+   511→        {/* work updates & comments */}
+   512→        <div className="border border-slate-200 rounded-xl p-4">
+   513→          <div className="flex items-center gap-2 mb-3">
+   514→            <MessageSquare className="w-4 h-4 text-brand-600" />
+   515→            <div className="font-semibold text-sm text-slate-800">Work Updates &amp; Comments</div>
+   516→          </div>
+   517→          <WorkUpdatesPanel jobcardId={id} editable={canEditProgress} />
+   518→        </div>
+   519→
+   520→        {/* activity timeline */}
+   521→        <div className="border border-slate-200 rounded-xl p-4">
+   522→          <div className="flex items-center gap-2 mb-3">
+   523→            <ActivityIcon className="w-4 h-4 text-brand-600" />
+   524→            <div className="font-semibold text-sm text-slate-800">Activity Timeline</div>
+   525→          </div>
+   526→          <ActivityTimeline jobcardId={id} />
+   527→        </div>
+   528→
+   529→        {jc.reverts.length > 0 && (
+   530→          <div className="bg-orange-50 rounded-xl p-4 border border-orange-100">
+   531→            <div className="flex items-center gap-2 mb-2 text-orange-800">
+   532→              <AlertTriangle className="w-4 h-4" />
+   533→              <div className="font-semibold text-sm">Revert History</div>
+   534→            </div>
+   535→            <ul className="text-sm space-y-2">
+   536→              {jc.reverts.map((r) => (
+   537→                <li key={r.id} className="flex items-center gap-2 text-orange-700">
+   538→                  <span className="text-xs bg-orange-100 px-2 py-0.5 rounded">{date(r.revertedAt)}</span>
+   539→                  <span>{r.reason}</span>
+   540→                </li>
+   541→              ))}
+   542→            </ul>
+   543→          </div>
+   544→        )}
+   545→
+   546→        {isAdmin && notCompleted && (
+   547→          <div className="border-t border-slate-200 pt-5">
+   548→            <div className="flex items-center gap-2 mb-3 text-red-700">
+   549→              <RotateCcw className="w-4 h-4" />
+   550→              <div className="text-sm font-semibold">Revert this jobcard</div>
+   551→            </div>
+   552→            <div className="flex gap-2">
+   553→              <input className="input flex-1" placeholder="Reason for revert" value={revertReason} onChange={(e) => setRevertReason(e.target.value)} />
+   554→              <button className="btn-danger" onClick={doRevert}><RotateCcw className="w-4 h-4" /> Revert</button>
+   555→            </div>
+   556→          </div>
+   557→        )}
+   558→      </div>
+   559→    </div>
+   560→  );
+   561→}
+   562→
+   563→function ImageThumb({ attachment, onOpen }) {
+   564→  const [url, setUrl] = useState('');
+   565→  useEffect(() => {
+   566→    let cancelled = false;
+   567→    let objUrl;
+   568→    api.get(`/attachments/file/${attachment.id}`, { responseType: 'blob' }).then((r) => {
+   569→      if (cancelled) return;
+   570→      objUrl = URL.createObjectURL(r.data);
+   571→      setUrl(objUrl);
+   572→    });
+   573→    return () => { cancelled = true; if (objUrl) URL.revokeObjectURL(objUrl); };
+   574→  }, [attachment.id]);
+   575→
+   576→  return (
+   577→    <button
+   578→      type="button"
+   579→      onClick={onOpen}
+   580→      className="aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-50 hover:opacity-80 transition-opacity"
+   581→      title={attachment.filename}
+   582→    >
+   583→      {url ? <img src={url} alt={attachment.filename} className="w-full h-full object-cover" /> : null}
+   584→    </button>
+   585→  );
+   586→}
+   587→

@@ -1,0 +1,670 @@
+=== assignment.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/assignment.controller');
+const { createAssignmentSchema, completeAssignmentSchema, reopenAssignmentSchema } = require('../validators/assignment.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('assignment.read'), ah(ctrl.list));
+router.get('/eligible-users', requirePermission('assignment.create'), ah(ctrl.eligibleUsers));
+router.get('/stats', requirePermission('assignment.read'), ah(ctrl.stats));
+router.get('/:id', requirePermission('assignment.read'), ah(ctrl.get));
+router.get('/:id/activity', requirePermission('assignment.read'), ah(ctrl.activity));
+router.post('/', requirePermission('assignment.create'), validate(createAssignmentSchema), ah(ctrl.create));
+router.post('/:id/start', requirePermission('assignment.update'), ah(ctrl.start));
+router.post('/:id/complete', requirePermission('assignment.update'), validate(completeAssignmentSchema), ah(ctrl.complete));
+router.post('/:id/reopen', requirePermission('assignment.update'), validate(reopenAssignmentSchema), ah(ctrl.reopen));
+// cancel is a soft status transition (status -> CANCELLED, guarded by the
+// controller's own assignedById-ownership check), so it's gated the same way
+// as start/complete/reopen — not assignment.delete, which stays reserved for
+// a true hard-delete this route doesn't perform.
+router.delete('/:id', requirePermission('assignment.update'), ah(ctrl.cancel));
+
+module.exports = router;
+=== attachment.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/attachment.controller');
+
+router.use(requireAuth);
+
+// specific /file/:id routes must be registered before the generic /:refType/:refId
+// routes below, otherwise GET /file/:id is shadowed (matches /:refType/:refId first,
+// with refType="file", and 400s with "Invalid refType")
+router.get('/file/:id', ah(ctrl.downloadOne));
+router.delete('/file/:id', ah(ctrl.deleteOne));
+
+// upload up to 20 files at a time; total per record capped to 100 in controller
+router.post('/:refType/:refId', ctrl.upload.array('files', 20), ah(ctrl.uploadFiles));
+router.get('/:refType/:refId', ah(ctrl.listFor));
+
+module.exports = router;
+=== auth.routes.js ===
+'use strict';
+const router = require('express').Router();
+const validate = require('../middleware/validate');
+const { requireAuth } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/auth.controller');
+const {
+  loginSchema, otpRequestSchema, otpVerifySchema, changePasswordSchema,
+} = require('../validators/auth.schema');
+
+router.post('/login', validate(loginSchema), ah(ctrl.login));
+router.post('/otp/request', validate(otpRequestSchema), ah(ctrl.requestOtp));
+router.post('/otp/verify', validate(otpVerifySchema), ah(ctrl.verifyOtp));
+router.get('/me', requireAuth, ah(ctrl.me));
+router.post('/change-password', requireAuth, validate(changePasswordSchema), ah(ctrl.changePassword));
+
+module.exports = router;
+=== backOrder.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/backOrder.controller');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('invoice.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('invoice.read'), ah(ctrl.get));
+router.post('/', requirePermission('invoice.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('invoice.update'), ah(ctrl.update));
+router.post('/:id/fulfill', requirePermission('invoice.update'), ah(ctrl.fulfill));
+router.delete('/:id', requirePermission('invoice.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== bom.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/bom.controller');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('item.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('item.read'), ah(ctrl.get));
+router.post('/', requirePermission('item.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('item.update'), ah(ctrl.update));
+router.delete('/:id', requirePermission('item.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== customerMaterial.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/customerMaterial.controller');
+const { createLotSchema, updateLotSchema, dispositionSchema } = require('../validators/customerMaterial.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('customerMaterial.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('customerMaterial.read'), ah(ctrl.get));
+router.post('/', requirePermission('customerMaterial.create'), validate(createLotSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('customerMaterial.update'), validate(updateLotSchema), ah(ctrl.update));
+router.post('/:id/consume', requirePermission('customerMaterial.update'), validate(dispositionSchema), ah(ctrl.consume));
+router.post('/:id/dispatch-to-customer', requirePermission('customerMaterial.update'), validate(dispositionSchema), ah(ctrl.dispatchToCustomer));
+router.post('/:id/return-to-customer', requirePermission('customerMaterial.update'), validate(dispositionSchema), ah(ctrl.returnToCustomer));
+
+module.exports = router;
+=== dashboard.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/dashboard.controller');
+
+router.use(requireAuth);
+router.get('/summary', ah(ctrl.summary));
+router.get('/sales-analytics', ah(ctrl.salesAnalytics));
+
+module.exports = router;
+=== department.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/department.controller');
+const { createDepartmentSchema, updateDepartmentSchema } = require('../validators/department.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('department.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('department.read'), ah(ctrl.get));
+router.post('/', requirePermission('department.create'), validate(createDepartmentSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('department.update'), validate(updateDepartmentSchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('department.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== departmentSubCategory.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/departmentSubCategory.controller');
+const { createSubCategorySchema, updateSubCategorySchema } = require('../validators/departmentSubCategory.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('departmentSubcategory.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('departmentSubcategory.read'), ah(ctrl.get));
+router.post('/', requirePermission('departmentSubcategory.create'), validate(createSubCategorySchema), ah(ctrl.create));
+router.put('/:id', requirePermission('departmentSubcategory.update'), validate(updateSubCategorySchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('departmentSubcategory.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== dispatch.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/dispatch.controller');
+const { createDispatchSchema } = require('../validators/jobcard.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('dispatch.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('dispatch.read'), ah(ctrl.get));
+router.post('/', requirePermission('dispatch.create'), validate(createDispatchSchema), ah(ctrl.create));
+router.post('/:id/status/:status', requirePermission('dispatch.update'), ah(ctrl.markStatus));
+
+module.exports = router;
+=== expense.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/expense.controller');
+
+router.use(requireAuth);
+router.get('/summary', requirePermission('expense.read'), ah(ctrl.summary));
+router.get('/', requirePermission('expense.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('expense.read'), ah(ctrl.get));
+router.post('/', requirePermission('expense.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('expense.update'), ah(ctrl.update));
+router.delete('/:id', requirePermission('expense.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== grn.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/grn.controller');
+const { createGrnSchema, updateGrnSchema, reasonSchema } = require('../validators/purchase.schema');
+
+router.use(requireAuth);
+router.get('/', requirePermission('grn.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('grn.read'), ah(ctrl.get));
+router.post('/', requirePermission('grn.create'), validate(createGrnSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('grn.update'), validate(updateGrnSchema), ah(ctrl.update));
+// reversing a receipt moves stock back out, so it is gated on grn.delete rather
+// than the lighter grn.update right
+router.delete('/:id', requirePermission('grn.delete'), validate(reasonSchema), ah(ctrl.cancel));
+
+module.exports = router;
+=== invoice.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/invoice.controller');
+const {
+  createInvoiceSchema, updateInvoiceSchema, paymentSchema,
+} = require('../validators/invoice.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('invoice.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('invoice.read'), ah(ctrl.get));
+router.get('/:id/pdf', requirePermission('invoice.read'), ah(ctrl.downloadPdf));
+router.post('/', requirePermission('invoice.create'), validate(createInvoiceSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('invoice.update'), validate(updateInvoiceSchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('invoice.delete'), ah(ctrl.remove));
+router.post('/:id/payments', requirePermission('invoice.update'), validate(paymentSchema), ah(ctrl.addPayment));
+
+module.exports = router;
+=== item.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/item.controller');
+const { createItemSchema, updateItemSchema } = require('../validators/item.schema');
+
+router.use(requireAuth);
+
+router.get('/lookups', requirePermission('item.read'), ah(ctrl.lookupUomAndCategory));
+router.get('/', requirePermission('item.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('item.read'), ah(ctrl.get));
+router.get('/:id/stock', requirePermission('item.read'), ah(ctrl.stockHistory));
+router.post('/', requirePermission('item.create'), validate(createItemSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('item.update'), validate(updateItemSchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('item.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== jobcard.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/jobcard.controller');
+const {
+  createJobcardSchema, updateJobcardSchema, revertSchema, progressSchema, noteSchema,
+} = require('../validators/jobcard.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('jobcard.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('jobcard.read'), ah(ctrl.get));
+router.post('/', requirePermission('jobcard.create'), validate(createJobcardSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('jobcard.update'), validate(updateJobcardSchema), ah(ctrl.update));
+router.post('/:id/revert', requirePermission('jobcard.update'), validate(revertSchema), ah(ctrl.revert));
+router.delete('/:id', requirePermission('jobcard.delete'), ah(ctrl.remove));
+
+router.patch('/:id/progress', requirePermission('jobcard.progress'), validate(progressSchema), ah(ctrl.updateProgress));
+router.post('/:id/complete', requirePermission('jobcard.progress'), ah(ctrl.complete));
+router.get('/:id/notes', requirePermission('jobcard.read'), ah(ctrl.listNotes));
+router.post('/:id/notes', requirePermission('jobcard.read'), validate(noteSchema), ah(ctrl.addNote));
+router.get('/:id/activity', requirePermission('jobcard.read'), ah(ctrl.activity));
+
+module.exports = router;
+=== jobwork.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/jobwork.controller');
+const { createJobworkSchema, receiveJobworkSchema } = require('../validators/jobcard.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('jobwork.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('jobwork.read'), ah(ctrl.get));
+router.post('/', requirePermission('jobwork.create'), validate(createJobworkSchema), ah(ctrl.create));
+router.post('/:id/receive', requirePermission('jobwork.update'), validate(receiveJobworkSchema), ah(ctrl.receive));
+router.delete('/:id', requirePermission('jobwork.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== machine.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/machine.controller');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('machine.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('machine.read'), ah(ctrl.get));
+router.post('/', requirePermission('machine.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('machine.update'), ah(ctrl.update));
+router.delete('/:id', requirePermission('machine.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== notification.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/notification.controller');
+
+router.use(requireAuth);
+
+router.get('/', ah(ctrl.list));
+router.get('/unread-count', ah(ctrl.unreadCount));
+router.post('/:id/read', ah(ctrl.markRead));
+router.post('/read-all', ah(ctrl.markAllRead));
+
+module.exports = router;
+=== party.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/party.controller');
+const { createPartySchema, updatePartySchema } = require('../validators/party.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('party.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('party.read'), ah(ctrl.get));
+router.get('/:id/ledger', requirePermission('party.read'), ah(ctrl.ledger));
+router.post('/', requirePermission('party.create'), validate(createPartySchema), ah(ctrl.create));
+router.put('/:id', requirePermission('party.update'), validate(updatePartySchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('party.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== process.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/process.controller');
+
+router.use(requireAuth);
+router.get('/', requirePermission('process.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('process.read'), ah(ctrl.get));
+router.post('/', requirePermission('process.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('process.update'), ah(ctrl.update));
+router.delete('/:id', requirePermission('process.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== production.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/production.controller');
+
+router.use(requireAuth);
+
+// Shift management
+router.get('/shifts', requirePermission('jobcard.read'), ah(ctrl.listShifts));
+router.post('/shifts', requirePermission('jobcard.create'), ah(ctrl.createShift));
+router.put('/shifts/:id', requirePermission('jobcard.update'), ah(ctrl.updateShift));
+
+// Production batch management
+router.get('/batches', requirePermission('jobcard.read'), ah(ctrl.listBatches));
+router.get('/batches/:id', requirePermission('jobcard.read'), ah(ctrl.getBatch));
+router.post('/batches', requirePermission('jobcard.create'), ah(ctrl.createBatch));
+router.put('/batches/:id', requirePermission('jobcard.update'), ah(ctrl.updateBatch));
+router.post('/batches/:id/start', requirePermission('jobcard.update'), ah(ctrl.startBatch));
+router.post('/batches/:id/complete', requirePermission('jobcard.update'), ah(ctrl.completeBatch));
+router.post('/batches/:id/materials', requirePermission('jobcard.update'), ah(ctrl.updateMaterialConsumption));
+router.delete('/batches/:id', requirePermission('jobcard.delete'), ah(ctrl.cancelBatch));
+
+module.exports = router;
+=== project.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/project.controller');
+
+router.use(requireAuth);
+router.get('/', requirePermission('project.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('project.read'), ah(ctrl.get));
+router.post('/', requirePermission('project.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('project.update'), ah(ctrl.update));
+router.delete('/:id', requirePermission('project.delete'), ah(ctrl.remove));
+
+router.get('/:id/tasks', requirePermission('project.read'), ah(ctrl.listTasks));
+router.post('/:id/tasks', requirePermission('project.update'), ah(ctrl.createTask));
+router.put('/:id/tasks/:taskId', requirePermission('project.update'), ah(ctrl.updateTask));
+router.delete('/:id/tasks/:taskId', requirePermission('project.update'), ah(ctrl.deleteTask));
+
+module.exports = router;
+=== purchase.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/purchase.controller');
+const {
+  createPurchaseOrderSchema,
+  updatePurchaseOrderSchema,
+  reasonSchema,
+} = require('../validators/purchase.schema');
+
+router.use(requireAuth);
+router.get('/', requirePermission('purchase.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('purchase.read'), ah(ctrl.get));
+router.post('/', requirePermission('purchase.create'), validate(createPurchaseOrderSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('purchase.update'), validate(updatePurchaseOrderSchema), ah(ctrl.update));
+router.post('/:id/approve', requirePermission('purchase.update'), ah(ctrl.approve));
+router.post('/:id/reject', requirePermission('purchase.update'), validate(reasonSchema), ah(ctrl.reject));
+router.delete('/:id', requirePermission('purchase.delete'), validate(reasonSchema), ah(ctrl.cancel));
+
+module.exports = router;
+=== purchaseReturn.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/purchaseReturn.controller');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('purchase.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('purchase.read'), ah(ctrl.get));
+router.post('/', requirePermission('purchase.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('purchase.update'), ah(ctrl.update));
+router.post('/:id/approve', requirePermission('purchase.update'), ah(ctrl.approve));
+router.post('/:id/process', requirePermission('purchase.update'), ah(ctrl.process));
+router.delete('/:id', requirePermission('purchase.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== quality.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/quality.controller');
+
+router.use(requireAuth);
+router.get('/', requirePermission('quality.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('quality.read'), ah(ctrl.get));
+router.post('/', requirePermission('quality.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('quality.update'), ah(ctrl.update));
+router.delete('/:id', requirePermission('quality.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== quotation.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/quotation.controller');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('quotation.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('quotation.read'), ah(ctrl.get));
+router.post('/', requirePermission('quotation.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('quotation.update'), ah(ctrl.update));
+router.post('/:id/convert', requirePermission('quotation.update'), ah(ctrl.convertToInvoice));
+router.delete('/:id', requirePermission('quotation.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== quotationTemplate.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/quotationTemplate.controller');
+
+router.use(requireAuth);
+
+// Templates are the letterhead/footer of every quotation that leaves the
+// company, so they are gated on the quotation module's own rights. Previously
+// these four endpoints were open to any authenticated user — an operator could
+// delete the company letterhead.
+router.post('/upload-image', requirePermission('quotation.update', 'quotation.create'), ctrl.upload.single('file'), ah(ctrl.uploadImage));
+router.get('/image/:storedName', requirePermission('quotation.read'), ah(ctrl.serveImage));
+
+router.get('/', requirePermission('quotation.read'), ah(ctrl.list));
+router.post('/', requirePermission('quotation.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('quotation.update'), ah(ctrl.update));
+router.delete('/:id', requirePermission('quotation.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== report.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/report.controller');
+
+router.use(requireAuth);
+
+router.get('/invoices.xlsx', requirePermission('report.read'), ah(ctrl.invoices));
+router.get('/jobcards.xlsx', requirePermission('report.read'), ah(ctrl.jobcards));
+router.get('/items.xlsx', requirePermission('report.read'), ah(ctrl.items));
+router.get('/expenses.xlsx', requirePermission('report.read'), ah(ctrl.expenses));
+router.get('/party-ledger/:partyId.xlsx', requirePermission('report.read'), ah(ctrl.partyLedger));
+router.get('/customer-stock.xlsx', requirePermission('report.read'), ah(ctrl.customerStock));
+router.get('/vendor-stock.xlsx', requirePermission('report.read'), ah(ctrl.vendorStock));
+router.get('/stock-ledger.xlsx', requirePermission('report.read'), ah(ctrl.stockLedgerReport));
+
+module.exports = router;
+=== role.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/role.controller');
+const { createRoleSchema, updateRoleSchema } = require('../validators/role.schema');
+
+router.use(requireAuth);
+
+router.get('/permissions/all', requirePermission('role.read'), ah(ctrl.listPermissions));
+router.get('/', requirePermission('role.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('role.read'), ah(ctrl.get));
+router.post('/', requirePermission('role.create'), validate(createRoleSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('role.update'), validate(updateRoleSchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('role.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== salesReturn.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/salesReturn.controller');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('invoice.read'), ah(ctrl.list));
+router.get('/:id', requirePermission('invoice.read'), ah(ctrl.get));
+router.post('/', requirePermission('invoice.create'), ah(ctrl.create));
+router.put('/:id', requirePermission('invoice.update'), ah(ctrl.update));
+router.post('/:id/approve', requirePermission('invoice.update'), ah(ctrl.approve));
+router.post('/:id/process', requirePermission('invoice.update'), ah(ctrl.process));
+router.delete('/:id', requirePermission('invoice.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== stock.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/stock.controller');
+const { stockAdjustSchema } = require('../validators/stock.schema');
+
+router.use(requireAuth);
+
+router.get('/summary', requirePermission('stock.read'), ah(ctrl.summary));
+router.get('/ledger', requirePermission('stock.read'), ah(ctrl.ledger));
+router.post('/adjust', requirePermission('stock.adjust'), validate(stockAdjustSchema), ah(ctrl.adjust));
+
+module.exports = router;
+=== tally.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/tally.controller');
+
+router.use(requireAuth);
+
+// NOTE: the permission module seeded in prisma/seed.js is `report` (singular).
+// These routes previously asked for `reports.read` / `reports.write`, keys that
+// are never created, so every non-SUPERADMIN caller was silently 403'd.
+
+// Get supported Tally versions
+router.get('/versions', requirePermission('report.read'), ah(ctrl.getVersions));
+
+// Export masters (parties, items, etc.)
+// Query params: type=parties|items, version=erp9|prime2.0|prime2.1 (default: prime2.1)
+router.get('/export/masters', requirePermission('report.read'), ah(ctrl.exportMasters));
+
+// Export vouchers (invoices, receipts, payments)
+// Query params: type=invoices, from=YYYY-MM-DD, to=YYYY-MM-DD, version=erp9|prime2.0|prime2.1 (default: prime2.1)
+router.get('/export/vouchers', requirePermission('report.read'), ah(ctrl.exportVouchers));
+
+// Manual sync to Tally — pushes data outward, so it needs a write right
+// Body: { endpoint, data, version }
+router.post('/sync', requirePermission('report.update'), ah(ctrl.syncToTally));
+
+module.exports = router;
+=== user.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/user.controller');
+const { createUserSchema, updateUserSchema } = require('../validators/user.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('user.read'), ah(ctrl.list));
+router.get('/reporting-candidates', requirePermission('user.read'), ah(ctrl.reportingCandidates));
+router.get('/:id', requirePermission('user.read'), ah(ctrl.get));
+router.post('/', requirePermission('user.create'), validate(createUserSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('user.update'), validate(updateUserSchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('user.delete'), ah(ctrl.remove));
+
+module.exports = router;
+=== vendorWorkOrder.routes.js ===
+'use strict';
+const router = require('express').Router();
+const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const ah = require('../utils/asyncHandler');
+const ctrl = require('../controllers/vendorWorkOrder.controller');
+const {
+  createVendorWorkOrderSchema,
+  updateVendorWorkOrderSchema,
+  sendVendorWorkOrderSchema,
+  receiveVendorWorkOrderSchema,
+  raisePurchaseOrderSchema,
+  closeVendorWorkOrderSchema,
+} = require('../validators/vendorWorkOrder.schema');
+
+router.use(requireAuth);
+
+router.get('/', requirePermission('vendorWorkOrder.read'), ah(ctrl.list));
+router.get('/stats', requirePermission('vendorWorkOrder.read'), ah(ctrl.stats));
+router.get('/:id', requirePermission('vendorWorkOrder.read'), ah(ctrl.get));
+router.get('/:id/activity', requirePermission('vendorWorkOrder.read'), ah(ctrl.activity));
+router.post('/', requirePermission('vendorWorkOrder.create'), validate(createVendorWorkOrderSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('vendorWorkOrder.update'), validate(updateVendorWorkOrderSchema), ah(ctrl.update));
+router.post('/:id/send', requirePermission('vendorWorkOrder.update'), validate(sendVendorWorkOrderSchema), ah(ctrl.send));
+router.post('/:id/receive', requirePermission('vendorWorkOrder.update'), validate(receiveVendorWorkOrderSchema), ah(ctrl.receive));
+// raising the PO writes into the purchase module, so it needs that module's
+// create right as well as the work order's own update right
+router.post('/:id/purchase-order', requirePermission('purchase.create'), validate(raisePurchaseOrderSchema), ah(ctrl.raisePurchaseOrder));
+router.post('/:id/short-close', requirePermission('vendorWorkOrder.update'), validate(closeVendorWorkOrderSchema), ah(ctrl.shortClose));
+// cancel is a status transition guarded by the controller, matching how
+// assignment cancel is gated on update rather than delete
+router.delete('/:id', requirePermission('vendorWorkOrder.update'), validate(closeVendorWorkOrderSchema), ah(ctrl.cancel));
+
+module.exports = router;
