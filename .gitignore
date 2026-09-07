@@ -1,4 +1,5 @@
-# --- deploy secrets — never commit (live SSH / DB / JWT credentials) ---
+# --- deploy tooling + secrets — never commit (live SSH / DB / JWT credentials) ---
+deploy.py
 deploy_config.json
 credential.md
 
