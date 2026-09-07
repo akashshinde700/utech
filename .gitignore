@@ -1,58 +1,30 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# deploy secrets — never commit (live SSH / DB / JWT credentials)
+# --- deploy secrets — never commit (live SSH / DB / JWT credentials) ---
 deploy_config.json
 credential.md
 
-# vercel
-.vercel
+# --- dependencies / build output (utech-repo has its own nested .gitignores too) ---
+node_modules/
+**/node_modules/
+utech-repo/backend/public/
+utech-repo/frontend/dist/
+utech-repo/**/uploads/
+dist/
+build/
+.next/
 
+# --- env files ---
+.env
+.env.*
+!.env.example
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-local-*
-.claude
-.z-ai-config
+# --- logs / runtime ---
 *.log
-dev.log
-dev.out.log
-test
-prompt
+*.pid
+db/*.db
 
-server.log
-# Skills directory
-/skills/
+# --- editor / OS ---
+.DS_Store
+.vscode/
+.idea/
+.qodo/
+.claude/

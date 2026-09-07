@@ -1,0 +1,12 @@
+node_modules
+.env
+.env.local
+uploads/
+*.log
+dist/
+.DS_Store
+prisma/migrations/dev.db*
+
+# built SPA copied from frontend/dist for single-origin serving (regenerate with:
+# cd frontend && vite build && cp -r dist/* ../backend/public/)
+public/

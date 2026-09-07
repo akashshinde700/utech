@@ -1,0 +1,1428 @@
+// UTech Automation Industries - ERP Schema
+// Generator + datasource
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+//  AUTH / USERS / ROLES
+// ============================================================
+
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  phone        String?   @unique
+  name         String
+  passwordHash String
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+
+  roleId Int?
+  role   Role? @relation(fields: [roleId], references: [id])
+
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  departmentSubCategoryId Int?
+  departmentSubCategory   DepartmentSubCategory? @relation(fields: [departmentSubCategoryId], references: [id])
+
+  reportingToId Int?
+  reportingTo   User?  @relation("UserReportsTo", fields: [reportingToId], references: [id])
+  directReports User[] @relation("UserReportsTo")
+
+  headOfDepartments Department[] @relation("DepartmentHeadUser")
+
+  assignmentsCreated   Assignment[] @relation("AssignmentAssignedBy")
+  assignmentsReceived  Assignment[] @relation("AssignmentAssignedTo")
+  assignmentsCompleted Assignment[] @relation("AssignmentCompletedBy")
+
+  otps                        Otp[]
+  auditLogs                   AuditLog[]
+  createdInvoices             Invoice[]             @relation("InvoiceCreatedBy")
+  createdJobcards             Jobcard[]             @relation("JobcardCreatedBy")
+  assignedJobcards            Jobcard[]             @relation("JobcardAssignedOperator")
+  engineeredJobcards          Jobcard[]             @relation("JobcardProjectEngineer")
+  jobcardNotes                JobcardNote[]
+  notifications               Notification[]
+  createdCustomerMaterialLots CustomerMaterialLot[] @relation("CustomerMaterialLotCreatedBy")
+  createdAt                   DateTime              @default(now())
+  updatedAt                   DateTime              @updatedAt
+
+  @@index([roleId])
+  @@index([departmentId])
+  @@index([departmentSubCategoryId])
+  @@index([reportingToId])
+}
+
+model Role {
+  id                 Int              @id @default(autoincrement())
+  name               String           @unique
+  // short unique machine code (e.g. "DEPARTMENT_HEAD") — distinct from the
+  // free-text display `name`, required for roles created via the quick-add
+  // popup but nullable so pre-existing hand-seeded roles aren't broken
+  code               String?          @unique
+  description        String?
+  isSystem           Boolean          @default(false)
+  isActive           Boolean          @default(true)
+  // numeric rank (0 = highest, e.g. Super Admin) — drives the "Reporting To"
+  // dropdown generically: candidates for a role are users whose role has a
+  // lower hierarchyLevel, with no hardcoded role-name-to-role-name map.
+  hierarchyLevel     Int?
+  // organizational parent in the Role Master tree (display/reference only —
+  // does not itself drive any permission or scoping logic)
+  parentRoleId       Int?
+  parentRole         Role?            @relation("RoleParent", fields: [parentRoleId], references: [id])
+  childRoles         Role[]           @relation("RoleParent")
+  // when true, the Users form requires a Department for this role
+  requiresDepartment Boolean          @default(false)
+  // when true, users with this role only see/manage same-department users
+  // in the Users module (Department Head / Supervisor / Team Leader)
+  scopeToDepartment  Boolean          @default(false)
+  permissions        RolePermission[]
+  users              User[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+}
+
+model Department {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  code        String  @unique
+  description String?
+
+  departmentHeadUserId Int?
+  departmentHead       User? @relation("DepartmentHeadUser", fields: [departmentHeadUserId], references: [id])
+
+  isActive         Boolean                 @default(true)
+  users            User[]
+  subCategories    DepartmentSubCategory[]
+  assignments      Assignment[]
+  vendorWorkOrders VendorWorkOrder[]
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+}
+
+// work-type/sub-role within a Department (e.g. Fabrication -> Welding Operator).
+// Not hardcoded — Super Admin/Admin manage these the same way Departments
+// themselves are managed, via a quick-add popup on the Users form or the
+// dedicated master page.
+model DepartmentSubCategory {
+  id           Int          @id @default(autoincrement())
+  departmentId Int
+  department   Department   @relation(fields: [departmentId], references: [id])
+  name         String
+  code         String?
+  description  String?
+  isActive     Boolean      @default(true)
+  createdById  Int?
+  users        User[]
+  assignments  Assignment[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([departmentId])
+}
+
+model Permission {
+  id     Int              @id @default(autoincrement())
+  // dot-namespaced key e.g. "invoice.create", "party.delete"
+  key    String           @unique
+  module String
+  action String
+  roles  RolePermission[]
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Otp {
+  id         Int       @id @default(autoincrement())
+  userId     Int?
+  email      String
+  code       String
+  purpose    String // "login" | "reset" | "verify"
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User?     @relation(fields: [userId], references: [id])
+
+  @@index([email, purpose])
+}
+
+// ============================================================
+//  PARTY (Customer / Vendor)
+// ============================================================
+
+enum PartyType {
+  CUSTOMER
+  VENDOR
+  BOTH
+}
+
+model Party {
+  id             Int       @id @default(autoincrement())
+  code           String    @unique
+  name           String
+  type           PartyType @default(CUSTOMER)
+  contactPerson  String?
+  email          String?
+  phone          String?
+  altPhone       String?
+  gstin          String?
+  pan            String?
+  // address
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  state          String?
+  pincode        String?
+  country        String?   @default("India")
+  // commercial
+  creditLimit    Decimal?  @db.Decimal(14, 2)
+  creditDays     Int?      @default(0)
+  openingBalance Decimal?  @default(0.00) @db.Decimal(14, 2)
+  isActive       Boolean   @default(true)
+  notes          String?   @db.Text
+
+  invoices             Invoice[]
+  quotations           Quotation[]
+  jobcards             Jobcard[]
+  jobworks             JobworkChallan[]
+  dispatches           DispatchChallan[]
+  ledgerEntries        PartyLedger[]
+  purchaseOrders       PurchaseOrder[]       @relation("PartyPurchaseOrders")
+  grns                 GRN[]                 @relation("PartyGRNs")
+  expenses             Expense[]             @relation("PartyExpenses")
+  salesReturns         SalesReturn[]         @relation("PartySalesReturns")
+  purchaseReturns      PurchaseReturn[]      @relation("PartyPurchaseReturns")
+  backOrders           BackOrder[]           @relation("PartyBackOrders")
+  customerMaterialLots CustomerMaterialLot[]
+  vendorWorkOrders     VendorWorkOrder[]     @relation("PartyVendorWorkOrders")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([name])
+}
+
+model PartyLedger {
+  id        Int      @id @default(autoincrement())
+  partyId   Int
+  party     Party    @relation(fields: [partyId], references: [id])
+  date      DateTime
+  refType   String // "invoice" | "payment" | "adjustment"
+  refId     Int?
+  debit     Decimal  @default(0.00) @db.Decimal(14, 2)
+  credit    Decimal  @default(0.00) @db.Decimal(14, 2)
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([partyId, date])
+}
+
+// ============================================================
+//  ITEM / MACHINE / PROCESS / UOM
+// ============================================================
+
+enum ItemType {
+  RAW_MATERIAL
+  SEMI_FINISHED
+  FINISHED
+  CONSUMABLE
+  SERVICE
+}
+
+model Uom {
+  id    Int    @id @default(autoincrement())
+  code  String @unique // e.g. "PCS", "KG", "MTR"
+  name  String
+  items Item[]
+}
+
+model ItemCategory {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  items Item[]
+}
+
+model Item {
+  id            Int           @id @default(autoincrement())
+  code          String        @unique
+  name          String
+  description   String?       @db.Text
+  type          ItemType      @default(RAW_MATERIAL)
+  hsnCode       String?
+  projectNumber String? // legacy free-text label — kept for items tagged before the real link existed
+  // real link to a Project (replaces the free-text projectNumber above)
+  projectId     Int?
+  project       Project?      @relation(fields: [projectId], references: [id])
+  // pricing
+  purchaseRate  Decimal?      @db.Decimal(14, 2)
+  saleRate      Decimal?      @db.Decimal(14, 2)
+  gstRate       Decimal?      @default(18.00) @db.Decimal(5, 2)
+  // inventory
+  openingStock  Decimal       @default(0.000) @db.Decimal(14, 3)
+  currentStock  Decimal       @default(0.000) @db.Decimal(14, 3)
+  minStock      Decimal       @default(0.000) @db.Decimal(14, 3)
+  // refs
+  uomId         Int?
+  uom           Uom?          @relation(fields: [uomId], references: [id])
+  categoryId    Int?
+  category      ItemCategory? @relation(fields: [categoryId], references: [id])
+
+  isActive Boolean @default(true)
+
+  invoiceLines         InvoiceLine[]
+  quotationLines       QuotationLine[]
+  jobcardLines         JobcardLine[]
+  jobworkLines         JobworkLine[]
+  dispatchLines        DispatchLine[]
+  stockLedger          StockLedger[]
+  poLines              PurchaseOrderLine[]   @relation("ItemPOLines")
+  grnLines             GrnLine[]             @relation("ItemGRNLines")
+  salesReturnLines     SalesReturnLine[]     @relation("ItemSalesReturnLines")
+  purchaseReturnLines  PurchaseReturnLine[]  @relation("ItemPurchaseReturnLines")
+  backOrderLines       BackOrderLine[]       @relation("ItemBackOrderLines")
+  productionBatches    ProductionBatch[]     @relation("ItemProductionBatches")
+  productionMaterials  ProductionMaterial[]  @relation("ItemProductionMaterials")
+  boms                 Bom[]
+  bomItems             BomItem[]
+  customerMaterialLots CustomerMaterialLot[]
+  vendorWorkOrderLines VendorWorkOrderLine[] @relation("ItemVendorWorkOrderLines")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([name])
+  @@index([projectId])
+}
+
+model Machine {
+  id                Int                @id @default(autoincrement())
+  code              String             @unique
+  name              String
+  type              String?
+  capacity          String?
+  status            String             @default("ACTIVE") // ACTIVE | MAINTENANCE | RETIRED
+  notes             String?
+  jobcards          JobcardOperation[]
+  productionBatches ProductionBatch[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+}
+
+model Process {
+  id           Int                @id @default(autoincrement())
+  code         String             @unique
+  name         String
+  description  String?
+  // standard time per piece in minutes
+  stdTimeMin   Decimal?           @db.Decimal(8, 2)
+  ratePerHour  Decimal?           @db.Decimal(10, 2)
+  isActive     Boolean            @default(true)
+  jobcardOps   JobcardOperation[]
+  jobworkLines JobworkLine[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+}
+
+// Two ownership buckets only — a vendor never owns material, it only
+// temporarily holds it (tracked as a status, not a bucket). This keeps
+// company and customer stock structurally incapable of sharing a mutation
+// path (see stockService.js: moveCompanyStock vs moveCustomerMaterial).
+enum OwnerType {
+  COMPANY
+  CUSTOMER
+}
+
+enum CustomerMaterialStatus {
+  RECEIVED
+  IN_PROCESS
+  AT_VENDOR
+  CONSUMED
+  DISPATCHED
+  RETURNED_TO_CUSTOMER
+}
+
+model StockLedger {
+  id        Int      @id @default(autoincrement())
+  itemId    Int?
+  item      Item?    @relation(fields: [itemId], references: [id])
+  date      DateTime
+  refType   String // "GRN" | "GRN_CANCEL" | "DISPATCH" | "JOBWORK_OUT" | "JOBWORK_IN" | "JOBWORK_CANCEL" | "PRODUCTION" | "SALES_RETURN" | "PURCHASE_RETURN" | "CUSTOMER_INWARD" | "CUSTOMER_DISPATCH" | "ADJUSTMENT" | "OPENING"
+  refId     Int?
+  qtyIn     Decimal  @default(0.000) @db.Decimal(14, 3)
+  qtyOut    Decimal  @default(0.000) @db.Decimal(14, 3)
+  balance   Decimal  @default(0.000) @db.Decimal(14, 3)
+  notes     String?
+  createdAt DateTime @default(now())
+
+  ownerType             OwnerType            @default(COMPANY)
+  customerMaterialLotId Int?
+  customerMaterialLot   CustomerMaterialLot? @relation(fields: [customerMaterialLotId], references: [id])
+
+  @@index([itemId, date])
+  @@index([ownerType, date])
+  @@index([customerMaterialLotId])
+}
+
+model CustomerMaterialLot {
+  id           Int    @id @default(autoincrement())
+  customerId   Int
+  customer     Party  @relation(fields: [customerId], references: [id])
+  inwardNumber String @unique
+
+  jobcardId Int?
+  jobcard   Jobcard? @relation(fields: [jobcardId], references: [id])
+  itemId    Int? // optional catalog link — customer material is often not a catalog item
+  item      Item?    @relation(fields: [itemId], references: [id])
+
+  materialDescription String
+  heatNumber          String?
+  lotNumber           String?
+  qty                 Decimal                @db.Decimal(14, 3) // original inward qty (immutable); current/available qty is derived from stockLedger
+  weight              Decimal?               @db.Decimal(14, 3)
+  uomCode             String?
+  location            String?
+  status              CustomerMaterialStatus @default(RECEIVED)
+  receivedDate        DateTime
+  notes               String?                @db.Text
+
+  createdById Int?
+  createdBy   User? @relation("CustomerMaterialLotCreatedBy", fields: [createdById], references: [id])
+
+  stockLedger     StockLedger[]
+  jobworkChallans JobworkChallan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([jobcardId])
+  @@index([itemId])
+}
+
+// ============================================================
+//  QUOTATION / INVOICE / BILLING
+// ============================================================
+
+enum DocStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+  CONVERTED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model Quotation {
+  id                    Int             @id @default(autoincrement())
+  number                String          @unique
+  date                  DateTime
+  validTill             DateTime?
+  partyId               Int
+  party                 Party           @relation(fields: [partyId], references: [id])
+  status                DocStatus       @default(DRAFT)
+  subtotal              Decimal         @default(0.00) @db.Decimal(14, 2)
+  cgst                  Decimal         @default(0.00) @db.Decimal(14, 2)
+  sgst                  Decimal         @default(0.00) @db.Decimal(14, 2)
+  igst                  Decimal         @default(0.00) @db.Decimal(14, 2)
+  discount              Decimal         @default(0.00) @db.Decimal(14, 2)
+  total                 Decimal         @default(0.00) @db.Decimal(14, 2)
+  notes                 String?         @db.Text
+  headerText            String?         @db.Text
+  footerText            String?         @db.Text
+  headerImageName       String? // original uploaded filename, for display
+  headerImageStoredName String? // filename on disk under UPLOAD_DIR
+  footerImageName       String?
+  footerImageStoredName String?
+  lines                 QuotationLine[]
+  invoice               Invoice?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@index([partyId])
+  @@index([status])
+}
+
+// Reusable header/footer text blocks a user can save and re-apply to quotations
+// (e.g. different letterheads, terms blurbs) instead of retyping each time.
+model QuotationTemplate {
+  id                    Int      @id @default(autoincrement())
+  name                  String   @unique
+  headerText            String?  @db.Text
+  footerText            String?  @db.Text
+  headerImageName       String?
+  headerImageStoredName String?
+  footerImageName       String?
+  footerImageStoredName String?
+  isDefault             Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model QuotationLine {
+  id          Int       @id @default(autoincrement())
+  quotationId Int
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  itemId      Int?
+  item        Item?     @relation(fields: [itemId], references: [id])
+  description String
+  drgNo       String? // drawing number
+  qty         Decimal   @db.Decimal(14, 3)
+  rate        Decimal   @db.Decimal(14, 2)
+  gstRate     Decimal   @default(0.00) @db.Decimal(5, 2) // quotations are sent without GST
+  amount      Decimal   @db.Decimal(14, 2)
+}
+
+model Invoice {
+  id          Int        @id @default(autoincrement())
+  number      String     @unique
+  date        DateTime
+  dueDate     DateTime?
+  partyId     Int
+  party       Party      @relation(fields: [partyId], references: [id])
+  quotationId Int?       @unique
+  quotation   Quotation? @relation(fields: [quotationId], references: [id])
+
+  status     InvoiceStatus @default(DRAFT)
+  subtotal   Decimal       @default(0.00) @db.Decimal(14, 2)
+  cgst       Decimal       @default(0.00) @db.Decimal(14, 2)
+  sgst       Decimal       @default(0.00) @db.Decimal(14, 2)
+  igst       Decimal       @default(0.00) @db.Decimal(14, 2)
+  discount   Decimal       @default(0.00) @db.Decimal(14, 2)
+  roundOff   Decimal       @default(0.00) @db.Decimal(8, 2)
+  total      Decimal       @default(0.00) @db.Decimal(14, 2)
+  amountPaid Decimal       @default(0.00) @db.Decimal(14, 2)
+  notes      String?       @db.Text
+  termsText  String?       @db.Text
+
+  createdById Int?
+  createdBy   User? @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+
+  lines        InvoiceLine[]
+  payments     InvoicePayment[]
+  salesReturns SalesReturn[]
+  backOrders   BackOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([partyId])
+  @@index([status])
+  @@index([date])
+}
+
+model InvoiceLine {
+  id          Int     @id @default(autoincrement())
+  invoiceId   Int
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  itemId      Int?
+  item        Item?   @relation(fields: [itemId], references: [id])
+  description String
+  hsnCode     String?
+  qty         Decimal @db.Decimal(14, 3)
+  rate        Decimal @db.Decimal(14, 2)
+  gstRate     Decimal @default(18.00) @db.Decimal(5, 2)
+  amount      Decimal @db.Decimal(14, 2)
+}
+
+model InvoicePayment {
+  id        Int      @id @default(autoincrement())
+  invoiceId Int
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  date      DateTime
+  amount    Decimal  @db.Decimal(14, 2)
+  mode      String // "CASH" | "BANK" | "UPI" | "CHEQUE"
+  reference String?
+  notes     String?
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+//  JOBCARD / JOBWORK / DISPATCH
+// ============================================================
+
+enum JobcardStatus {
+  DRAFT
+  IN_PROGRESS
+  ON_HOLD
+  REVERTED
+  COMPLETED
+  CANCELLED
+}
+
+enum JobcardPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum JobcardWorkStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  TESTING
+  COMPLETED
+}
+
+model Jobcard {
+  id              Int           @id @default(autoincrement())
+  number          String        @unique
+  date            DateTime
+  partyId         Int?
+  party           Party?        @relation(fields: [partyId], references: [id])
+  itemId          Int?
+  itemDescription String?
+  projectNumber   String?
+  assemblyNumber  String?
+  drawingNumber   String?
+  qtyOrdered      Decimal       @default(0.000) @db.Decimal(14, 3)
+  qtyProduced     Decimal       @default(0.000) @db.Decimal(14, 3)
+  qtyRejected     Decimal       @default(0.000) @db.Decimal(14, 3)
+  status          JobcardStatus @default(DRAFT)
+  startDate       DateTime?
+  endDate         DateTime?
+  remarks         String?       @db.Text
+
+  priority   JobcardPriority   @default(MEDIUM)
+  workStatus JobcardWorkStatus @default(NOT_STARTED)
+  checklist  Json? // operator-facing task checklist: [{ key, label, done }]; app supplies the fixed default when null
+
+  createdById Int?
+  createdBy   User? @relation("JobcardCreatedBy", fields: [createdById], references: [id])
+
+  assignedOperatorId Int?
+  assignedOperator   User? @relation("JobcardAssignedOperator", fields: [assignedOperatorId], references: [id])
+
+  // project oversight (Project Engineer role) — separate from assignedOperatorId,
+  // which drives the shop-floor Operator Dashboard/checklist/ownership checks
+  projectEngineerId Int?
+  projectEngineer   User? @relation("JobcardProjectEngineer", fields: [projectEngineerId], references: [id])
+
+  lines                JobcardLine[]
+  operations           JobcardOperation[]
+  reverts              JobcardRevert[]
+  notes                JobcardNote[]
+  productionBatches    ProductionBatch[]
+  customerMaterialLots CustomerMaterialLot[]
+  vendorWorkOrders     VendorWorkOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([partyId])
+  @@index([assignedOperatorId])
+}
+
+enum JobcardNoteKind {
+  WORK_UPDATE
+  COMMENT
+}
+
+model JobcardNote {
+  id        Int             @id @default(autoincrement())
+  jobcardId Int
+  jobcard   Jobcard         @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
+  kind      JobcardNoteKind
+  body      String          @db.Text
+  authorId  Int?
+  author    User?           @relation(fields: [authorId], references: [id])
+  createdAt DateTime        @default(now())
+
+  @@index([jobcardId])
+}
+
+model JobcardLine {
+  id        Int     @id @default(autoincrement())
+  jobcardId Int
+  jobcard   Jobcard @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
+  itemId    Int? // legacy: linked Item master record, if any (kept for old rows)
+  item      Item?   @relation(fields: [itemId], references: [id])
+  itemName  String? // free-text project-scoped item name, not tied to the Item master
+  qty       Decimal @db.Decimal(14, 3)
+  uomCode   String?
+  notes     String?
+}
+
+model JobcardOperation {
+  id        Int       @id @default(autoincrement())
+  jobcardId Int
+  jobcard   Jobcard   @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
+  processId Int?
+  process   Process?  @relation(fields: [processId], references: [id])
+  machineId Int?
+  machine   Machine?  @relation(fields: [machineId], references: [id])
+  sequence  Int       @default(0)
+  startAt   DateTime?
+  endAt     DateTime?
+  status    String    @default("PENDING") // PENDING | RUNNING | DONE | SKIPPED
+  notes     String?
+}
+
+model JobcardRevert {
+  id           Int      @id @default(autoincrement())
+  jobcardId    Int
+  jobcard      Jobcard  @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
+  reason       String
+  revertedAt   DateTime @default(now())
+  revertedById Int?
+}
+
+enum JobworkStatus {
+  ISSUED
+  PARTIAL_RECEIVED
+  RECEIVED
+  CANCELLED
+  REJECTED
+}
+
+model JobworkChallan {
+  id      Int           @id @default(autoincrement())
+  number  String        @unique
+  date    DateTime
+  partyId Int // vendor
+  party   Party         @relation(fields: [partyId], references: [id])
+  status  JobworkStatus @default(ISSUED)
+  notes   String?
+  lines   JobworkLine[]
+
+  // material sent under this challan may be company-owned (default, unchanged
+  // behavior) or a specific customer's material — never mixed within one challan
+  materialOwnerType     OwnerType            @default(COMPANY)
+  customerMaterialLotId Int?
+  customerMaterialLot   CustomerMaterialLot? @relation(fields: [customerMaterialLotId], references: [id])
+  expectedReturnDate    DateTime?
+  actualReturnDate      DateTime?
+
+  // set when this challan was raised to issue material under a VendorWorkOrder
+  vendorWorkOrder VendorWorkOrder?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([partyId])
+  @@index([status])
+  @@index([customerMaterialLotId])
+  @@index([materialOwnerType])
+}
+
+model JobworkLine {
+  id          Int            @id @default(autoincrement())
+  challanId   Int
+  challan     JobworkChallan @relation(fields: [challanId], references: [id], onDelete: Cascade)
+  itemId      Int? // optional — customer material sent to a vendor is often not a catalog item
+  item        Item?          @relation(fields: [itemId], references: [id])
+  description String? // free-text label, used when itemId is null
+  processId   Int?
+  process     Process?       @relation(fields: [processId], references: [id])
+  qtySent     Decimal        @db.Decimal(14, 3)
+  qtyReceived Decimal        @default(0.000) @db.Decimal(14, 3)
+  qtyRejected Decimal        @default(0.000) @db.Decimal(14, 3)
+  rate        Decimal?       @db.Decimal(14, 2)
+  notes       String?
+}
+
+enum DispatchStatus {
+  DRAFT
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+}
+
+model DispatchChallan {
+  id          Int            @id @default(autoincrement())
+  number      String         @unique
+  date        DateTime
+  partyId     Int
+  party       Party          @relation(fields: [partyId], references: [id])
+  vehicleNo   String?
+  driverName  String?
+  driverPhone String?
+  ewayBillNo  String?
+  status      DispatchStatus @default(DRAFT)
+  invoiceId   Int?
+  notes       String?
+  lines       DispatchLine[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([partyId])
+  @@index([status])
+}
+
+model DispatchLine {
+  id        Int             @id @default(autoincrement())
+  challanId Int
+  challan   DispatchChallan @relation(fields: [challanId], references: [id], onDelete: Cascade)
+  itemId    Int
+  item      Item            @relation(fields: [itemId], references: [id])
+  qty       Decimal         @db.Decimal(14, 3)
+  uomCode   String?
+  notes     String?
+}
+
+// ============================================================
+//  STUBS — purchase / quality / project / files / audit
+// ============================================================
+
+enum PurchaseStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id              Int                 @id @default(autoincrement())
+  number          String              @unique
+  date            DateTime
+  expectedDate    DateTime?
+  partyId         Int
+  party           Party               @relation("PartyPurchaseOrders", fields: [partyId], references: [id])
+  status          PurchaseStatus      @default(DRAFT)
+  subtotal        Decimal             @default(0.00) @db.Decimal(14, 2)
+  gstTotal        Decimal             @default(0.00) @db.Decimal(14, 2)
+  total           Decimal             @default(0.00) @db.Decimal(14, 2)
+  notes           String?
+  approvedById    Int?
+  approvedAt      DateTime?
+  rejectionReason String?
+  lines           PurchaseOrderLine[]
+  grns            GRN[]
+  purchaseReturns PurchaseReturn[]
+  vendorWorkOrder VendorWorkOrder?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([partyId])
+  @@index([status])
+}
+
+model PurchaseOrderLine {
+  id          Int           @id @default(autoincrement())
+  poId        Int
+  po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  // nullable: work outsourced to a vendor is frequently a one-off, non-catalog
+  // part identified only by a drawing/description, with no Item master row
+  itemId      Int?
+  item        Item?         @relation("ItemPOLines", fields: [itemId], references: [id])
+  description String?
+  qty         Decimal       @db.Decimal(14, 3)
+  qtyReceived Decimal       @default(0.000) @db.Decimal(14, 3)
+  rate        Decimal       @db.Decimal(14, 2)
+  gstRate     Decimal       @default(18.00) @db.Decimal(5, 2)
+  amount      Decimal       @db.Decimal(14, 2)
+}
+
+model GRN {
+  id              Int              @id @default(autoincrement())
+  number          String           @unique
+  date            DateTime
+  poId            Int?
+  po              PurchaseOrder?   @relation(fields: [poId], references: [id])
+  partyId         Int?
+  party           Party?           @relation("PartyGRNs", fields: [partyId], references: [id])
+  status          String           @default("PENDING") // PENDING | ACCEPTED | REJECTED | CANCELLED
+  vehicleNo       String?
+  notes           String?
+  cancelReason    String?          @db.Text
+  lines           GrnLine[]
+  purchaseReturns PurchaseReturn[]
+
+  // set when this receipt books in parts returned by an external vendor under a
+  // VendorWorkOrder — receiving here is what advances that work order
+  vendorWorkOrderId Int?
+  vendorWorkOrder   VendorWorkOrder? @relation(fields: [vendorWorkOrderId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([poId])
+  @@index([vendorWorkOrderId])
+}
+
+model GrnLine {
+  id                    Int                  @id @default(autoincrement())
+  grnId                 Int
+  grn                   GRN                  @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  // nullable for the same reason as PurchaseOrderLine.itemId — a vendor-made
+  // one-off part has no Item master row, and therefore no stock position
+  itemId                Int?
+  item                  Item?                @relation("ItemGRNLines", fields: [itemId], references: [id])
+  description           String? // free-text label, used when itemId is null
+  poLineId              Int?
+  // receipt line -> vendor work order line, so returns roll straight back up
+  vendorWorkOrderLineId Int?
+  vendorWorkOrderLine   VendorWorkOrderLine? @relation(fields: [vendorWorkOrderLineId], references: [id])
+  qty                   Decimal              @db.Decimal(14, 3)
+  qtyAccepted           Decimal              @default(0.000) @db.Decimal(14, 3)
+  qtyRejected           Decimal              @default(0.000) @db.Decimal(14, 3)
+  rate                  Decimal?             @db.Decimal(14, 2)
+  notes                 String?
+
+  @@index([vendorWorkOrderLineId])
+}
+
+// ============================================================
+//  VENDOR DEVELOPMENT — work outsourced outside the company
+// ============================================================
+
+enum VendorWorkOrderStatus {
+  DRAFT
+  SENT
+  PARTIAL_RECEIVED
+  RECEIVED
+  SHORT_CLOSED
+  CANCELLED
+}
+
+// The Project Engineer assigns a project document to a department; when that
+// department (in practice Vendor Development) cannot do the work in-house it
+// hands the scope to an external vendor. This model is that hand-off: it
+// answers "when did it go out, who did we give it to, and did it come back".
+//
+// It is deliberately a *tracker*, not a stock document — a vendor very often
+// manufactures from its own raw material, so there is nothing to move. Stock is
+// always moved by exactly one linked document instead:
+//   - material issued to the vendor  -> jobworkChallan (stock OUT)
+//   - finished parts received back    -> grns          (stock IN)
+// and once poId is set, GRN is the only way quantities can be received, so the
+// tracker and the stock documents can never drift apart.
+model VendorWorkOrder {
+  id     Int    @id @default(autoincrement())
+  number String @unique // VWO-26-00001
+
+  // --- where the work came from ---
+  assignmentId Int?
+  assignment   Assignment? @relation(fields: [assignmentId], references: [id])
+  jobcardId    Int?
+  jobcard      Jobcard?    @relation(fields: [jobcardId], references: [id])
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  // --- who it went out to ---
+  partyId Int
+  party   Party @relation("PartyVendorWorkOrders", fields: [partyId], references: [id])
+
+  status VendorWorkOrderStatus @default(DRAFT)
+
+  date               DateTime // raised on
+  sentDate           DateTime? // handed to the vendor on
+  expectedReturnDate DateTime?
+  actualReturnDate   DateTime? // fully returned on
+
+  scopeDescription String? @db.Text
+  instructions     String? @db.Text
+  notes            String? @db.Text
+  closureRemarks   String? @db.Text // why it was short closed / cancelled
+
+  // --- linked documents ---
+  materialIssued   Boolean         @default(false)
+  jobworkChallanId Int?            @unique
+  jobworkChallan   JobworkChallan? @relation(fields: [jobworkChallanId], references: [id])
+  poId             Int?            @unique
+  po               PurchaseOrder?  @relation(fields: [poId], references: [id])
+  grns             GRN[]
+
+  // bare ids, matching PurchaseOrder.approvedById — the named activity trail
+  // comes from AuditLog(entity="VendorWorkOrder"), which already joins the user
+  createdById Int?
+  sentById    Int?
+
+  lines VendorWorkOrderLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([partyId])
+  @@index([status])
+  @@index([assignmentId])
+  @@index([jobcardId])
+  @@index([departmentId])
+}
+
+model VendorWorkOrderLine {
+  id                Int             @id @default(autoincrement())
+  vendorWorkOrderId Int
+  vendorWorkOrder   VendorWorkOrder @relation(fields: [vendorWorkOrderId], references: [id], onDelete: Cascade)
+
+  itemId        Int? // optional catalog link — outsourced parts often aren't catalog items
+  item          Item?   @relation("ItemVendorWorkOrderLines", fields: [itemId], references: [id])
+  description   String? // free-text label, required when itemId is null
+  drawingNumber String?
+  partNumber    String?
+
+  qtySent     Decimal  @db.Decimal(14, 3)
+  qtyReceived Decimal  @default(0.000) @db.Decimal(14, 3)
+  qtyRejected Decimal  @default(0.000) @db.Decimal(14, 3)
+  uomCode     String?
+  rate        Decimal? @db.Decimal(14, 2)
+  gstRate     Decimal  @default(18.00) @db.Decimal(5, 2)
+  notes       String?
+
+  // bare id (no FK) exactly like GrnLine.poLineId — PurchaseOrder edits replace
+  // their lines wholesale, so a hard constraint here would block them
+  poLineId Int?
+
+  grnLines GrnLine[]
+
+  @@index([vendorWorkOrderId])
+  @@index([itemId])
+}
+
+model QualityCheck {
+  id            Int                @id @default(autoincrement())
+  number        String             @unique
+  date          DateTime
+  refType       String // "GRN" | "JOBCARD" | "DISPATCH"
+  refId         Int
+  result        String             @default("PENDING") // PASS | FAIL | PENDING
+  inspectorName String?
+  remarks       String?            @db.Text
+  certificateNo String?
+  lines         QualityCheckLine[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([refType, refId])
+}
+
+model QualityCheckLine {
+  id        Int          @id @default(autoincrement())
+  qcId      Int
+  qc        QualityCheck @relation(fields: [qcId], references: [id], onDelete: Cascade)
+  parameter String
+  expected  String?
+  actual    String?
+  result    String       @default("PASS") // PASS | FAIL
+  notes     String?
+}
+
+model Expense {
+  id          Int      @id @default(autoincrement())
+  number      String   @unique
+  date        DateTime
+  category    String // "Travel" | "Salary" | "Material" | "Utility" | "Other"
+  partyId     Int?
+  party       Party?   @relation("PartyExpenses", fields: [partyId], references: [id])
+  description String
+  amount      Decimal  @db.Decimal(14, 2)
+  taxAmount   Decimal  @default(0.00) @db.Decimal(14, 2)
+  paymentMode String   @default("CASH") // CASH | BANK | UPI | CHEQUE
+  reference   String?
+  notes       String?  @db.Text
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([date])
+  @@index([partyId])
+}
+
+model Project {
+  id        Int           @id @default(autoincrement())
+  code      String        @unique
+  name      String
+  partyId   Int?
+  budget    Decimal?      @db.Decimal(14, 2)
+  startDate DateTime?
+  endDate   DateTime?
+  status    String        @default("PLANNED")
+  tasks     ProjectTask[]
+  items     Item[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+model ProjectTask {
+  id          Int       @id @default(autoincrement())
+  projectId   Int
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentId    Int?
+  name        String
+  assignedTo  Int?
+  status      String    @default("TODO")
+  startDate   DateTime?
+  dueDate     DateTime?
+  completedAt DateTime?
+}
+
+model Bom {
+  id                Int               @id @default(autoincrement())
+  code              String            @unique
+  name              String
+  finishedItemId    Int?
+  finishedItem      Item?             @relation(fields: [finishedItemId], references: [id])
+  notes             String?
+  items             BomItem[]
+  productionBatches ProductionBatch[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}
+
+model BomItem {
+  id      Int     @id @default(autoincrement())
+  bomId   Int
+  bom     Bom     @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  itemId  Int
+  item    Item    @relation(fields: [itemId], references: [id])
+  qty     Decimal @db.Decimal(14, 3)
+  uomCode String?
+  notes   String?
+}
+
+model Attachment {
+  id           Int      @id @default(autoincrement())
+  refType      String // "JOBCARD" | "INVOICE" | "DISPATCH" etc.
+  refId        Int
+  lineId       Int? // optional: ties attachment to a specific line (e.g. JobcardLine) within the ref record
+  category     String? // optional project-level doc category e.g. "ASSEMBLY" | "SUBASSEMBLY" | "SUBPART"
+  filename     String
+  storedName   String
+  mimeType     String
+  size         Int
+  uploadedById Int?
+  createdAt    DateTime @default(now())
+
+  assignments Assignment[]
+
+  @@index([refType, refId])
+  @@index([lineId])
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  REOPENED
+  CANCELLED
+}
+
+// document/page-level delegation on top of an uploaded Attachment — separate
+// from Jobcard.assignedOperatorId/projectEngineerId, which remain simple
+// whole-jobcard ownership markers. Works for any assignee role generically
+// (Department Head, Operator, or a Vendor/External Developer role created via
+// the Role Master), with zero hardcoded role-name branching.
+//
+// departmentId/departmentSubCategoryId capture the selection criteria used at
+// assignment time (so department-wise/subcategory-wise dashboards can group
+// directly on this table, and history stays accurate even if the assigned
+// user's own department changes later) — the actual work target is always a
+// specific assignedToId user.
+model Assignment {
+  id Int @id @default(autoincrement())
+
+  attachmentId Int
+  attachment   Attachment @relation(fields: [attachmentId], references: [id])
+  pageNumbers  Json? // nullable array of page numbers e.g. [3,4,5]; null/empty = whole document
+
+  departmentId            Int?
+  department              Department?            @relation(fields: [departmentId], references: [id])
+  departmentSubCategoryId Int?
+  departmentSubCategory   DepartmentSubCategory? @relation(fields: [departmentSubCategoryId], references: [id])
+
+  assignedById Int
+  assignedBy   User @relation("AssignmentAssignedBy", fields: [assignedById], references: [id])
+  assignedToId Int
+  assignedTo   User @relation("AssignmentAssignedTo", fields: [assignedToId], references: [id])
+
+  instructions String?          @db.Text
+  priority     JobcardPriority  @default(MEDIUM)
+  dueDate      DateTime?
+  status       AssignmentStatus @default(ASSIGNED)
+
+  assignedAt  DateTime  @default(now())
+  startedAt   DateTime?
+  startNotes  String?   @db.Text // e.g. which external vendor it was sent to, and when
+  completedAt DateTime?
+
+  completedById     Int?
+  completedBy       User?   @relation("AssignmentCompletedBy", fields: [completedById], references: [id])
+  completionRemarks String? @db.Text
+
+  // work on this assignment that was handed to an external vendor
+  vendorWorkOrders VendorWorkOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([attachmentId])
+  @@index([assignedToId])
+  @@index([assignedById])
+  @@index([departmentId])
+  @@index([departmentSubCategoryId])
+  @@index([status])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  Int?
+  payload   String?  @db.Text
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?  @db.Text
+  refType   String?
+  refId     Int?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+// ============================================================
+//  SALES RETURNS / PURCHASE RETURNS / BACK ORDERS
+// ============================================================
+
+enum ReturnStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PROCESSED
+  CANCELLED
+}
+
+model SalesReturn {
+  id           Int               @id @default(autoincrement())
+  number       String            @unique
+  date         DateTime
+  invoiceId    Int
+  invoice      Invoice           @relation(fields: [invoiceId], references: [id])
+  partyId      Int
+  party        Party             @relation("PartySalesReturns", fields: [partyId], references: [id])
+  status       ReturnStatus      @default(DRAFT)
+  subtotal     Decimal           @default(0.00) @db.Decimal(14, 2)
+  cgst         Decimal           @default(0.00) @db.Decimal(14, 2)
+  sgst         Decimal           @default(0.00) @db.Decimal(14, 2)
+  igst         Decimal           @default(0.00) @db.Decimal(14, 2)
+  discount     Decimal           @default(0.00) @db.Decimal(14, 2)
+  total        Decimal           @default(0.00) @db.Decimal(14, 2)
+  refundAmount Decimal           @default(0.00) @db.Decimal(14, 2)
+  reason       String?           @db.Text
+  notes        String?           @db.Text
+  approvedById Int?
+  approvedAt   DateTime?
+  lines        SalesReturnLine[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([invoiceId])
+  @@index([partyId])
+  @@index([status])
+}
+
+model SalesReturnLine {
+  id            Int         @id @default(autoincrement())
+  salesReturnId Int
+  salesReturn   SalesReturn @relation(fields: [salesReturnId], references: [id], onDelete: Cascade)
+  invoiceLineId Int
+  itemId        Int
+  item          Item        @relation("ItemSalesReturnLines", fields: [itemId], references: [id])
+  description   String
+  hsnCode       String?
+  qty           Decimal     @db.Decimal(14, 3)
+  rate          Decimal     @db.Decimal(14, 2)
+  gstRate       Decimal     @default(18.00) @db.Decimal(5, 2)
+  amount        Decimal     @db.Decimal(14, 2)
+  reason        String?
+}
+
+model PurchaseReturn {
+  id           Int                  @id @default(autoincrement())
+  number       String               @unique
+  date         DateTime
+  grnId        Int?
+  grn          GRN?                 @relation(fields: [grnId], references: [id])
+  poId         Int?
+  po           PurchaseOrder?       @relation(fields: [poId], references: [id])
+  partyId      Int
+  party        Party                @relation("PartyPurchaseReturns", fields: [partyId], references: [id])
+  status       ReturnStatus         @default(DRAFT)
+  subtotal     Decimal              @default(0.00) @db.Decimal(14, 2)
+  cgst         Decimal              @default(0.00) @db.Decimal(14, 2)
+  sgst         Decimal              @default(0.00) @db.Decimal(14, 2)
+  igst         Decimal              @default(0.00) @db.Decimal(14, 2)
+  total        Decimal              @default(0.00) @db.Decimal(14, 2)
+  creditNoteNo String?
+  reason       String?              @db.Text
+  notes        String?              @db.Text
+  approvedById Int?
+  approvedAt   DateTime?
+  lines        PurchaseReturnLine[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([grnId])
+  @@index([poId])
+  @@index([partyId])
+  @@index([status])
+}
+
+model PurchaseReturnLine {
+  id               Int            @id @default(autoincrement())
+  purchaseReturnId Int
+  purchaseReturn   PurchaseReturn @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
+  grnLineId        Int?
+  itemId           Int
+  item             Item           @relation("ItemPurchaseReturnLines", fields: [itemId], references: [id])
+  description      String
+  qty              Decimal        @db.Decimal(14, 3)
+  rate             Decimal        @db.Decimal(14, 2)
+  gstRate          Decimal        @default(18.00) @db.Decimal(5, 2)
+  amount           Decimal        @db.Decimal(14, 2)
+  reason           String?
+}
+
+enum BackOrderStatus {
+  PENDING
+  PARTIALLY_FULFILLED
+  FULFILLED
+  CANCELLED
+}
+
+model BackOrder {
+  id           Int             @id @default(autoincrement())
+  number       String          @unique
+  date         DateTime
+  invoiceId    Int?
+  invoice      Invoice?        @relation(fields: [invoiceId], references: [id])
+  partyId      Int
+  party        Party           @relation("PartyBackOrders", fields: [partyId], references: [id])
+  status       BackOrderStatus @default(PENDING)
+  expectedDate DateTime?
+  notes        String?         @db.Text
+  lines        BackOrderLine[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([invoiceId])
+  @@index([partyId])
+  @@index([status])
+}
+
+model BackOrderLine {
+  id           Int       @id @default(autoincrement())
+  backOrderId  Int
+  backOrder    BackOrder @relation(fields: [backOrderId], references: [id], onDelete: Cascade)
+  itemId       Int
+  item         Item      @relation("ItemBackOrderLines", fields: [itemId], references: [id])
+  description  String
+  qtyOrdered   Decimal   @db.Decimal(14, 3)
+  qtyFulfilled Decimal   @default(0.000) @db.Decimal(14, 3)
+  rate         Decimal   @db.Decimal(14, 2)
+  notes        String?
+}
+
+// ============================================================
+//  BATCH MANUFACTURING + SHIFT MANAGEMENT
+// ============================================================
+
+model Shift {
+  id          Int               @id @default(autoincrement())
+  code        String            @unique
+  name        String
+  startTime   String // "06:00"
+  endTime     String // "14:00"
+  isActive    Boolean           @default(true)
+  productions ProductionBatch[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model ProductionBatch {
+  id                   Int                  @id @default(autoincrement())
+  number               String               @unique
+  date                 DateTime
+  shiftId              Int
+  shift                Shift                @relation(fields: [shiftId], references: [id])
+  jobcardId            Int?
+  jobcard              Jobcard?             @relation(fields: [jobcardId], references: [id])
+  itemId               Int
+  item                 Item                 @relation("ItemProductionBatches", fields: [itemId], references: [id])
+  bomId                Int?
+  bom                  Bom?                 @relation(fields: [bomId], references: [id])
+  status               String               @default("PLANNED") // PLANNED | IN_PROGRESS | COMPLETED | CANCELLED
+  qtyPlanned           Decimal              @default(0.000) @db.Decimal(14, 3)
+  qtyProduced          Decimal              @default(0.000) @db.Decimal(14, 3)
+  qtyRejected          Decimal              @default(0.000) @db.Decimal(14, 3)
+  startTime            DateTime?
+  endTime              DateTime?
+  machineId            Int?
+  machine              Machine?             @relation(fields: [machineId], references: [id])
+  notes                String?              @db.Text
+  materialConsumptions ProductionMaterial[]
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  @@index([shiftId])
+  @@index([jobcardId])
+  @@index([itemId])
+  @@index([status])
+  @@index([date])
+}
+
+model ProductionMaterial {
+  id          Int             @id @default(autoincrement())
+  batchId     Int
+  batch       ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  itemId      Int
+  item        Item            @relation("ItemProductionMaterials", fields: [itemId], references: [id])
+  qtyPlanned  Decimal         @default(0.000) @db.Decimal(14, 3)
+  qtyConsumed Decimal         @default(0.000) @db.Decimal(14, 3)
+  uomCode     String?
+  notes       String?
+}
+
+// Centralized, race-free document numbering (used by utils/numbering.js).
+// One row per `${prefix}-${yy}` (or code-prefix) key; the row is incremented
+// inside the caller's transaction with a row lock (SELECT ... FOR UPDATE), so
+// two concurrent documents can never draw the same number.
+model NumberSequence {
+  id      Int    @id @default(autoincrement())
+  key     String @unique
+  current Int    @default(0)
+}

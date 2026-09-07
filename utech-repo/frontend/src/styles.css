@@ -1,0 +1,210 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  body { @apply bg-slate-50 text-slate-800; }
+
+  /* App-wide guard: nothing may make the page itself scroll sideways on a
+     tablet/phone. Wide content (data tables, the A4 print sheet) scrolls
+     inside its own overflow-x-auto box, never the viewport. */
+  html, body { max-width: 100%; overflow-x: hidden; }
+  #root { overflow-x: clip; }
+  /* long unbroken strings (codes, emails, URLs) wrap instead of stretching a row */
+  .table-td, .pd-line, .pd-party-name { overflow-wrap: anywhere; }
+
+  /* smooth scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #f1f5f9; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+}
+
+@layer components {
+  .btn { 
+    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] shadow-sm;
+  }
+  .btn-primary { 
+    @apply btn bg-brand-600 text-white hover:bg-brand-700 hover:shadow-lg hover:shadow-brand-500/25 focus:ring-2 focus:ring-brand-500/50 focus:ring-offset-2;
+  }
+  .btn-secondary { 
+    @apply btn bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:shadow-md transition-shadow;
+  }
+  .btn-danger { 
+    @apply btn bg-danger-600 text-white hover:bg-danger-700 hover:shadow-lg hover:shadow-danger-500/25 focus:ring-2 focus:ring-danger-500/50 focus:ring-offset-2;
+  }
+  .btn-success { 
+    @apply btn bg-success-600 text-white hover:bg-success-700 hover:shadow-lg hover:shadow-success-500/25 focus:ring-2 focus:ring-success-500/50 focus:ring-offset-2;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-800;
+  }
+  .btn-icon {
+    @apply inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors duration-150;
+  }
+
+  .input { 
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 transition-all duration-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none hover:border-slate-400;
+  }
+  .input:focus { @apply shadow-sm; }
+  .label { @apply block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wider; }
+  
+  .card { 
+    @apply bg-white border border-slate-200/80 rounded-xl shadow-sm hover:shadow-lg transition-all duration-300;
+  }
+  .card-flat { 
+    @apply bg-white border border-slate-200/80 rounded-xl;
+  }
+
+  .table-th { 
+    @apply px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50/80 border-b border-slate-200 select-none;
+  }
+  .table-td { 
+    @apply px-4 py-3 text-sm text-slate-700 border-b border-slate-100 hover:bg-slate-50/50 transition-colors;
+  }
+  .badge { 
+    @apply inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold;
+  }
+
+  .skeleton { 
+    @apply animate-pulse bg-slate-200 rounded;
+  }
+  .loading-spinner {
+    @apply animate-spin rounded-full border-2 border-slate-200 border-t-brand-600;
+  }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+
+  /* Edge shadows that appear only while a horizontal scroll box actually has
+     more content to reveal — the "there's more to the right" cue on tablets.
+     (background-attachment: local pins the white covers to the content, scroll
+     pins the shadows to the frame.) */
+  .scroll-x-hint {
+    background:
+      linear-gradient(to right, #fff 30%, rgba(255,255,255,0)) 0 0,
+      linear-gradient(to left, #fff 30%, rgba(255,255,255,0)) 100% 0,
+      linear-gradient(to right, rgba(15,23,42,0.14), rgba(15,23,42,0)) 0 0,
+      linear-gradient(to left, rgba(15,23,42,0.14), rgba(15,23,42,0)) 100% 0;
+    background-repeat: no-repeat;
+    background-size: 44px 100%, 44px 100%, 16px 100%, 16px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+}
+
+/* ---- touch devices (tablets / phones): bigger hit targets ---- */
+@media (pointer: coarse) {
+  .btn-icon { width: 2.5rem; height: 2.5rem; }
+  .btn { min-height: 2.5rem; }
+  /* 16px keeps mobile browsers from zooming in when a field is focused */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea { font-size: 16px; }
+  .table-td, .table-th { padding-top: 0.6rem; padding-bottom: 0.6rem; }
+  /* comfortable row height for tapping into a record */
+  tbody tr { min-height: 2.75rem; }
+}
+
+@layer utilities {
+  .animate-fade-in { animation: fadeIn 0.3s ease-out both; }
+  .animate-slide-up { animation: slideUp 0.4s ease-out both; }
+  .animate-scale-in { animation: scaleIn 0.2s ease-out both; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+html, body, #root { height: 100%; }
+
+@media print {
+  .no-print { display: none !important; }
+  html, body, #root { height: auto; background: white; }
+  main { padding: 0 !important; background: white !important; }
+  .print-doc { box-shadow: none !important; margin: 0 !important; border: none !important; max-width: none !important; padding: 0 10mm !important; }
+  .pd-items-table tr, .pd-sign-table, .pd-totals-table { break-inside: avoid; }
+  .pd-title-bar { break-after: avoid; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @page { size: A4; margin: 8mm; }
+}
+
+/* ---- formal printed-document layout (quotation / invoice) ---- */
+@layer components {
+  .print-doc {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    color: #1a1a1a;
+    border: 1px solid #d4d4d8;
+    padding: 12mm 10mm;
+  }
+
+  .pd-letterhead { text-align: center; border-bottom: 3px solid #1a1a1a; padding-bottom: 10px; margin-bottom: 12px; }
+  .pd-letterhead-img { border-bottom: none; padding-bottom: 0; margin-bottom: 12px; }
+  /* full-bleed banner: width drives the box, height follows the image's own aspect
+     ratio — capping height here is what caused it to render small and letterboxed. */
+  .pd-header-img { width: 100%; height: auto; display: block; }
+  .pd-header-text { font-size: 12px; white-space: pre-line; line-height: 1.5; }
+  .pd-company-block { text-align: center; }
+  .pd-company-name { font-size: 21px; font-weight: 700; letter-spacing: 0.03em; }
+  .pd-company-address { font-size: 11.5px; color: #444; margin-top: 3px; }
+
+  .pd-title-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .pd-title { font-size: 18px; font-weight: 700; letter-spacing: 0.14em; color: #1a1a1a; }
+
+  .pd-meta-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  .pd-meta-cell { vertical-align: top; border: 1px solid #333; padding: 9px 12px; font-size: 12px; width: 60%; background: #fafafa; }
+  .pd-meta-cell-right { width: 40%; background: white; }
+
+  .pd-label { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #666; margin-bottom: 4px; }
+  .pd-party-name { font-size: 14.5px; font-weight: 700; margin-bottom: 3px; }
+  .pd-line { font-size: 12px; line-height: 1.55; }
+
+  .pd-kv-table { width: 100%; border-collapse: collapse; }
+  .pd-kv-table .pd-kv-label { font-size: 11px; color: #555; padding: 2.5px 0; white-space: nowrap; }
+  .pd-kv-table .pd-kv-value { font-size: 12px; font-weight: 600; text-align: right; padding: 2.5px 0 2.5px 12px; }
+  .pd-total-row .pd-kv-label, .pd-total-row .pd-kv-value { font-size: 14px; font-weight: 700; border-top: 1.5px solid #333; padding-top: 6px; }
+
+  .pd-items-table { width: 100%; border-collapse: collapse; margin-bottom: 0; }
+  .pd-th { border: 1px solid #333; background: #ececec; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 7px 8px; text-align: left; }
+  .pd-td { border: 1px solid #333; font-size: 12px; padding: 7px 8px; vertical-align: top; }
+  .pd-items-table tbody tr:nth-child(even) { background: #fafafa; }
+  .pd-col-sr { width: 34px; text-align: center; }
+  .pd-col-desc { text-align: left; }
+  .pd-col-num { width: 70px; text-align: right; }
+  .pd-col-amt { width: 95px; text-align: right; font-weight: 600; }
+  .pd-items-table .pd-col-sr { text-align: center; }
+  .pd-items-table td.pd-col-num, .pd-items-table td.pd-col-amt { text-align: right; }
+
+  .pd-totals-table { width: 100%; border-collapse: collapse; border: 1px solid #333; border-top: none; margin-bottom: 12px; }
+  .pd-totals-words { border-right: 1px solid #333; padding: 9px 12px; vertical-align: bottom; width: 55%; }
+  .pd-totals-figures { padding: 9px 12px; width: 45%; background: #fafafa; }
+  .pd-words { font-size: 11.5px; font-style: italic; }
+
+  .pd-notes { border: 1px solid #333; border-top: none; padding: 9px 12px; margin-bottom: 12px; }
+
+  .pd-sign-table { width: 100%; border-collapse: collapse; margin-top: 34px; }
+  .pd-sign-cell { width: 50%; vertical-align: bottom; padding-top: 40px; font-size: 12px; }
+  .pd-sign-cell-right { text-align: right; }
+  .pd-sign-space { height: 40px; }
+
+  .pd-footer { border-top: 1px solid #333; margin-top: 18px; padding-top: 9px; text-align: center; }
+  .pd-footer-img-wrap { border-top: none; margin-top: 14px; padding-top: 0; }
+  .pd-footer-text { font-size: 10.5px; color: #444; white-space: pre-line; line-height: 1.5; }
+  .pd-footer-img { width: 100%; height: auto; margin: 0; display: block; }
+}
+
+@media screen {
+  .print-doc { box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06); margin-top: 1.5rem; margin-bottom: 2rem; }
+}
