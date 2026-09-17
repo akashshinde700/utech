@@ -119,7 +119,10 @@ export default function PartiesPage() {
             { key: 'code', title: 'Code', width: 100 },
             { key: 'name', title: 'Name', render: (r) => (
               <span className="inline-flex items-center gap-2">
-                <span className={r.isActive === false ? 'text-slate-400' : ''}>{r.name}</span>
+                <span className={r.isActive === false ? 'text-slate-400' : ''}>
+                  {r.name}
+                  {r.nickName && <span className="ml-1.5 text-xs text-slate-400">({r.nickName})</span>}
+                </span>
                 {r.isActive === false && <Badge status="INACTIVE">Inactive</Badge>}
               </span>
             ) },

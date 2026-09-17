@@ -3,6 +3,7 @@ const { z } = require('zod');
 
 const partyBase = {
   name: z.string().min(2),
+  nickName: z.string().optional().nullable(),
   type: z.enum(['CUSTOMER', 'VENDOR', 'BOTH']).default('CUSTOMER'),
   contactPerson: z.string().optional().nullable(),
   email: z.string().email().optional().nullable().or(z.literal('')),
@@ -10,6 +11,11 @@ const partyBase = {
   altPhone: z.string().optional().nullable(),
   gstin: z.string().regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/).optional().nullable().or(z.literal('')),
   pan: z.string().length(10).optional().nullable().or(z.literal('')),
+  stateCode: z.string().optional().nullable(),
+  bankName: z.string().optional().nullable(),
+  bankAccountNo: z.string().optional().nullable(),
+  bankIfsc: z.string().optional().nullable(),
+  bankBranch: z.string().optional().nullable(),
   addressLine1: z.string().optional().nullable(),
   addressLine2: z.string().optional().nullable(),
   city: z.string().optional().nullable(),

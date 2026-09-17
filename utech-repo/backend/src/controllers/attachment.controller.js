@@ -9,7 +9,7 @@ const HttpError = require('../utils/httpError');
 const { audit } = require('../utils/audit');
 
 const ALLOWED_REF_TYPES = new Set([
-  'JOBCARD', 'INVOICE', 'DISPATCH', 'JOBWORK', 'GRN', 'QUALITY', 'PROJECT', 'ASSIGNMENT',
+  'JOBCARD', 'INVOICE', 'DISPATCH', 'JOBWORK', 'GRN', 'QUALITY', 'PROJECT', 'ASSIGNMENT', 'TASK',
 ]);
 const MAX_PER_RECORD = 100;
 
@@ -25,6 +25,9 @@ const REF_PERMISSIONS = {
   QUALITY: { read: 'quality.read', update: 'quality.update' },
   PROJECT: { read: 'project.read', update: 'project.update' },
   ASSIGNMENT: { read: 'assignment.read', update: 'assignment.update' },
+  // 'progress' is what both the assignee and every task-managing role hold —
+  // 'update' would exclude Operators (they never get task.update)
+  TASK: { read: 'task.read', update: 'task.progress' },
 };
 
 function assertRefPermission(req, refType, action) {
@@ -116,6 +119,16 @@ async function assertAssignmentAccess(req, refType, assignmentId) {
   }
 }
 
+// TASK attachments (evidence photos, drawings) — an Operator only ever sees
+// files on a task assigned to them; every other task.read holder (managers)
+// is unrestricted, mirroring assertJobcardOwnership above.
+async function assertTaskOwnership(req, refType, operationId) {
+  if (refType !== 'TASK' || !req.user || req.user.role !== 'OPERATOR') return;
+  const t = await prisma.jobcardOperation.findUnique({ where: { id: operationId }, select: { assignedToId: true } });
+  if (!t) throw new HttpError(404, 'Task not found');
+  if (t.assignedToId !== req.user.id) throw new HttpError(403, 'This task is not assigned to you');
+}
+
 // --- handlers ---
 
 async function uploadFiles(req, res) {
@@ -126,6 +139,7 @@ async function uploadFiles(req, res) {
   try {
     await assertJobcardOwnership(req, refType, recordRefId);
     await assertAssignmentAccess(req, refType, recordRefId);
+    await assertTaskOwnership(req, refType, recordRefId);
   } catch (e) {
     for (const f of req.files || []) try { fs.unlinkSync(f.path); } catch (_) { /* ignore */ }
     throw e;
@@ -173,6 +187,7 @@ async function listFor(req, res) {
   assertRefPermission(req, refType, 'read');
   await assertJobcardOwnership(req, refType, parseInt(refId, 10));
   await assertAssignmentAccess(req, refType, parseInt(refId, 10));
+  await assertTaskOwnership(req, refType, parseInt(refId, 10));
   const items = await prisma.attachment.findMany({
     where: { refType, refId: parseInt(refId, 10) },
     orderBy: { createdAt: 'desc' },
@@ -187,6 +202,7 @@ async function downloadOne(req, res) {
   assertRefPermission(req, a.refType, 'read');
   await assertJobcardOwnership(req, a.refType, a.refId);
   await assertAssignmentAccess(req, a.refType, a.refId);
+  await assertTaskOwnership(req, a.refType, a.refId);
   const filePath = path.join(baseDir, a.storedName);
   if (!fs.existsSync(filePath)) throw new HttpError(404, 'File missing on disk');
   const ext = path.extname(a.storedName || '').toLowerCase();
@@ -214,6 +230,7 @@ async function deleteOne(req, res) {
   assertRefPermission(req, a.refType, 'update');
   await assertJobcardOwnership(req, a.refType, a.refId);
   await assertAssignmentAccess(req, a.refType, a.refId);
+  await assertTaskOwnership(req, a.refType, a.refId);
 
   await prisma.attachment.delete({ where: { id } });
   try { fs.unlinkSync(path.join(baseDir, a.storedName)); } catch (_) { /* file may already be gone */ }

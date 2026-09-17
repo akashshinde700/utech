@@ -46,6 +46,7 @@ const departmentRoutes = require('./routes/department.routes');
 const assignmentRoutes = require('./routes/assignment.routes');
 const departmentSubCategoryRoutes = require('./routes/departmentSubCategory.routes');
 const vendorWorkOrderRoutes = require('./routes/vendorWorkOrder.routes');
+const taskRoutes = require('./routes/task.routes');
 
 const app = express();
 
@@ -105,6 +106,7 @@ app.use('/api/departments', departmentRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/department-subcategories', departmentSubCategoryRoutes);
 app.use('/api/vendor-work-orders', vendorWorkOrderRoutes);
+app.use('/api/tasks', taskRoutes);
 
 // frontend (static build served by this same process in production)
 const publicDir = path.resolve(__dirname, '..', 'public');

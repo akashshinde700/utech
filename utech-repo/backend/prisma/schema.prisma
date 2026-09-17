@@ -49,6 +49,10 @@ model User {
   assignedJobcards            Jobcard[]             @relation("JobcardAssignedOperator")
   engineeredJobcards          Jobcard[]             @relation("JobcardProjectEngineer")
   jobcardNotes                JobcardNote[]
+  tasksAssignedToMe           JobcardOperation[]    @relation("TaskAssignedTo")
+  tasksAssignedByMe           JobcardOperation[]    @relation("TaskAssignedBy")
+  tasksCreatedByMe            JobcardOperation[]    @relation("TaskCreatedBy")
+  processesCreated            Process[]
   notifications               Notification[]
   createdCustomerMaterialLots CustomerMaterialLot[] @relation("CustomerMaterialLotCreatedBy")
   createdAt                   DateTime              @default(now())
@@ -103,6 +107,8 @@ model Department {
   users            User[]
   subCategories    DepartmentSubCategory[]
   assignments      Assignment[]
+  tasks            JobcardOperation[]
+  processes        Process[]
   vendorWorkOrders VendorWorkOrder[]
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
@@ -175,6 +181,7 @@ model Party {
   id             Int       @id @default(autoincrement())
   code           String    @unique
   name           String
+  nickName       String?
   type           PartyType @default(CUSTOMER)
   contactPerson  String?
   email          String?
@@ -182,6 +189,12 @@ model Party {
   altPhone       String?
   gstin          String?
   pan            String?
+  stateCode      String? // GST state code, derived from the GSTIN
+  // bank (for vendor payments / party statements)
+  bankName       String?
+  bankAccountNo  String?
+  bankIfsc       String?
+  bankBranch     String?
   // address
   addressLine1   String?
   addressLine2   String?
@@ -325,11 +338,42 @@ model Machine {
   updatedAt         DateTime           @updatedAt
 }
 
+// Process Master: Department -> Process -> Sub-Process, self-referential so
+// predefined and department-added custom processes share one table (no
+// parallel "custom process" schema). A Process with `departmentId` null is
+// GLOBAL (every department can use it); set = DEPARTMENT_SPECIFIC, usable
+// only by that department. `parentProcessId` nests a Sub-Process under a
+// Process — both levels are Process rows and both can be a Task's processId.
 model Process {
   id           Int                @id @default(autoincrement())
   code         String             @unique
   name         String
+  // groups top-level processes into a manufacturing stage (e.g. "OD Turning"
+  // -> "Machining") for the Task Progress workflow view. Configurable master
+  // data, not a hardcoded stage list.
+  stage        String?
   description  String?
+
+  // null = GLOBAL (any department may use it); set = usable only by this
+  // department (a Department Head's own custom process/sub-process)
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  // null = this row is a top-level Process; set = it is a Sub-Process of another
+  parentProcessId Int?
+  parentProcess   Process?  @relation("ProcessSubProcess", fields: [parentProcessId], references: [id])
+  subProcesses    Process[] @relation("ProcessSubProcess")
+
+  // optional, informational-only template-level dependency ("Honing can start
+  // only after OD Turning") — distinct from a specific task's own dependsOn
+  dependsOnProcessId Int?
+  dependsOnProcess   Process?  @relation("ProcessDependsOn", fields: [dependsOnProcessId], references: [id])
+  dependents         Process[] @relation("ProcessDependsOn")
+
+  displayOrder Int   @default(0)
+  createdById  Int?
+  createdBy    User? @relation(fields: [createdById], references: [id])
+
   // standard time per piece in minutes
   stdTimeMin   Decimal?           @db.Decimal(8, 2)
   ratePerHour  Decimal?           @db.Decimal(10, 2)
@@ -338,6 +382,9 @@ model Process {
   jobworkLines JobworkLine[]
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
+
+  @@index([departmentId])
+  @@index([parentProcessId])
 }
 
 // Two ownership buckets only — a vendor never owns material, it only
@@ -598,7 +645,9 @@ model Jobcard {
   party           Party?        @relation(fields: [partyId], references: [id])
   itemId          Int?
   itemDescription String?
-  projectNumber   String?
+  projectNumber   String? // legacy free-text label — kept for jobcards tagged before projectId existed
+  projectId       Int?
+  project         Project?      @relation(fields: [projectId], references: [id])
   assemblyNumber  String?
   drawingNumber   String?
   qtyOrdered      Decimal       @default(0.000) @db.Decimal(14, 3)
@@ -638,6 +687,7 @@ model Jobcard {
   @@index([status])
   @@index([partyId])
   @@index([assignedOperatorId])
+  @@index([projectId])
 }
 
 enum JobcardNoteKind {
@@ -646,16 +696,22 @@ enum JobcardNoteKind {
 }
 
 model JobcardNote {
-  id        Int             @id @default(autoincrement())
-  jobcardId Int
-  jobcard   Jobcard         @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
-  kind      JobcardNoteKind
-  body      String          @db.Text
-  authorId  Int?
-  author    User?           @relation(fields: [authorId], references: [id])
-  createdAt DateTime        @default(now())
+  id          Int               @id @default(autoincrement())
+  jobcardId   Int
+  jobcard     Jobcard           @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
+  // optional: ties the remark to one specific task/operation within the
+  // jobcard (the Task Progress module's comment thread) rather than the
+  // jobcard as a whole — null keeps the original jobcard-level behavior
+  operationId Int?
+  operation   JobcardOperation? @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  kind        JobcardNoteKind
+  body        String            @db.Text
+  authorId    Int?
+  author      User?             @relation(fields: [authorId], references: [id])
+  createdAt   DateTime          @default(now())
 
   @@index([jobcardId])
+  @@index([operationId])
 }
 
 model JobcardLine {
@@ -670,19 +726,91 @@ model JobcardLine {
   notes     String?
 }
 
+// Task lifecycle for a JobcardOperation — the Department Head "Task Progress"
+// module's task unit. Deliberately richer than the old free-text status
+// (PENDING/RUNNING/DONE/SKIPPED, never used by any UI) since this model now
+// carries real assignment + progress tracking.
+enum JobcardOperationStatus {
+  NOT_STARTED
+  ASSIGNED
+  ACCEPTED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  REJECTED
+  CANCELLED
+  REOPENED
+}
+
+// A single manufacturing-workflow task on a jobcard: one stage/sub-process
+// (via `process`, whose own `stage` groups it — e.g. process "OD Turning" ->
+// stage "Machining") assigned to one employee. This is the Task Progress /
+// Task Assignment module's task — deliberately built by extending the
+// existing (previously unused) JobcardOperation rather than adding a parallel
+// task table, so it inherits the jobcard's project/party/document context for
+// free instead of duplicating it.
 model JobcardOperation {
-  id        Int       @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   jobcardId Int
-  jobcard   Jobcard   @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
+  jobcard   Jobcard  @relation(fields: [jobcardId], references: [id], onDelete: Cascade)
   processId Int?
-  process   Process?  @relation(fields: [processId], references: [id])
+  process   Process? @relation(fields: [processId], references: [id])
   machineId Int?
-  machine   Machine?  @relation(fields: [machineId], references: [id])
-  sequence  Int       @default(0)
-  startAt   DateTime?
-  endAt     DateTime?
-  status    String    @default("PENDING") // PENDING | RUNNING | DONE | SKIPPED
-  notes     String?
+  machine   Machine? @relation(fields: [machineId], references: [id])
+  sequence  Int      @default(0)
+
+  // task identity — falls back to the process name when blank
+  title String?
+  notes String? @db.Text
+
+  status          JobcardOperationStatus @default(NOT_STARTED)
+  priority        JobcardPriority        @default(MEDIUM)
+  progressPercent Int                    @default(0)
+
+  // denormalized at assignment time (mirrors Assignment.departmentId's own
+  // rationale) so department-scoped dashboards/visibility work even if the
+  // assignee's own department changes later, and even before anyone is assigned
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  assignedToId Int?
+  assignedTo   User? @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  assignedById Int?
+  assignedBy   User? @relation("TaskAssignedBy", fields: [assignedById], references: [id])
+  createdById  Int?
+  createdBy    User? @relation("TaskCreatedBy", fields: [createdById], references: [id])
+
+  plannedStartAt DateTime?
+  dueDate        DateTime?
+  estimatedHours Decimal?  @db.Decimal(6, 2)
+  actualHours    Decimal?  @db.Decimal(6, 2)
+
+  startAt    DateTime? // actual start (Accept -> Start)
+  acceptedAt DateTime?
+  endAt      DateTime? // actual completion
+
+  // rework: a fresh task spawned from a failed inspection, linked back to the
+  // task it reworks. History on the original is never overwritten.
+  parentOperationId Int?
+  parentOperation   JobcardOperation?  @relation("TaskRework", fields: [parentOperationId], references: [id])
+  reworkTasks       JobcardOperation[] @relation("TaskRework")
+  reworkReason      String?            @db.Text
+
+  // soft/informational only — never auto-blocks a start (by design)
+  dependsOnOperationId Int?
+  dependsOnOperation   JobcardOperation?  @relation("TaskDependsOn", fields: [dependsOnOperationId], references: [id])
+  dependents           JobcardOperation[] @relation("TaskDependsOn")
+
+  comments JobcardNote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobcardId])
+  @@index([assignedToId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([parentOperationId])
 }
 
 model JobcardRevert {
@@ -1060,6 +1188,7 @@ model Project {
   status    String        @default("PLANNED")
   tasks     ProjectTask[]
   items     Item[]
+  jobcards  Jobcard[]
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 }

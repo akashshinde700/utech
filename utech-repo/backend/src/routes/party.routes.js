@@ -9,6 +9,9 @@ const { createPartySchema, updatePartySchema } = require('../validators/party.sc
 router.use(requireAuth);
 
 router.get('/', requirePermission('party.read'), ah(ctrl.list));
+// lookups for the party form's auto-fill — before /:id so they don't get eaten by it
+router.get('/lookup/ifsc/:code', ah(ctrl.ifscLookup));
+router.get('/lookup/gstin/:gstin', ah(ctrl.gstinLookup));
 router.get('/:id', requirePermission('party.read'), ah(ctrl.get));
 router.get('/:id/ledger', requirePermission('party.read'), ah(ctrl.ledger));
 router.post('/', requirePermission('party.create'), validate(createPartySchema), ah(ctrl.create));

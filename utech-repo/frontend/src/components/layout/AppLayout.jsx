@@ -36,7 +36,21 @@ const NAV_SECTIONS = [
       { to: '/jobcards', label: 'Jobcards', icon: ClipboardList, perm: 'jobcard.read' },
       { to: '/assignments', label: 'Assignments', icon: ListChecks, perm: 'assignment.read' },
       { to: '/machines', label: 'Machines', icon: Cog, perm: 'machine.read' },
-      { to: '/processes', label: 'Processes', icon: Cog, perm: 'process.read' },
+    ],
+  },
+  // Department Head task assignment / progress tracking over the manufacturing
+  // workflow (Department -> Process -> Sub-Process -> Task -> Employee ->
+  // Progress). Task Progress = the manager dashboard; My Tasks = the
+  // employee/assignee self-service view; Process Master configures the
+  // (department-scoped) process/sub-process list tasks are created against.
+  {
+    id: 'task-management',
+    label: 'Task Management',
+    icon: ListChecks,
+    items: [
+      { to: '/my-tasks', label: 'My Tasks', icon: ListChecks, perm: 'task.progress' },
+      { to: '/tasks', label: 'Task Progress', icon: Layers, perm: 'task.create' },
+      { to: '/processes', label: 'Process Master', icon: Cog, perm: 'process.read' },
     ],
   },
   {
@@ -121,6 +135,21 @@ const RESTRICTED_NAV_SECTIONS = [
     items: [
       { to: '/', label: 'My Projects', icon: ClipboardList },
       { to: '/assignments', label: 'My Assignments', icon: ListChecks },
+    ],
+  },
+  // scopeToDepartment roles (Department Head / Supervisor / Team Leader) land
+  // here too (see isRestricted below) — these items are perm-gated exactly
+  // like NAV_SECTIONS, so a plain Operator (task.progress only) sees just "My
+  // Tasks" while a Department Head (task.progress + task.create +
+  // process.read) sees the full Task Management set.
+  {
+    id: 'task-management',
+    label: 'Task Management',
+    icon: ListChecks,
+    items: [
+      { to: '/my-tasks', label: 'My Tasks', icon: ListChecks, perm: 'task.progress' },
+      { to: '/tasks', label: 'Task Progress', icon: Layers, perm: 'task.create' },
+      { to: '/processes', label: 'Process Master', icon: Cog, perm: 'process.read' },
     ],
   },
 ];

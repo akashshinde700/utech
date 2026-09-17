@@ -17,6 +17,8 @@ import InvoiceView from './pages/invoices/InvoiceView.jsx';
 import JobcardsPage from './pages/jobcards/JobcardsPage.jsx';
 import JobcardForm from './pages/jobcards/JobcardForm.jsx';
 import JobcardView from './pages/jobcards/JobcardView.jsx';
+import TasksPage from './pages/tasks/TasksPage.jsx';
+import MyTasksPage from './pages/tasks/MyTasksPage.jsx';
 import JobworkPage from './pages/jobwork/JobworkPage.jsx';
 import JobworkForm from './pages/jobwork/JobworkForm.jsx';
 import DispatchPage from './pages/dispatch/DispatchPage.jsx';
@@ -167,6 +169,9 @@ export default function App() {
         <Route path="jobcards/new" element={<JobcardForm />} />
         <Route path="jobcards/:id" element={<JobcardView />} />
         <Route path="jobcards/:id/edit" element={<JobcardForm />} />
+
+        <Route path="tasks" element={<TasksPage />} />
+        <Route path="my-tasks" element={<MyTasksPage />} />
 
         <Route path="jobwork" element={<JobworkPage />} />
         <Route path="jobwork/new" element={<JobworkForm />} />

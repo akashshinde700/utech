@@ -1,29 +1,34 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { User, MapPin, CreditCard, StickyNote, Save } from 'lucide-react';
+import { User, MapPin, CreditCard, StickyNote, Save, Landmark, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import FormField from '../../components/ui/FormField';
 import FormSection from '../../components/ui/FormSection';
 import { styles } from '../../lib/formStyles';
 import { email, gstin, normalizePhone, phone10, pincode, required, validateAll } from '../../lib/validation';
+import { deriveFromGstin, suggestNickName } from '../../lib/gstin';
 import toast from 'react-hot-toast';
 
 const empty = {
-  name: '', type: 'CUSTOMER', contactPerson: '', email: '', phone: '', altPhone: '',
-  gstin: '', pan: '',
+  name: '', nickName: '', type: 'CUSTOMER', contactPerson: '', email: '', phone: '', altPhone: '',
+  gstin: '', pan: '', stateCode: '',
+  bankName: '', bankAccountNo: '', bankIfsc: '', bankBranch: '',
   addressLine1: '', addressLine2: '', city: '', state: '', pincode: '', country: 'India',
   creditLimit: '', creditDays: '', openingBalance: '', notes: '',
 };
 
 // field id map — lets a failed submit focus the first offending control
 const FIELD_IDS = {
-  name: 'party-name', type: 'party-type', contactPerson: 'party-contact', email: 'party-email',
-  phone: 'party-phone', altPhone: 'party-alt-phone', gstin: 'party-gstin', pan: 'party-pan',
+  name: 'party-name', nickName: 'party-nick', type: 'party-type', contactPerson: 'party-contact', email: 'party-email',
+  phone: 'party-phone', altPhone: 'party-alt-phone', gstin: 'party-gstin', pan: 'party-pan', stateCode: 'party-state-code',
+  bankName: 'party-bank-name', bankAccountNo: 'party-bank-acc', bankIfsc: 'party-bank-ifsc', bankBranch: 'party-bank-branch',
   addressLine1: 'party-addr1', addressLine2: 'party-addr2', city: 'party-city', state: 'party-state',
   pincode: 'party-pincode', country: 'party-country', creditLimit: 'party-credit-limit',
   creditDays: 'party-credit-days', openingBalance: 'party-opening-balance', notes: 'party-notes',
 };
+
+const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
 // PAN is not in lib/validation — local format validator, empty allowed.
 // Format: [A-Z]{5}[0-9]{4}[A-Z]{1} (e.g. ABCDE1234F).
@@ -52,6 +57,7 @@ export default function PartyForm() {
   const [form, setForm] = useState(empty);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+  const [ifscBusy, setIfscBusy] = useState(false);
 
   useEffect(() => {
     if (id) api.get(`/parties/${id}`).then((r) => setForm({ ...empty, ...r.data }));
@@ -68,6 +74,46 @@ export default function PartyForm() {
     if (!schema[k]) return;
     const msg = schema[k](form[k], form);
     setErrors((e) => ({ ...e, [k]: msg || undefined }));
+  }
+
+  // GSTIN carries the GST state code + PAN — fill them the moment it's valid
+  function onGstinBlur() {
+    blur('gstin');
+    const d = deriveFromGstin(form.gstin);
+    if (!d.stateCode) return;
+    setForm((f) => ({
+      ...f,
+      stateCode: d.stateCode,
+      state: f.state?.trim() ? f.state : d.state,
+      pan: f.pan?.trim() ? f.pan : d.pan,
+    }));
+    setErrors((e) => ({ ...e, pan: undefined }));
+  }
+
+  // IFSC -> bank name + branch (free public lookup via the backend)
+  async function onIfscBlur() {
+    const code = String(form.bankIfsc || '').trim().toUpperCase();
+    if (code && code !== form.bankIfsc) setForm((f) => ({ ...f, bankIfsc: code }));
+    if (!IFSC_RE.test(code)) return;
+    setIfscBusy(true);
+    try {
+      const { data } = await api.get(`/parties/lookup/ifsc/${code}`);
+      setForm((f) => ({
+        ...f,
+        bankName: data.bankName || f.bankName,
+        bankBranch: data.branch || f.bankBranch,
+      }));
+    } catch {
+      toast.error('Could not look up that IFSC — enter the bank name manually');
+    } finally {
+      setIfscBusy(false);
+    }
+  }
+
+  // suggest a nickname from the party name (only when the field is still empty)
+  function onNameBlur() {
+    blur('name');
+    setForm((f) => (f.nickName?.trim() ? f : { ...f, nickName: suggestNickName(f.name) }));
   }
 
   async function save(e) {
@@ -113,8 +159,16 @@ export default function PartyForm() {
                 className={`${styles.input} ${errors.name ? styles.inputError : ''}`}
                 value={form.name}
                 onChange={(e) => set('name', e.target.value)}
-                onBlur={() => blur('name')}
+                onBlur={onNameBlur}
                 aria-invalid={!!errors.name}
+              />
+            </FormField>
+            <FormField id="party-nick" label="Nick Name" hint="Short name — auto-suggested from the party name; editable">
+              <input
+                id="party-nick"
+                className={styles.input}
+                value={form.nickName || ''}
+                onChange={(e) => set('nickName', e.target.value)}
               />
             </FormField>
             <FormField id="party-type" label="Type" required error={errors.type}>
@@ -165,13 +219,13 @@ export default function PartyForm() {
                 aria-invalid={!!errors.email}
               />
             </FormField>
-            <FormField id="party-gstin" label="GSTIN" hint="15-character GST identification number" error={errors.gstin}>
+            <FormField id="party-gstin" label="GSTIN" hint="Fills PAN + state code automatically" error={errors.gstin}>
               <input
                 id="party-gstin"
                 className={`${styles.input} uppercase ${errors.gstin ? styles.inputError : ''}`}
                 value={form.gstin || ''}
-                onChange={(e) => set('gstin', e.target.value)}
-                onBlur={() => blur('gstin')}
+                onChange={(e) => set('gstin', e.target.value.toUpperCase())}
+                onBlur={onGstinBlur}
                 aria-invalid={!!errors.gstin}
               />
             </FormField>
@@ -184,6 +238,42 @@ export default function PartyForm() {
                 onBlur={() => blur('pan')}
                 aria-invalid={!!errors.pan}
               />
+            </FormField>
+            <FormField id="party-state-code" label="GST State Code" hint="Auto from GSTIN">
+              <input
+                id="party-state-code"
+                className={`${styles.input} bg-slate-50`}
+                value={form.stateCode ? `${form.stateCode}${form.state ? ` — ${form.state}` : ''}` : ''}
+                placeholder="—"
+                readOnly
+                tabIndex={-1}
+              />
+            </FormField>
+          </div>
+        </FormSection>
+
+        <FormSection icon={Landmark} title="Bank Details" description="Used for vendor payments and on the party statement">
+          <div className={styles.formGrid}>
+            <FormField id="party-bank-ifsc" label="IFSC Code" hint="Fills the bank name automatically">
+              <div className="relative">
+                <input
+                  id="party-bank-ifsc"
+                  className={`${styles.input} uppercase`}
+                  value={form.bankIfsc || ''}
+                  onChange={(e) => set('bankIfsc', e.target.value.toUpperCase())}
+                  onBlur={onIfscBlur}
+                />
+                {ifscBusy && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />}
+              </div>
+            </FormField>
+            <FormField id="party-bank-name" label="Bank Name">
+              <input id="party-bank-name" className={styles.input} value={form.bankName || ''} onChange={(e) => set('bankName', e.target.value)} />
+            </FormField>
+            <FormField id="party-bank-acc" label="Bank Account No.">
+              <input id="party-bank-acc" className={styles.input} value={form.bankAccountNo || ''} onChange={(e) => set('bankAccountNo', e.target.value)} />
+            </FormField>
+            <FormField id="party-bank-branch" label="Branch">
+              <input id="party-bank-branch" className={styles.input} value={form.bankBranch || ''} onChange={(e) => set('bankBranch', e.target.value)} />
             </FormField>
           </div>
         </FormSection>

@@ -12,7 +12,7 @@ const MODULES = [
   'invoice', 'quotation', 'jobcard', 'jobwork', 'dispatch',
   'purchase', 'grn', 'quality', 'project', 'bom', 'expense',
   'attachment', 'report', 'customerMaterial', 'stock', 'department',
-  'departmentSubcategory', 'assignment', 'vendorWorkOrder',
+  'departmentSubcategory', 'assignment', 'vendorWorkOrder', 'task',
 ];
 const ACTIONS = ['create', 'read', 'update', 'delete'];
 
@@ -41,6 +41,14 @@ async function main() {
     update: {},
     create: { key: 'stock.adjust', module: 'stock', action: 'adjust' },
   });
+  // the Task Progress module's employee self-service action (accept/start/
+  // hold/complete/update-progress on a task assigned to you) — an Operator
+  // gets this without ever holding the manager-level task.update
+  await prisma.permission.upsert({
+    where: { key: 'task.progress' },
+    update: {},
+    create: { key: 'task.progress', module: 'task', action: 'progress' },
+  });
 
   console.log('Seeding roles...');
   const allPerms = await prisma.permission.findMany();
@@ -63,7 +71,7 @@ async function main() {
   const managerMods = ['party', 'item', 'invoice', 'quotation', 'jobcard',
     'jobwork', 'dispatch', 'machine', 'process', 'purchase', 'grn',
     'quality', 'project', 'expense', 'attachment', 'report', 'customerMaterial', 'stock',
-    'vendorWorkOrder'];
+    'vendorWorkOrder', 'task'];
   // jobcard.delete (project delete) is Super Admin/Admin only; the special
   // non-CRUD grants (jobcard.progress / stock.adjust) follow their own lists
   const managerPerms = allPerms.filter((p) =>
@@ -88,7 +96,11 @@ async function main() {
     (p.module === 'jobcard' && p.action === 'progress') ||
     (p.module === 'item' && p.action === 'read') ||
     (p.module === 'quality' && ['create', 'read'].includes(p.action)) ||
-    (p.module === 'assignment' && ['read', 'update'].includes(p.action))
+    (p.module === 'assignment' && ['read', 'update'].includes(p.action)) ||
+    // Task Progress: an Operator sees + self-serves only the tasks assigned
+    // to them (task.controller.js scopes this — read alone isn't team-wide)
+    (p.module === 'task' && p.action === 'read') ||
+    (p.module === 'task' && p.action === 'progress')
   );
   await prisma.rolePermission.deleteMany({ where: { roleId: operator.id } });
   await prisma.rolePermission.createMany({
@@ -122,7 +134,7 @@ async function main() {
   const adminMods = ['party', 'item', 'invoice', 'quotation', 'jobcard', 'jobwork',
     'dispatch', 'machine', 'process', 'purchase', 'grn', 'quality', 'project',
     'expense', 'attachment', 'report', 'customerMaterial', 'stock', 'user', 'department',
-    'departmentSubcategory', 'assignment', 'vendorWorkOrder'];
+    'departmentSubcategory', 'assignment', 'vendorWorkOrder', 'task'];
   await grant('Admin', allPerms.filter((p) => adminMods.includes(p.module)));
   await grant('Plant Head', allPerms.filter((p) => p.action === 'read'));
   // jobcard.delete (project delete) is Super Admin/Admin only; the special
@@ -137,7 +149,9 @@ async function main() {
     // the Project Engineer starts every chain, so they must be able to see how
     // far a scope travelled — including out to an external vendor and back
     (p.module === 'vendorWorkOrder' && p.action === 'read') ||
-    (['purchase', 'grn'].includes(p.module) && p.action === 'read')
+    (['purchase', 'grn'].includes(p.module) && p.action === 'read') ||
+    // oversees Task Progress across every department, read-only
+    (p.module === 'task' && p.action === 'read')
   ));
   const deptScopedPerms = allPerms.filter((p) =>
     (p.module === 'user' && ['read', 'update'].includes(p.action)) ||
@@ -149,7 +163,12 @@ async function main() {
     // every department can see the work its own people sent outside (the
     // controller scopes rows to the caller's departmentId); only the Head below
     // can actually issue it
-    (p.module === 'vendorWorkOrder' && p.action === 'read')
+    (p.module === 'vendorWorkOrder' && p.action === 'read') ||
+    // Task Progress + Process Master, scoped to the caller's own department by
+    // task.controller.js / process.controller.js — create/assign/manage tasks
+    // and add/edit the department's own processes & sub-processes
+    (p.module === 'task' && ['read', 'update', 'create', 'progress'].includes(p.action)) ||
+    (p.module === 'process' && ['read', 'create', 'update'].includes(p.action))
   );
   // The Department Head owns the hand-off to an external vendor end to end —
   // Vendor Development is the department this exists for: pick the vendor, issue
@@ -174,8 +193,102 @@ async function main() {
     { name: 'Vendor Development', code: 'VDEV' },
     { name: 'Quality', code: 'QC' },
   ];
+  const deptRows = {};
   for (const d of DEPARTMENTS) {
-    await prisma.department.upsert({ where: { name: d.name }, update: {}, create: d });
+    deptRows[d.code] = await prisma.department.upsert({ where: { name: d.name }, update: {}, create: d });
+  }
+
+  console.log('Seeding Process Master (predefined manufacturing workflow)...');
+  // Department -> Process -> Sub-Process -> Task is the module's structure;
+  // this seeds the predefined stages/processes only — a Department Head can
+  // add further custom processes/sub-processes on top via the Process Master
+  // screen (Process.parentProcessId), department-scoped exactly like these.
+  // deptCode null = GLOBAL (any department's tasks can use it).
+  const WORKFLOW_PROCESSES = [
+    ['WF-MTIN', 'Material Inward', 'Material Inward', null],
+    ['WF-MTVER', 'Material Verification (PMI / Grade Check)', 'Material Verification', null],
+
+    ['WF-LASERCUT', 'Laser Cutting', 'Cutting', null],
+    ['WF-PLASMACUT', 'Plasma Cutting', 'Cutting', null],
+    ['WF-BANDSAW', 'Bandsaw Cutting', 'Cutting', null],
+
+    ['WF-ROLL', 'Rolling', 'Forming', null],
+    ['WF-REROLL', 'Re-Rolling', 'Forming', null],
+    ['WF-BEND', 'Bending', 'Forming', null],
+
+    ['WF-ROOTWELD', 'Root Welding', 'Fabrication', 'FAB'],
+    ['WF-FILL', 'Filling', 'Fabrication', 'FAB'],
+    ['WF-CAP', 'Capping', 'Fabrication', 'FAB'],
+
+    ['WF-PRETURN', 'Pre-Turning', 'Machining', 'MACH'],
+    ['WF-FACING', 'Facing', 'Machining', 'MACH'],
+    ['WF-ODTURN', 'OD Turning', 'Machining', 'MACH'],
+    ['WF-IDTURN', 'ID Turning', 'Machining', 'MACH'],
+    ['WF-GROOVE', 'Grooving', 'Machining', 'MACH'],
+    ['WF-THREAD', 'Threading', 'Machining', 'MACH'],
+    ['WF-BORE', 'Boring', 'Machining', 'MACH'],
+    ['WF-POSTTURN', 'Post-Turning', 'Machining', 'MACH'],
+    ['WF-FINALTURN', 'Final Turning', 'Machining', 'MACH'],
+
+    ['WF-PREMILL', 'Pre-Milling', 'VMC Machining', 'CNCVMC'],
+    ['WF-FACEMILL', 'Face Milling', 'VMC Machining', 'CNCVMC'],
+    ['WF-DRILL', 'Drilling', 'VMC Machining', 'CNCVMC'],
+    ['WF-REAM', 'Reaming', 'VMC Machining', 'CNCVMC'],
+    ['WF-VMCBORE', 'VMC Boring', 'VMC Machining', 'CNCVMC'],
+    ['WF-TAP', 'Tapping', 'VMC Machining', 'CNCVMC'],
+
+    ['WF-WIREEDM', 'Wire EDM', 'Other Machining', 'CNCVMC'],
+    ['WF-EDM', 'EDM', 'Other Machining', 'CNCVMC'],
+    ['WF-CNCGRIND', 'CNC Grinding', 'Other Machining', 'CNCVMC'],
+    ['WF-SURFGRIND', 'Surface Grinding', 'Other Machining', 'CNCVMC'],
+    ['WF-CYLGRIND', 'Cylindrical Grinding', 'Other Machining', 'CNCVMC'],
+
+    ['WF-BUFFMATTE', 'Buffing — Matte', 'Surface Finishing', null],
+    ['WF-BUFFMIRROR', 'Buffing — Mirror', 'Surface Finishing', null],
+    ['WF-SANDBLAST', 'Sand Blasting', 'Surface Finishing', null],
+    ['WF-SHOTBLAST', 'Shot Blasting', 'Surface Finishing', null],
+    ['WF-ACIDCLEAN', 'Acid Cleaning', 'Surface Finishing', null],
+
+    ['WF-PLATING', 'Plating', 'Surface Treatment', 'VDEV'],
+    ['WF-POWDERCOAT', 'Powder Coating', 'Surface Treatment', 'VDEV'],
+
+    ['WF-LASERMARK', 'Laser Marking', 'Marking', null],
+    ['WF-ENGRAVE', 'Engraving', 'Marking', null],
+
+    ['WF-ASSY', 'Assembly', 'Assembly', null],
+
+    ['WF-MATINSP', 'Material Inspection', 'Inspection / Quality', 'QC'],
+    ['WF-WELDINSP', 'Welding Inspection', 'Inspection / Quality', 'QC'],
+    ['WF-DIMINSP', 'Dimension Inspection', 'Inspection / Quality', 'QC'],
+    ['WF-DRGVERIFY', 'Drawing Verification', 'Inspection / Quality', 'QC'],
+    ['WF-THREADINSP', 'Thread Inspection', 'Inspection / Quality', 'QC'],
+    ['WF-ASSYINSP', 'Assembly Inspection', 'Inspection / Quality', 'QC'],
+    ['WF-QTYINSP', 'Quantity Inspection', 'Inspection / Quality', 'QC'],
+
+    ['WF-DPT', 'DPT (Dye Penetrant Test)', 'Testing', 'QC'],
+    ['WF-RT', 'RT (Radiography Test)', 'Testing', 'QC'],
+    ['WF-LEAKTEST', 'Leak Test', 'Testing', 'QC'],
+    ['WF-PRESSTEST', 'Pressure Test', 'Testing', 'QC'],
+
+    ['WF-WELDREPAIR', 'Welding Repair', 'Rework', null],
+    ['WF-REGRIND', 'Grinding (Rework)', 'Rework', null],
+    ['WF-REMACH', 'Re-Machining', 'Rework', null],
+    ['WF-RETAP', 'Re-Tapping', 'Rework', null],
+    ['WF-RECUT', 'Re-Cutting', 'Rework', null],
+    ['WF-REINSP', 'Re-Inspection', 'Rework', null],
+    ['WF-SCRAP', 'Scrap', 'Rework', null],
+
+    ['WF-PACK', 'Packing', 'Packing', null],
+    ['WF-DISPATCH', 'Dispatch', 'Dispatch', null],
+  ];
+  let displayOrder = 0;
+  for (const [code, name, stage, deptCode] of WORKFLOW_PROCESSES) {
+    displayOrder += 10;
+    await prisma.process.upsert({
+      where: { code },
+      update: {},
+      create: { code, name, stage, displayOrder, departmentId: deptCode ? deptRows[deptCode].id : null },
+    });
   }
 
   console.log('Seeding admin user...');

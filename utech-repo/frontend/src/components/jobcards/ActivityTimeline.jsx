@@ -7,11 +7,12 @@ import EmptyState from '../ui/EmptyState';
 const ACTION_LABELS = {
   create: 'Project created',
   update: 'Project updated',
-  assign: 'Operator assigned',
+  assign: 'Assigned',
   statusChange: 'Status changed',
   progress: 'Progress updated',
   complete: 'Marked as completed',
   revert: 'Reverted',
+  rework: 'Rework task created',
   upload: 'File uploaded',
   delete: 'File deleted',
 };
@@ -21,15 +22,20 @@ function describe(e) {
   return ACTION_LABELS[e.action] || e.action;
 }
 
-export default function ActivityTimeline({ jobcardId }) {
+// jobcardId (legacy) hits /jobcards/:id/activity; pass `endpoint` directly for
+// any other resource that exposes the same {source,action/kind,body,by,createdAt}
+// activity shape (e.g. tasks: `/tasks/${id}/activity`).
+export default function ActivityTimeline({ jobcardId, endpoint }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const url = endpoint || `/jobcards/${jobcardId}/activity`;
 
   useEffect(() => {
     let cancelled = false;
-    api.get(`/jobcards/${jobcardId}/activity`).then((r) => { if (!cancelled) setEvents(r.data); }).finally(() => { if (!cancelled) setLoading(false); });
+    setLoading(true);
+    api.get(url).then((r) => { if (!cancelled) setEvents(r.data); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [jobcardId]);
+  }, [url]);
 
   if (loading) {
     return (
