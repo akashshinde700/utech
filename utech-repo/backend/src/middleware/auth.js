@@ -7,6 +7,19 @@ function unauthorized(res, msg = 'Unauthorized') {
   return res.status(401).json({ error: 'Unauthorized', message: msg });
 }
 
+// What this user may actually do: their role's grants, minus anything revoked
+// for them personally, plus anything granted to them personally. Lets one
+// Department Head hold a capability the rest of the role doesn't (and vice
+// versa) without cloning the role. Expects role.permissions and
+// permissionOverrides to be included on `user`.
+function effectivePermissions(user) {
+  const fromRole = user.role ? user.role.permissions.map((rp) => rp.permission.key) : [];
+  const overrides = user.permissionOverrides || [];
+  const revoked = new Set(overrides.filter((o) => !o.allow).map((o) => o.permission.key));
+  const granted = overrides.filter((o) => o.allow).map((o) => o.permission.key);
+  return [...new Set([...fromRole.filter((k) => !revoked.has(k)), ...granted])];
+}
+
 async function requireAuth(req, res, next) {
   try {
     const header = req.headers.authorization || '';
@@ -16,7 +29,10 @@ async function requireAuth(req, res, next) {
     const payload = jwt.verify(token, env.JWT_SECRET);
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      include: { role: { include: { permissions: { include: { permission: true } } } } },
+      include: {
+        role: { include: { permissions: { include: { permission: true } } } },
+        permissionOverrides: { include: { permission: true } },
+      },
     });
     if (!user || !user.isActive) return unauthorized(res, 'User inactive or missing');
 
@@ -28,9 +44,7 @@ async function requireAuth(req, res, next) {
       departmentId: user.departmentId,
       scopeToDepartment: !!(user.role && user.role.scopeToDepartment),
       hierarchyLevel: user.role ? user.role.hierarchyLevel : null,
-      permissions: user.role
-        ? user.role.permissions.map((rp) => rp.permission.key)
-        : [],
+      permissions: effectivePermissions(user),
     };
     return next();
   } catch (e) {

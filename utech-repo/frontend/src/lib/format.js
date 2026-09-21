@@ -52,6 +52,8 @@ export const STATUS_COLORS = {
   PARTIALLY_RECEIVED: 'bg-amber-100 text-amber-700',
   ASSIGNED: 'bg-slate-100 text-slate-700',
   REOPENED: 'bg-orange-100 text-orange-700',
+  // task handed in and waiting on the Department Head's review
+  SUBMITTED: 'bg-purple-100 text-purple-700',
   // task 6-d additive fills — statuses that pages were remapping through
   // unrelated keys (e.g. ACTIVE→'PAID', PLANNED→'DRAFT') because these were
   // missing. No existing keys changed; only new soft tones from the same palette.

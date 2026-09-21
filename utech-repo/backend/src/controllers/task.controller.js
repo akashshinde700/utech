@@ -17,12 +17,13 @@ const TASK_INCLUDE = {
   assignedTo: { select: { id: true, name: true, email: true } },
   assignedBy: { select: { id: true, name: true } },
   createdBy: { select: { id: true, name: true } },
+  approvedBy: { select: { id: true, name: true } },
   parentOperation: { select: { id: true, title: true, status: true } },
   dependsOnOperation: { select: { id: true, title: true, status: true, process: { select: { name: true } } } },
   reworkTasks: { select: { id: true, title: true, status: true } },
 };
 
-const OPEN_STATUSES = ['NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'REOPENED'];
+const OPEN_STATUSES = ['NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'SUBMITTED', 'REOPENED'];
 const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED', 'REJECTED'];
 
 function withComputed(t) {
@@ -121,7 +122,7 @@ async function dashboard(req, res) {
   const now = new Date();
   const summary = {
     total: rows.length, notStarted: 0, assigned: 0, inProgress: 0, onHold: 0,
-    completed: 0, cancelled: 0, overdue: 0,
+    submitted: 0, completed: 0, cancelled: 0, overdue: 0,
   };
   const byStage = {};
   for (const r of rows) {
@@ -132,6 +133,7 @@ async function dashboard(req, res) {
     else if (r.status === 'ASSIGNED') summary.assigned += 1;
     else if (['ACCEPTED', 'IN_PROGRESS', 'REOPENED'].includes(r.status)) { summary.inProgress += 1; byStage[stage].inProgress += 1; }
     else if (r.status === 'ON_HOLD') summary.onHold += 1;
+    else if (r.status === 'SUBMITTED') summary.submitted += 1;
     else if (r.status === 'COMPLETED') { summary.completed += 1; byStage[stage].completed += 1; }
     else if (['CANCELLED', 'REJECTED'].includes(r.status)) summary.cancelled += 1;
     if (['NOT_STARTED', 'ASSIGNED'].includes(r.status)) byStage[stage].pending += 1;
@@ -291,14 +293,17 @@ const TRANSITIONS = {
   NOT_STARTED: ['CANCELLED'],
   ASSIGNED: ['ACCEPTED', 'REJECTED', 'CANCELLED'],
   ACCEPTED: ['IN_PROGRESS', 'CANCELLED'],
-  IN_PROGRESS: ['ON_HOLD', 'COMPLETED', 'CANCELLED'],
+  IN_PROGRESS: ['ON_HOLD', 'SUBMITTED', 'COMPLETED', 'CANCELLED'],
   ON_HOLD: ['IN_PROGRESS', 'CANCELLED'],
+  // review gate — the assignee hands it in, the manager closes it or sends
+  // it back for rework (REOPENED puts it back in the assignee's hands)
+  SUBMITTED: ['COMPLETED', 'REOPENED', 'CANCELLED'],
   COMPLETED: ['REOPENED'],
-  REOPENED: ['IN_PROGRESS', 'ON_HOLD', 'COMPLETED'],
+  REOPENED: ['IN_PROGRESS', 'ON_HOLD', 'SUBMITTED', 'COMPLETED'],
   REJECTED: ['ASSIGNED', 'CANCELLED'],
   CANCELLED: [],
 };
-const REASON_REQUIRED = new Set(['ON_HOLD', 'REJECTED', 'CANCELLED']);
+const REASON_REQUIRED = new Set(['ON_HOLD', 'REJECTED', 'CANCELLED', 'REOPENED']);
 
 async function setStatus(req, res) {
   const id = parseInt(req.params.id, 10);
@@ -326,6 +331,13 @@ async function setStatus(req, res) {
   if (status === 'CANCELLED' && !isManager) {
     throw new HttpError(403, 'Only a manager can cancel a task');
   }
+  if (status === 'SUBMITTED' && !isAssignee) {
+    throw new HttpError(403, 'Only the assignee can submit this task for review');
+  }
+  // a task created with a review gate can only be closed by the reviewer
+  if (status === 'COMPLETED' && existing.requiresApproval && !isManager) {
+    throw new HttpError(400, 'This task needs review — submit it instead, and a manager will approve it');
+  }
   if (REASON_REQUIRED.has(status) && !reason) {
     throw new HttpError(400, `A reason is required to set status to ${status}`);
   }
@@ -334,8 +346,13 @@ async function setStatus(req, res) {
   const now = new Date();
   if (status === 'ACCEPTED') data.acceptedAt = now;
   if (status === 'IN_PROGRESS' && !existing.startAt) data.startAt = now;
-  if (status === 'COMPLETED') { data.endAt = now; data.progressPercent = 100; }
-  if (status === 'REOPENED') { data.endAt = null; }
+  if (status === 'SUBMITTED') { data.submittedAt = now; data.progressPercent = 100; }
+  if (status === 'COMPLETED') {
+    data.endAt = now;
+    data.progressPercent = 100;
+    if (existing.requiresApproval) { data.approvedAt = now; data.approvedById = req.user.id; }
+  }
+  if (status === 'REOPENED') { data.endAt = null; data.submittedAt = null; data.approvedAt = null; data.approvedById = null; }
 
   const task = await prisma.$transaction(async (tx) => {
     const updated = await tx.jobcardOperation.update({ where: { id }, data, include: TASK_INCLUDE });
@@ -353,7 +370,8 @@ async function setStatus(req, res) {
   if (status === 'COMPLETED' && existing.assignedById) notify.push([existing.assignedById, `Task completed: ${task.title || task.process?.name}`]);
   if (status === 'ON_HOLD' && existing.assignedById) notify.push([existing.assignedById, `Task on hold: ${task.title || task.process?.name} — ${reason}`]);
   if (status === 'REJECTED' && existing.assignedById) notify.push([existing.assignedById, `Task rejected: ${task.title || task.process?.name} — ${reason}`]);
-  if (status === 'REOPENED' && existing.assignedToId) notify.push([existing.assignedToId, `Task reopened: ${task.title || task.process?.name}`]);
+  if (status === 'SUBMITTED' && existing.assignedById) notify.push([existing.assignedById, `Task submitted for review: ${task.title || task.process?.name}`]);
+  if (status === 'REOPENED' && existing.assignedToId) notify.push([existing.assignedToId, `Rework requested: ${task.title || task.process?.name} — ${reason}`]);
   for (const [userId, title] of notify) {
     await prisma.notification.create({
       data: { userId, type: 'TASK_STATUS', title, refType: 'JOBCARD_OPERATION', refId: id },

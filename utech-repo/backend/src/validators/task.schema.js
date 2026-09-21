@@ -3,7 +3,7 @@ const { z } = require('zod');
 
 const STATUSES = [
   'NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD',
-  'COMPLETED', 'REJECTED', 'CANCELLED', 'REOPENED',
+  'SUBMITTED', 'COMPLETED', 'REJECTED', 'CANCELLED', 'REOPENED',
 ];
 
 const createTaskSchema = z.object({
@@ -15,6 +15,8 @@ const createTaskSchema = z.object({
   departmentId: z.number().int(), // a task always belongs to one department
   assignedToId: z.number().int().optional().nullable(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).default('MEDIUM'),
+  // when true the assignee submits for review instead of completing directly
+  requiresApproval: z.boolean().optional(),
   plannedStartAt: z.coerce.date().optional().nullable(),
   dueDate: z.coerce.date().optional().nullable(),
   estimatedHours: z.number().nonnegative().optional().nullable(),

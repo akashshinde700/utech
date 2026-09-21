@@ -24,4 +24,13 @@ const updateUserSchema = z.object({
   password: z.string().min(8).optional(),
 });
 
-module.exports = { createUserSchema, updateUserSchema };
+// per-user permission overrides: allow true = grant, false = revoke,
+// null/omitted = fall back to whatever the role grants
+const setUserPermissionsSchema = z.object({
+  overrides: z.array(z.object({
+    key: z.string().min(1),
+    allow: z.boolean().nullable().optional(),
+  })).max(500),
+});
+
+module.exports = { setUserPermissionsSchema, createUserSchema, updateUserSchema };

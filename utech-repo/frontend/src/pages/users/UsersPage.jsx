@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, PlusCircle, UserPlus, Trash2, Pencil, Loader2, User, ShieldCheck } from 'lucide-react';
+import { Search, PlusCircle, UserPlus, Trash2, Pencil, Loader2, User, ShieldCheck, KeySquare } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import DataTable from '../../components/ui/DataTable';
@@ -27,7 +27,12 @@ function slugCode(name) {
 
 export default function UsersPage() {
   const user = useAuth((s) => s.user);
+  const refreshMe = useAuth((s) => s.refreshMe);
   const canDelete = hasPermission(user, 'user.delete');
+  // handing out capabilities is an admin job — a department-scoped manager
+  // editing their own team must not be able to escalate anyone (the API
+  // enforces this too)
+  const canManagePerms = hasPermission(user, 'user.update') && !user?.scopeToDepartment;
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
@@ -47,6 +52,13 @@ export default function UsersPage() {
   const [deptQuickAdd, setDeptQuickAdd] = useState(null);
   const [subCatQuickAdd, setSubCatQuickAdd] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  // per-user permission overrides (on top of the role's grants)
+  const [permsFor, setPermsFor] = useState(null);   // the user row being edited
+  const [permRows, setPermRows] = useState([]);     // [{key, module, action, fromRole, override, effective}]
+  const [permRoleName, setPermRoleName] = useState(null);
+  const [permSearch, setPermSearch] = useState('');
+  const [permBusy, setPermBusy] = useState(false);
+  const [permLoading, setPermLoading] = useState(false);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -291,6 +303,48 @@ export default function UsersPage() {
 
   const inputCls = (key) => `${styles.input} ${errors[key] ? styles.inputError : ''}`;
 
+  async function openPerms(row) {
+    setPermsFor(row);
+    setPermSearch('');
+    setPermRows([]);
+    setPermLoading(true);
+    try {
+      const r = await api.get(`/users/${row.id}/permissions`);
+      setPermRows(r.data.permissions);
+      setPermRoleName(r.data.roleName);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load permissions');
+      setPermsFor(null);
+    } finally {
+      setPermLoading(false);
+    }
+  }
+
+  // null = inherit the role, true = grant here, false = revoke here
+  function setOverride(key, override) {
+    setPermRows((rows) => rows.map((p) => (
+      p.key === key ? { ...p, override, effective: override === null ? p.fromRole : override } : p
+    )));
+  }
+
+  async function savePerms() {
+    setPermBusy(true);
+    try {
+      await api.put(`/users/${permsFor.id}/permissions`, {
+        overrides: permRows.map((p) => ({ key: p.key, allow: p.override })),
+      });
+      toast.success('Permissions updated');
+      setPermsFor(null);
+      // the edited user picks the change up on their next request; if it was
+      // our own account, refresh so the UI gates update immediately
+      if (permsFor.id === user?.id) await refreshMe();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save permissions');
+    } finally {
+      setPermBusy(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -370,12 +424,15 @@ export default function UsersPage() {
           { key: 'reportingTo', title: 'Reporting To', render: (r) => r.reportingTo?.name || '—' },
           { key: 'isActive', title: 'Status', render: (r) =>
             <Badge status={r.isActive ? 'ACTIVE' : 'INACTIVE'}>{r.isActive ? 'Active' : 'Inactive'}</Badge> },
-          { key: '__act', title: '', width: 120, render: (r) => (
+          { key: '__act', title: '', width: 150, render: (r) => (
             <div className="flex gap-1 justify-end">
               <button className="btn-secondary !px-2 !py-1" aria-label={`Edit user ${r.name || r.email}`} onClick={() => openUserModal({
                 ...r, password: '', roleId: r.role?.id || '', departmentId: r.department?.id || '',
                 departmentSubCategoryId: r.departmentSubCategory?.id || '', reportingToId: r.reportingTo?.id || '',
               })}><Pencil className="w-3.5 h-3.5" /></button>
+              {canManagePerms && (
+                <button className="btn-secondary !px-2 !py-1" title="Permission overrides" aria-label={`Permissions for ${r.name || r.email}`} onClick={() => openPerms(r)}><KeySquare className="w-3.5 h-3.5" /></button>
+              )}
               {canDelete && <button className="btn-danger !px-2 !py-1" aria-label={`Delete user ${r.name || r.email}`} onClick={() => setDeleting(r)}><Trash2 className="w-3.5 h-3.5" /></button>}
             </div>
           ) },
@@ -666,6 +723,95 @@ export default function UsersPage() {
               Active
             </label>
           </div>
+        </Modal>
+      )}
+
+      {permsFor && (
+        <Modal
+          open
+          onClose={() => setPermsFor(null)}
+          title={`Permissions — ${permsFor.name || permsFor.email}`}
+          description={permRoleName ? `Role: ${permRoleName}. Overrides here apply to this person only.` : 'Overrides here apply to this person only.'}
+          size="xl"
+          footer={
+            <>
+              <button type="button" className={styles.secondaryBtn} onClick={() => setPermsFor(null)} disabled={permBusy}>Cancel</button>
+              <button type="button" className={styles.primaryBtn} onClick={savePerms} disabled={permBusy || permLoading}>
+                {permBusy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                {permBusy ? 'Saving…' : 'Save permissions'}
+              </button>
+            </>
+          }
+        >
+          {permLoading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading permissions…
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-xs text-slate-600">
+                <b>Inherit</b> follows the role. <b>Grant</b> gives this person a capability the role doesn&apos;t have.
+                <b> Revoke</b> takes one away that the role does. Useful when only some Department Heads should be able
+                to create tasks, for example.
+              </div>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  className={`${styles.input} pl-8`}
+                  placeholder="Filter permissions… (e.g. task)"
+                  value={permSearch}
+                  onChange={(e) => setPermSearch(e.target.value)}
+                />
+              </div>
+              <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-100">
+                {permRows
+                  .filter((p) => !permSearch || p.key.toLowerCase().includes(permSearch.toLowerCase()))
+                  .map((p) => (
+                    <div key={p.key} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-slate-800">{p.key}</div>
+                        <div className="text-[11px] text-slate-400">
+                          Role {p.fromRole ? 'grants' : 'does not grant'} this ·{' '}
+                          <span className={p.effective ? 'text-success-700' : 'text-slate-500'}>
+                            effective: {p.effective ? 'allowed' : 'denied'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        {[
+                          { v: null, label: 'Inherit' },
+                          { v: true, label: 'Grant' },
+                          { v: false, label: 'Revoke' },
+                        ].map((opt) => {
+                          const active = p.override === opt.v;
+                          return (
+                            <button
+                              key={String(opt.v)}
+                              type="button"
+                              onClick={() => setOverride(p.key, opt.v)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                active
+                                  ? opt.v === true
+                                    ? 'bg-success-600 border-success-600 text-white'
+                                    : opt.v === false
+                                      ? 'bg-danger-600 border-danger-600 text-white'
+                                      : 'bg-slate-700 border-slate-700 text-white'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                {permRows.filter((p) => !permSearch || p.key.toLowerCase().includes(permSearch.toLowerCase())).length === 0 && (
+                  <div className="px-3 py-6 text-center text-xs text-slate-400">No permissions match that filter.</div>
+                )}
+              </div>
+            </div>
+          )}
         </Modal>
       )}
 

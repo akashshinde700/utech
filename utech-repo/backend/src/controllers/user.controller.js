@@ -254,4 +254,68 @@ async function remove(req, res) {
   res.json({ ok: true, deleted: true });
 }
 
-module.exports = { list, get, create, update, remove, reportingCandidates };
+// --- per-user permission overrides -------------------------------------
+// The role stays the baseline; these add or remove single capabilities for
+// one person (e.g. only some Department Heads may create tasks). Mirrors
+// effectivePermissions() in middleware/auth.js.
+
+async function listPermissions(req, res) {
+  const id = parseInt(req.params.id, 10);
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: {
+      role: { include: { permissions: { include: { permission: true } } } },
+      permissionOverrides: { include: { permission: true } },
+    },
+  });
+  if (!user) throw new HttpError(404, 'User not found');
+  assertSameDepartment(req, user.departmentId);
+
+  const all = await prisma.permission.findMany({ orderBy: [{ module: 'asc' }, { action: 'asc' }] });
+  const fromRole = new Set((user.role ? user.role.permissions : []).map((rp) => rp.permission.key));
+  const overrideByKey = new Map(user.permissionOverrides.map((o) => [o.permission.key, o.allow]));
+
+  res.json({
+    roleName: user.role ? user.role.name : null,
+    permissions: all.map((p) => ({
+      key: p.key,
+      module: p.module,
+      action: p.action,
+      fromRole: fromRole.has(p.key),
+      // null = inherit the role, true = granted here, false = revoked here
+      override: overrideByKey.has(p.key) ? overrideByKey.get(p.key) : null,
+      effective: overrideByKey.has(p.key) ? overrideByKey.get(p.key) : fromRole.has(p.key),
+    })),
+  });
+}
+
+async function setPermissions(req, res) {
+  const id = parseInt(req.params.id, 10);
+  const user = await prisma.user.findUnique({ where: { id }, select: { id: true, email: true, departmentId: true } });
+  if (!user) throw new HttpError(404, 'User not found');
+  assertSameDepartment(req, user.departmentId);
+  // only an unscoped admin may hand out capabilities — a department-scoped
+  // manager editing their own team must not be able to escalate anyone
+  if (req.user.scopeToDepartment) {
+    throw new HttpError(403, 'Only an administrator can change permission overrides');
+  }
+
+  const { overrides } = req.body; // [{ key, allow }] — allow null/absent removes the override
+  const keys = overrides.map((o) => o.key);
+  const perms = await prisma.permission.findMany({ where: { key: { in: keys } } });
+  const idByKey = new Map(perms.map((p) => [p.key, p.id]));
+  const unknown = keys.filter((k) => !idByKey.has(k));
+  if (unknown.length) throw new HttpError(400, `Unknown permission key(s): ${unknown.join(', ')}`);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.userPermission.deleteMany({ where: { userId: id, permissionId: { in: [...idByKey.values()] } } });
+    const rows = overrides
+      .filter((o) => o.allow === true || o.allow === false)
+      .map((o) => ({ userId: id, permissionId: idByKey.get(o.key), allow: o.allow }));
+    if (rows.length) await tx.userPermission.createMany({ data: rows, skipDuplicates: true });
+  });
+  await audit(req, 'setPermissions', 'User', id, { email: user.email, overrides });
+  res.json({ ok: true });
+}
+
+module.exports = { list, get, create, update, remove, reportingCandidates, listPermissions, setPermissions };

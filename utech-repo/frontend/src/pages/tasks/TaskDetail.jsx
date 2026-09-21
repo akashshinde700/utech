@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Loader2, User, Calendar, Clock, MessageSquare, Paperclip, Activity as ActivityIcon,
-  Check, Play, Pause, CheckCircle2, XCircle, RotateCcw, Ban, UserPlus, Wrench, Upload, Trash2, Download,
+  Check, Play, Pause, CheckCircle2, XCircle, RotateCcw, Ban, UserPlus, Wrench, Upload, Trash2, Download, Send, ShieldCheck,
 } from 'lucide-react';
 import api from '../../lib/api';
 import Modal from '../../components/ui/Modal';
@@ -203,10 +203,19 @@ export default function TaskDetail({ taskId, onClose, onChanged }) {
   if (s === 'ACCEPTED' && isAssignee) actions.push(<ActionButton key="start" icon={Play} label="Start" onClick={() => setStatus('IN_PROGRESS')} variant="primary" busy={busy} />);
   if ((s === 'IN_PROGRESS' || s === 'REOPENED') && isAssignee) {
     actions.push(<ActionButton key="hold" icon={Pause} label="Put On Hold" onClick={() => requestReason('ON_HOLD')} />);
-    actions.push(<ActionButton key="complete" icon={CheckCircle2} label="Mark Completed" onClick={() => setStatus('COMPLETED')} variant="primary" busy={busy} />);
+    // a task created with a review gate is handed in, not closed, by the assignee
+    if (task.requiresApproval) {
+      actions.push(<ActionButton key="submit" icon={Send} label="Submit for Review" onClick={() => setStatus('SUBMITTED')} variant="primary" busy={busy} />);
+    } else {
+      actions.push(<ActionButton key="complete" icon={CheckCircle2} label="Mark Completed" onClick={() => setStatus('COMPLETED')} variant="primary" busy={busy} />);
+    }
+  }
+  if (s === 'SUBMITTED' && isManager) {
+    actions.push(<ActionButton key="approve" icon={ShieldCheck} label="Approve" onClick={() => setStatus('COMPLETED')} variant="primary" busy={busy} />);
+    actions.push(<ActionButton key="rework" icon={RotateCcw} label="Request Rework" onClick={() => requestReason('REOPENED')} />);
   }
   if (s === 'ON_HOLD' && isAssignee) actions.push(<ActionButton key="resume" icon={Play} label="Resume" onClick={() => setStatus('IN_PROGRESS')} variant="primary" busy={busy} />);
-  if (['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'REOPENED'].includes(s) && isManager) {
+  if (['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'SUBMITTED', 'REOPENED'].includes(s) && isManager) {
     actions.push(<ActionButton key="reassign2" icon={UserPlus} label="Reassign" onClick={openAssign} />);
     actions.push(<ActionButton key="cancel" icon={Ban} label="Cancel" onClick={() => requestReason('CANCELLED')} variant="danger" />);
   }
@@ -292,6 +301,11 @@ export default function TaskDetail({ taskId, onClose, onChanged }) {
             <div><div className="text-xs text-slate-500 flex items-center gap-1"><Clock className="w-3 h-3" /> Estimated Hrs</div><div className="font-medium">{task.estimatedHours ? Number(task.estimatedHours) : '—'}</div></div>
             <div><div className="text-xs text-slate-500 flex items-center gap-1"><Clock className="w-3 h-3" /> Actual Hrs</div><div className="font-medium">{task.actualHours ? Number(task.actualHours) : '—'}</div></div>
             {task.machine && <div><div className="text-xs text-slate-500">Machine</div><div className="font-medium">{task.machine.name}</div></div>}
+            {task.requiresApproval && (
+              <div><div className="text-xs text-slate-500">Review</div><div className="font-medium text-purple-700">Needs approval</div></div>
+            )}
+            {task.submittedAt && <div><div className="text-xs text-slate-500">Submitted</div><div className="font-medium">{date(task.submittedAt)}</div></div>}
+            {task.approvedBy && <div><div className="text-xs text-slate-500">Approved By</div><div className="font-medium">{task.approvedBy.name}</div></div>}
             {task.dependsOnOperation && <div className="col-span-2 sm:col-span-3"><div className="text-xs text-slate-500">Depends On</div><div className="font-medium">{task.dependsOnOperation.title || task.dependsOnOperation.process?.name} <Badge status={task.dependsOnOperation.status}>{task.dependsOnOperation.status.replace(/_/g, ' ')}</Badge></div></div>}
             {task.notes && <div className="col-span-2 sm:col-span-3"><div className="text-xs text-slate-500">Description / Instructions</div><div className="whitespace-pre-line">{task.notes}</div></div>}
             {task.reworkReason && <div className="col-span-2 sm:col-span-3"><div className="text-xs text-amber-600 font-semibold">Rework Reason</div><div>{task.reworkReason}</div></div>}

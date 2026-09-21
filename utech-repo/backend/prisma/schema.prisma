@@ -52,6 +52,8 @@ model User {
   tasksAssignedToMe           JobcardOperation[]    @relation("TaskAssignedTo")
   tasksAssignedByMe           JobcardOperation[]    @relation("TaskAssignedBy")
   tasksCreatedByMe            JobcardOperation[]    @relation("TaskCreatedBy")
+  tasksApprovedByMe           JobcardOperation[]    @relation("TaskApprovedBy")
+  permissionOverrides         UserPermission[]
   processesCreated            Process[]
   notifications               Notification[]
   createdCustomerMaterialLots CustomerMaterialLot[] @relation("CustomerMaterialLotCreatedBy")
@@ -136,12 +138,29 @@ model DepartmentSubCategory {
 }
 
 model Permission {
-  id     Int              @id @default(autoincrement())
+  id         Int              @id @default(autoincrement())
   // dot-namespaced key e.g. "invoice.create", "party.delete"
-  key    String           @unique
-  module String
-  action String
-  roles  RolePermission[]
+  key        String           @unique
+  module     String
+  action     String
+  roles      RolePermission[]
+  userGrants UserPermission[]
+}
+
+// Per-user override on top of whatever the user's role grants. Lets an admin
+// give one person an extra capability, or take one away, without inventing a
+// near-duplicate role -- e.g. only some Department Heads may create tasks.
+// allow = true grants a key the role lacks; allow = false revokes one it has.
+model UserPermission {
+  userId       Int
+  permissionId Int
+  allow        Boolean
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@id([userId, permissionId])
+  @@index([userId])
 }
 
 model RolePermission {
@@ -348,14 +367,14 @@ model Machine {
 // only by that department. `parentProcessId` nests a Sub-Process under a
 // Process — both levels are Process rows and both can be a Task's processId.
 model Process {
-  id           Int                @id @default(autoincrement())
-  code         String             @unique
-  name         String
+  id          Int     @id @default(autoincrement())
+  code        String  @unique
+  name        String
   // groups top-level processes into a manufacturing stage (e.g. "OD Turning"
   // -> "Machining") for the Task Progress workflow view. Configurable master
   // data, not a hardcoded stage list.
-  stage        String?
-  description  String?
+  stage       String?
+  description String?
 
   // null = GLOBAL (any department may use it); set = usable only by this
   // department (a Department Head's own custom process/sub-process)
@@ -739,6 +758,9 @@ enum JobcardOperationStatus {
   ACCEPTED
   IN_PROGRESS
   ON_HOLD
+  // work handed back for the Department Head to review — only reachable on
+  // tasks created with requiresApproval; otherwise IN_PROGRESS -> COMPLETED
+  SUBMITTED
   COMPLETED
   REJECTED
   CANCELLED
@@ -791,6 +813,14 @@ model JobcardOperation {
   startAt    DateTime? // actual start (Accept -> Start)
   acceptedAt DateTime?
   endAt      DateTime? // actual completion
+
+  // optional review gate: when set at creation the assignee submits for
+  // review instead of completing directly, and only a manager closes it
+  requiresApproval Boolean   @default(false)
+  submittedAt      DateTime?
+  approvedAt       DateTime?
+  approvedById     Int?
+  approvedBy       User?     @relation("TaskApprovedBy", fields: [approvedById], references: [id])
 
   // rework: a fresh task spawned from a failed inspection, linked back to the
   // task it reworks. History on the original is never overwritten.

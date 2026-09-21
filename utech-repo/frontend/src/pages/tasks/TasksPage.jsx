@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Plus, ListChecks, Clock, PauseCircle, CheckCircle2, AlertTriangle, Loader2,
-  Layers, Search, X,
+  Layers, Search, X, Send,
 } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
@@ -20,7 +20,7 @@ import { hasPermission } from '../../lib/permissions';
 import TaskDetail from './TaskDetail';
 import toast from 'react-hot-toast';
 
-const STATUSES = ['NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'COMPLETED', 'REJECTED', 'CANCELLED', 'REOPENED'];
+const STATUSES = ['NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'SUBMITTED', 'COMPLETED', 'REJECTED', 'CANCELLED', 'REOPENED'];
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
 
 const CARD_META = [
@@ -28,6 +28,7 @@ const CARD_META = [
   { key: 'notStarted', label: 'Not Started', icon: Layers, color: 'text-slate-600 bg-slate-100' },
   { key: 'inProgress', label: 'In Progress', icon: Clock, color: 'text-blue-600 bg-blue-50' },
   { key: 'onHold', label: 'On Hold', icon: PauseCircle, color: 'text-amber-600 bg-amber-50' },
+  { key: 'submitted', label: 'Pending Review', icon: Send, color: 'text-purple-600 bg-purple-50' },
   { key: 'completed', label: 'Completed', icon: CheckCircle2, color: 'text-success-600 bg-success-50' },
   { key: 'overdue', label: 'Overdue', icon: AlertTriangle, color: 'text-danger-600 bg-danger-50' },
 ];
@@ -35,7 +36,7 @@ const CARD_META = [
 function newTaskForm(defaults) {
   return {
     jobcardId: '', departmentId: defaults.scopedDeptId || '', processId: '', title: '', notes: '',
-    assignedToId: '', priority: 'MEDIUM', plannedStartAt: '', dueDate: '', estimatedHours: '',
+    assignedToId: '', priority: 'MEDIUM', plannedStartAt: '', dueDate: '', estimatedHours: '', requiresApproval: false,
   };
 }
 
@@ -169,7 +170,7 @@ export default function TasksPage() {
         action={canCreate && <button className="btn-primary" onClick={openAddTask}><Plus className="w-4 h-4" /> Add Task</button>}
       />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
         {CARD_META.map((c) => (
           <div key={c.key} className="card p-4 flex items-center gap-3">
             <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${c.color}`} aria-hidden="true">
@@ -323,6 +324,20 @@ export default function TasksPage() {
             <FormField id="add-hours" label="Estimated Hours" className="max-w-[200px]">
               <input id="add-hours" type="number" step="0.5" min="0" className={styles.input} value={adding.estimatedHours} onChange={(e) => setAddField('estimatedHours', e.target.value)} />
             </FormField>
+            <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50/60 p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-600"
+                checked={adding.requiresApproval}
+                onChange={(e) => setAddField('requiresApproval', e.target.checked)}
+              />
+              <span className="text-sm">
+                <span className="font-medium text-slate-800">Needs my approval before it closes</span>
+                <span className="block text-xs text-slate-500">
+                  The operator submits the work for review instead of marking it complete — you then approve it or send it back for rework.
+                </span>
+              </span>
+            </label>
           </div>
         </Modal>
       )}
