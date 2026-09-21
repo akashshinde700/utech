@@ -161,6 +161,9 @@ model Otp {
   purpose    String // "login" | "reset" | "verify"
   expiresAt  DateTime
   consumedAt DateTime?
+  // wrong-code tries against this code; at OTP_MAX_ATTEMPTS the code is burned
+  // so a 6-digit space can't be probed within its TTL
+  attempts   Int       @default(0)
   createdAt  DateTime  @default(now())
   user       User?     @relation(fields: [userId], references: [id])
 
