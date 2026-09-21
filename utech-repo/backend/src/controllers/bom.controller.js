@@ -94,7 +94,14 @@ async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
   const existing = await prisma.bom.findUnique({ where: { id } });
   if (!existing) throw new HttpError(404, 'BOM not found');
-  
+
+  // ProductionBatch.bomId has no cascade/set-null, so deleting a BOM that a
+  // batch was built against used to fail on the FK with an unhandled 500
+  const inUse = await prisma.productionBatch.count({ where: { bomId: id } });
+  if (inUse > 0) {
+    throw new HttpError(400, `This BOM is used by ${inUse} production batch(es) and cannot be deleted`);
+  }
+
   await prisma.bom.delete({ where: { id } });
   await audit(req, 'delete', 'Bom', id, { code: existing.code });
   res.json({ ok: true });

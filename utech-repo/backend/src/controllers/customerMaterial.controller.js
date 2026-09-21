@@ -39,10 +39,20 @@ async function list(req, res) {
     }),
     prisma.customerMaterialLot.count({ where }),
   ]);
-  const withQty = await Promise.all(items.map(async (lot) => ({
-    ...lot,
-    availableQty: await stockService.getCustomerLotAvailableQty(prisma, lot.id),
-  })));
+  // one grouped aggregate for the whole page instead of an aggregate per lot
+  // (this was N+1: a 20-row page fired 21 queries)
+  const lotIds = items.map((l) => l.id);
+  const sums = lotIds.length
+    ? await prisma.stockLedger.groupBy({
+      by: ['customerMaterialLotId'],
+      where: { customerMaterialLotId: { in: lotIds } },
+      _sum: { qtyIn: true, qtyOut: true },
+    })
+    : [];
+  const qtyByLot = new Map(
+    sums.map((s) => [s.customerMaterialLotId, Number(s._sum.qtyIn || 0) - Number(s._sum.qtyOut || 0)])
+  );
+  const withQty = items.map((lot) => ({ ...lot, availableQty: qtyByLot.get(lot.id) || 0 }));
   res.json(paginated(withQty, total, page, pageSize));
 }
 

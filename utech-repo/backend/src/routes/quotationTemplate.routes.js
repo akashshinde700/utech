@@ -1,8 +1,10 @@
 'use strict';
 const router = require('express').Router();
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const validate = require('../middleware/validate');
 const ah = require('../utils/asyncHandler');
 const ctrl = require('../controllers/quotationTemplate.controller');
+const { createTemplateSchema, updateTemplateSchema } = require('../validators/quotationTemplate.schema');
 
 router.use(requireAuth);
 
@@ -14,8 +16,8 @@ router.post('/upload-image', requirePermission('quotation.update', 'quotation.cr
 router.get('/image/:storedName', requirePermission('quotation.read'), ah(ctrl.serveImage));
 
 router.get('/', requirePermission('quotation.read'), ah(ctrl.list));
-router.post('/', requirePermission('quotation.create'), ah(ctrl.create));
-router.put('/:id', requirePermission('quotation.update'), ah(ctrl.update));
+router.post('/', requirePermission('quotation.create'), validate(createTemplateSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('quotation.update'), validate(updateTemplateSchema), ah(ctrl.update));
 router.delete('/:id', requirePermission('quotation.delete'), ah(ctrl.remove));
 
 module.exports = router;

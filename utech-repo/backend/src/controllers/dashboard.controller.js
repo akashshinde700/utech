@@ -90,7 +90,10 @@ async function productionTrendLast4Weeks() {
   }
   for (const b of batches) {
     const d = dayjs(b.date);
-    const w = weeks.find((w) => d.isAfter(w.start) && d.isBefore(w.end));
+    // inclusive start, exclusive end — `isAfter(start)` alone dropped every
+    // batch dated exactly on a week boundary (dates are stored at midnight,
+    // which IS startOf('week'), so those rows silently vanished from the chart)
+    const w = weeks.find((w) => !d.isBefore(w.start) && d.isBefore(w.end));
     if (w) { w.planned += Number(b.qtyPlanned); w.completed += Number(b.qtyProduced); }
   }
   return weeks.map((w) => ({ week: w.label, planned: w.planned, completed: w.completed }));
