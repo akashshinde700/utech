@@ -44,21 +44,23 @@ model User {
 
   otps                        Otp[]
   auditLogs                   AuditLog[]
-  createdInvoices             Invoice[]             @relation("InvoiceCreatedBy")
-  createdJobcards             Jobcard[]             @relation("JobcardCreatedBy")
-  assignedJobcards            Jobcard[]             @relation("JobcardAssignedOperator")
-  engineeredJobcards          Jobcard[]             @relation("JobcardProjectEngineer")
+  createdInvoices             Invoice[]                  @relation("InvoiceCreatedBy")
+  createdJobcards             Jobcard[]                  @relation("JobcardCreatedBy")
+  assignedJobcards            Jobcard[]                  @relation("JobcardAssignedOperator")
+  engineeredJobcards          Jobcard[]                  @relation("JobcardProjectEngineer")
   jobcardNotes                JobcardNote[]
-  tasksAssignedToMe           JobcardOperation[]    @relation("TaskAssignedTo")
-  tasksAssignedByMe           JobcardOperation[]    @relation("TaskAssignedBy")
-  tasksCreatedByMe            JobcardOperation[]    @relation("TaskCreatedBy")
-  tasksApprovedByMe           JobcardOperation[]    @relation("TaskApprovedBy")
+  tasksAssignedToMe           JobcardOperation[]         @relation("TaskAssignedTo")
+  tasksAssignedByMe           JobcardOperation[]         @relation("TaskAssignedBy")
+  tasksCreatedByMe            JobcardOperation[]         @relation("TaskCreatedBy")
+  tasksApprovedByMe           JobcardOperation[]         @relation("TaskApprovedBy")
+  taskAssignments             JobcardOperationAssignee[] @relation("TaskAssigneeUser")
+  taskAssignmentsMade         JobcardOperationAssignee[] @relation("TaskAssigneeAssignedBy")
   permissionOverrides         UserPermission[]
   processesCreated            Process[]
   notifications               Notification[]
-  createdCustomerMaterialLots CustomerMaterialLot[] @relation("CustomerMaterialLotCreatedBy")
-  createdAt                   DateTime              @default(now())
-  updatedAt                   DateTime              @updatedAt
+  createdCustomerMaterialLots CustomerMaterialLot[]      @relation("CustomerMaterialLotCreatedBy")
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
 
   @@index([roleId])
   @@index([departmentId])
@@ -752,6 +754,34 @@ model JobcardLine {
 // module's task unit. Deliberately richer than the old free-text status
 // (PENDING/RUNNING/DONE/SKIPPED, never used by any UI) since this model now
 // carries real assignment + progress tracking.
+enum TaskAssigneeStatus {
+  PENDING
+  COMPLETED
+}
+
+/// One operator's slice of a Task Progress item. A task may be assigned to one
+/// or many operators; each ticks their own checkbox and the parent task only
+/// closes once every assignee has ticked (task.controller.js enforces this).
+model JobcardOperationAssignee {
+  id          Int              @id @default(autoincrement())
+  operationId Int
+  operation   JobcardOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User             @relation("TaskAssigneeUser", fields: [userId], references: [id])
+
+  status       TaskAssigneeStatus @default(PENDING)
+  assignedById Int?
+  assignedBy   User?              @relation("TaskAssigneeAssignedBy", fields: [assignedById], references: [id])
+  assignedAt   DateTime           @default(now())
+  completedAt  DateTime?
+  remarks      String?            @db.Text
+
+  // an operator can never be assigned the same task twice
+  @@unique([operationId, userId])
+  @@index([userId])
+  @@index([operationId])
+}
+
 enum JobcardOperationStatus {
   NOT_STARTED
   ASSIGNED
@@ -835,6 +865,11 @@ model JobcardOperation {
   dependents           JobcardOperation[] @relation("TaskDependsOn")
 
   comments JobcardNote[]
+
+  // multi-operator assignment. assignedToId above stays in sync with the first
+  // assignee so every pre-existing single-assignee query keeps working; this
+  // table is the authoritative list and carries each operator's own completion.
+  assignees JobcardOperationAssignee[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

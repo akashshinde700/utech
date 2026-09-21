@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Plus, ListChecks, Clock, PauseCircle, CheckCircle2, AlertTriangle, Loader2,
-  Layers, Search, X, Send,
+  Layers, Search, X, Send, Trash2, CheckSquare, Square, Users,
 } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import DataTable from '../../components/ui/DataTable';
 import Pagination from '../../components/ui/Pagination';
 import Modal from '../../components/ui/Modal';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import FormField from '../../components/ui/FormField';
 import SearchableSelect from '../../components/ui/SearchableSelect';
 import Badge from '../../components/ui/Badge';
@@ -36,7 +37,7 @@ const CARD_META = [
 function newTaskForm(defaults) {
   return {
     jobcardId: '', departmentId: defaults.scopedDeptId || '', processId: '', title: '', notes: '',
-    assignedToId: '', priority: 'MEDIUM', plannedStartAt: '', dueDate: '', estimatedHours: '', requiresApproval: false,
+    assigneeIds: [], priority: 'MEDIUM', plannedStartAt: '', dueDate: '', estimatedHours: '', requiresApproval: false,
   };
 }
 
@@ -44,6 +45,7 @@ export default function TasksPage() {
   const user = useAuth((s) => s.user);
   const scopedDeptId = user?.scopeToDepartment ? user.departmentId : null;
   const canCreate = hasPermission(user, 'task.create');
+  const canDelete = hasPermission(user, 'task.delete');
 
   const [page, setPage] = useState(1);
   const [data, setData] = useState({ items: [], pagination: null });
@@ -57,6 +59,8 @@ export default function TasksPage() {
   const [jobcards, setJobcards] = useState([]);
   const [users, setUsers] = useState([]);
   const [workload, setWorkload] = useState([]);
+  const [deleting, setDeleting] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const [adding, setAdding] = useState(null);
   const [addErrors, setAddErrors] = useState({});
@@ -145,7 +149,7 @@ export default function TasksPage() {
         jobcardId: Number(adding.jobcardId),
         departmentId: Number(adding.departmentId),
         processId: adding.processId ? Number(adding.processId) : null,
-        assignedToId: adding.assignedToId ? Number(adding.assignedToId) : null,
+        assigneeIds: adding.assigneeIds.map(Number),
         estimatedHours: adding.estimatedHours === '' ? null : Number(adding.estimatedHours),
         plannedStartAt: adding.plannedStartAt || null,
         dueDate: adding.dueDate || null,
@@ -159,6 +163,21 @@ export default function TasksPage() {
       toast.error(err.response?.data?.message || 'Failed to create task');
     } finally {
       setAddBusy(false);
+    }
+  }
+
+  async function confirmDelete() {
+    setDeleteBusy(true);
+    try {
+      await api.delete(`/tasks/${deleting.id}`);
+      toast.success('Task deleted');
+      setDeleting(null);
+      load();
+      loadDashboard();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to delete task');
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -254,7 +273,27 @@ export default function TasksPage() {
                 <div className="text-xs text-slate-400">{r.jobcard.number}{r.process?.stage ? ` · ${r.process.stage}` : ''}</div>
               </div>
             ) },
-            { key: 'assignedTo', title: 'Assigned To', render: (r) => r.assignedTo?.name || <span className="text-slate-400">Unassigned</span> },
+            { key: 'assignedTo', title: 'Assigned Operators', render: (r) => (
+              (r.assignees || []).length ? (
+                <div className="flex flex-wrap items-center gap-1 min-w-[140px]">
+                  {r.assignees.map((a) => (
+                    <span
+                      key={a.id}
+                      className={`text-[11px] rounded-full border px-2 py-0.5 ${a.status === 'COMPLETED'
+                        ? 'bg-success-50 border-success-100 text-success-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                    >
+                      {a.status === 'COMPLETED' ? '✓ ' : ''}{a.user.name}
+                    </span>
+                  ))}
+                  {r.assigneeTotal > 1 && (
+                    <span className="text-[11px] text-slate-400 inline-flex items-center gap-1">
+                      <Users className="w-3 h-3" />{r.assigneeDoneCount}/{r.assigneeTotal}
+                    </span>
+                  )}
+                </div>
+              ) : <span className="text-slate-400">Unassigned</span>
+            ) },
             { key: 'priority', title: 'Priority', render: (r) => <Badge status={r.priority}>{r.priority}</Badge> },
             { key: 'progressPercent', title: 'Progress', width: 140, render: (r) => (
               <div className="flex items-center gap-2">
@@ -266,6 +305,15 @@ export default function TasksPage() {
             ) },
             { key: 'dueDate', title: 'Due', render: (r) => r.dueDate ? <span className={r.overdue ? 'text-danger-600 font-medium' : ''}>{date(r.dueDate)}</span> : '—' },
             { key: 'status', title: 'Status', render: (r) => <Badge status={r.overdue ? 'OVERDUE' : r.status}>{r.overdue ? 'OVERDUE' : r.status.replace(/_/g, ' ')}</Badge> },
+            ...(canDelete ? [{ key: '__del', title: '', width: 48, render: (r) => (
+              <button
+                type="button" title="Delete task"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-danger-600 hover:bg-danger-50"
+                onClick={(e) => { e.stopPropagation(); setDeleting(r); }}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            ) }] : []),
           ]}
         />
       )}
@@ -305,8 +353,31 @@ export default function TasksPage() {
             <FormField id="add-notes" label="Description / Instructions">
               <textarea id="add-notes" rows={2} className={styles.textarea} value={adding.notes} onChange={(e) => setAddField('notes', e.target.value)} />
             </FormField>
-            <FormField id="add-assignee" label="Assign To" hint="Shows each person's current workload">
-              <SearchableSelect id="add-assignee" value={adding.assignedToId} onChange={(v) => setAddField('assignedToId', v)} options={assigneeOptions} placeholder={adding.departmentId ? 'Select employee…' : 'Pick a department first'} emptyText="No active employees in this department" />
+            <FormField
+              id="add-assignee" label="Assign Operators"
+              hint={adding.departmentId
+                ? 'Tick everyone who will work on this. Each ticks their own checkbox; the task closes when all are done.'
+                : 'Pick a department first'}
+            >
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {!adding.departmentId && <div className="px-3 py-4 text-sm text-slate-400">Select a department to list its employees.</div>}
+                {adding.departmentId && !assigneeOptions.length && <div className="px-3 py-4 text-sm text-slate-400">No active employees in this department.</div>}
+                {assigneeOptions.map((o) => {
+                  const on = adding.assigneeIds.includes(o.value);
+                  return (
+                    <button
+                      key={o.value} type="button"
+                      onClick={() => setAddField('assigneeIds', on
+                        ? adding.assigneeIds.filter((x) => x !== o.value)
+                        : [...adding.assigneeIds, o.value])}
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm hover:bg-slate-50"
+                    >
+                      {on ? <CheckSquare className="w-4 h-4 text-brand-600 shrink-0" /> : <Square className="w-4 h-4 text-slate-300 shrink-0" />}
+                      <span className="flex-1 min-w-0 truncate text-slate-700">{o.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </FormField>
             <div className={styles.formGrid3}>
               <FormField id="add-priority" label="Priority">
@@ -341,6 +412,21 @@ export default function TasksPage() {
           </div>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={confirmDelete}
+        loading={deleteBusy}
+        variant="destructive"
+        title="Delete this Task Progress?"
+        confirmLabel="Delete task"
+        message={deleting
+          ? `"${deleting.displayTitle}" on ${deleting.jobcard?.number || 'this project'}${(deleting.assignees || []).length
+            ? ` — assigned to ${deleting.assignees.map((a) => a.user.name).join(', ')}`
+            : ''}. This cannot be undone. A task that already has completion history must be cancelled instead.`
+          : ''}
+      />
 
       {openTaskId && (
         <TaskDetail

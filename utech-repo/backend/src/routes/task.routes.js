@@ -6,7 +6,7 @@ const ah = require('../utils/asyncHandler');
 const ctrl = require('../controllers/task.controller');
 const {
   createTaskSchema, updateTaskSchema, assignTaskSchema,
-  setStatusSchema, setProgressSchema, reworkTaskSchema, taskNoteSchema,
+  setStatusSchema, setProgressSchema, myCompletionSchema, reworkTaskSchema, taskNoteSchema,
 } = require('../validators/task.schema');
 
 router.use(requireAuth);
@@ -24,7 +24,11 @@ router.put('/:id', requirePermission('task.update'), validate(updateTaskSchema),
 router.post('/:id/assign', requirePermission('task.update', 'task.create'), validate(assignTaskSchema), ah(ctrl.assign));
 router.post('/:id/rework', requirePermission('task.update', 'task.create'), validate(reworkTaskSchema), ah(ctrl.rework));
 
+router.delete('/:id', requirePermission('task.delete'), ah(ctrl.remove));
+
 router.patch('/:id/status', requirePermission('task.update', 'task.progress'), validate(setStatusSchema), ah(ctrl.setStatus));
+// the operator's own completion checkbox — self-service, never manager-only
+router.patch('/:id/my-completion', requirePermission('task.progress', 'task.update'), validate(myCompletionSchema), ah(ctrl.setMyCompletion));
 router.patch('/:id/progress', requirePermission('task.update', 'task.progress'), validate(setProgressSchema), ah(ctrl.setProgress));
 
 module.exports = router;

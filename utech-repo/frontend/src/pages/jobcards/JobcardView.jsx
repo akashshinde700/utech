@@ -13,7 +13,7 @@ import PdfThumbnail from '../../components/pdf/PdfThumbnail';
 import PdfViewerModal from '../../components/pdf/PdfViewerModal';
 import AssignModal from '../../components/assignments/AssignModal';
 import ImageLightbox from '../../components/gallery/ImageLightbox';
-import ChecklistWidget from '../../components/jobcards/ChecklistWidget';
+import JobcardTaskProgress from '../../components/jobcards/JobcardTaskProgress';
 import WorkUpdatesPanel from '../../components/jobcards/WorkUpdatesPanel';
 import ActivityTimeline from '../../components/jobcards/ActivityTimeline';
 import { useAuth } from '../../store/auth';
@@ -503,14 +503,27 @@ export default function JobcardView() {
           )}
         </div>
 
-        {/* task progress */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* task progress — real Task Progress items (JobcardOperation), created
+            by the Department Head and ticked off by the assigned operators */}
+        <div className="space-y-4">
           <div className="border border-slate-200 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <ListChecks className="w-4 h-4 text-brand-600" />
-              <div className="font-semibold text-sm text-slate-800">Task Progress</div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-[200px] flex-1">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Overall Progress</div>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-3 rounded-full bg-slate-100 overflow-hidden">
+                    <div className="h-full bg-brand-600 transition-all" style={{ width: `${jc.progressPercent}%` }} />
+                  </div>
+                  <span className="text-lg font-bold text-brand-700 tabular-nums">{jc.progressPercent}%</span>
+                </div>
+              </div>
+              {canEditProgress && notCompleted && (
+                <button type="button" className="btn-primary shrink-0" onClick={() => setConfirmComplete(true)} disabled={completing}>
+                  <CheckCircle2 className="w-4 h-4" /> {completing ? 'Completing…' : 'Mark as Completed'}
+                </button>
+              )}
             </div>
-            <div className="flex flex-wrap gap-1.5 mb-4">
+            <div className="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-slate-100">
               {WORK_STATUSES.map((ws) => (
                 <button
                   key={ws} type="button" disabled={!canEditProgress}
@@ -521,23 +534,9 @@ export default function JobcardView() {
                 </button>
               ))}
             </div>
-            <ChecklistWidget jobcardId={id} checklist={jc.checklist} editable={canEditProgress} onUpdated={setJc} />
           </div>
 
-          <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-center">
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Overall Progress</div>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-3 rounded-full bg-slate-100 overflow-hidden">
-                <div className="h-full bg-brand-600 transition-all" style={{ width: `${jc.progressPercent}%` }} />
-              </div>
-              <span className="text-lg font-bold text-brand-700">{jc.progressPercent}%</span>
-            </div>
-            {canEditProgress && notCompleted && (
-              <button type="button" className="btn-primary mt-4 w-fit" onClick={() => setConfirmComplete(true)} disabled={completing}>
-                <CheckCircle2 className="w-4 h-4" /> {completing ? 'Completing…' : 'Mark as Completed'}
-              </button>
-            )}
-          </div>
+          <JobcardTaskProgress jobcardId={id} onChanged={load} />
         </div>
 
         {/* work updates & comments */}

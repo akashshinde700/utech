@@ -68,7 +68,9 @@ export default function TaskDetail({ taskId, onClose, onChanged }) {
     );
   }
 
-  const isAssignee = task.assignedTo?.id === user.id;
+  const myAssignment = (task.assignees || []).find((a) => a.userId === user.id) || null;
+  const isAssignee = task.assignedTo?.id === user.id || !!myAssignment;
+  const othersPending = (task.assignees || []).filter((a) => a.status !== 'COMPLETED' && a.userId !== user.id).length;
   const s = task.status;
 
   function notifyChanged() { onChanged?.(); load(); }
@@ -79,6 +81,21 @@ export default function TaskDetail({ taskId, onClose, onChanged }) {
       await api.patch(`/tasks/${taskId}/status`, { status, reason: reason || undefined });
       toast.success('Task updated');
       setReasonFor(null); setReasonText('');
+      notifyChanged();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update task');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // this operator's own checkbox on a task that may have several operators —
+  // the server closes the task only once everyone has ticked
+  async function tickMine(done) {
+    setBusy(true);
+    try {
+      await api.patch(`/tasks/${taskId}/my-completion`, { done });
+      toast.success(done ? 'Marked complete' : 'Completion withdrawn');
       notifyChanged();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to update task');
@@ -205,14 +222,17 @@ export default function TaskDetail({ taskId, onClose, onChanged }) {
     actions.push(<ActionButton key="hold" icon={Pause} label="Put On Hold" onClick={() => requestReason('ON_HOLD')} />);
     // a task created with a review gate is handed in, not closed, by the assignee
     if (task.requiresApproval) {
-      actions.push(<ActionButton key="submit" icon={Send} label="Submit for Review" onClick={() => setStatus('SUBMITTED')} variant="primary" busy={busy} />);
+      actions.push(<ActionButton key="submit" icon={Send} label="Submit for Review" onClick={() => (task.canTick ? tickMine(true) : setStatus('SUBMITTED'))} variant="primary" busy={busy} />);
     } else {
-      actions.push(<ActionButton key="complete" icon={CheckCircle2} label="Mark Completed" onClick={() => setStatus('COMPLETED')} variant="primary" busy={busy} />);
+      actions.push(<ActionButton key="complete" icon={CheckCircle2} label={othersPending ? 'Mark My Part Done' : 'Mark Completed'} onClick={() => (task.canTick ? tickMine(true) : setStatus('COMPLETED'))} variant="primary" busy={busy} />);
     }
   }
   if (s === 'SUBMITTED' && isManager) {
     actions.push(<ActionButton key="approve" icon={ShieldCheck} label="Approve" onClick={() => setStatus('COMPLETED')} variant="primary" busy={busy} />);
     actions.push(<ActionButton key="rework" icon={RotateCcw} label="Request Rework" onClick={() => requestReason('REOPENED')} />);
+  }
+  if (myAssignment?.status === 'COMPLETED' && !['COMPLETED', 'CANCELLED'].includes(s)) {
+    actions.push(<ActionButton key="untick" icon={RotateCcw} label="Undo My Completion" onClick={() => tickMine(false)} busy={busy} />);
   }
   if (s === 'ON_HOLD' && isAssignee) actions.push(<ActionButton key="resume" icon={Play} label="Resume" onClick={() => setStatus('IN_PROGRESS')} variant="primary" busy={busy} />);
   if (['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'SUBMITTED', 'REOPENED'].includes(s) && isManager) {
@@ -294,7 +314,25 @@ export default function TaskDetail({ taskId, onClose, onChanged }) {
 
         {tab === 'Details' && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
-            <div><div className="text-xs text-slate-500 flex items-center gap-1"><User className="w-3 h-3" /> Assigned To</div><div className="font-medium">{task.assignedTo?.name || '—'}</div></div>
+            <div>
+              <div className="text-xs text-slate-500 flex items-center gap-1"><User className="w-3 h-3" /> Assigned To</div>
+              {(task.assignees || []).length ? (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {task.assignees.map((a) => (
+                    <span
+                      key={a.id}
+                      className={`text-[11px] rounded-full border px-2 py-0.5 ${a.status === 'COMPLETED'
+                        ? 'bg-success-50 border-success-100 text-success-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                    >
+                      {a.status === 'COMPLETED' ? '✓ ' : ''}{a.user.name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="font-medium">{task.assignedTo?.name || '—'}</div>
+              )}
+            </div>
             <div><div className="text-xs text-slate-500 flex items-center gap-1"><User className="w-3 h-3" /> Assigned By</div><div className="font-medium">{task.assignedBy?.name || '—'}</div></div>
             <div><div className="text-xs text-slate-500 flex items-center gap-1"><Calendar className="w-3 h-3" /> Planned Start</div><div className="font-medium">{date(task.plannedStartAt)}</div></div>
             <div><div className="text-xs text-slate-500 flex items-center gap-1"><Calendar className="w-3 h-3" /> Due Date</div><div className={`font-medium ${task.overdue ? 'text-danger-600' : ''}`}>{date(task.dueDate)}</div></div>

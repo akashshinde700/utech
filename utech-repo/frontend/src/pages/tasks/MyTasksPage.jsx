@@ -22,14 +22,22 @@ const STATUSES = ['NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD
 // more (hold, comments, files, progress slider) lives in the detail sheet —
 // operators get a single tap for the common case.
 function primaryAction(task) {
+  // `tick` routes through PATCH /tasks/:id/my-completion, which closes only the
+  // caller's own share of a task that several operators may be working on. The
+  // server decides whether that finishes the task or sends it to review.
+  const finish = task.requiresApproval
+    ? { label: 'Submit for Review', icon: Send, status: 'SUBMITTED' }
+    : { label: 'Mark Complete', icon: CheckCircle2, status: 'COMPLETED' };
+  if (task.canTick) finish.tick = true;
+
   switch (task.status) {
     case 'ASSIGNED': return { label: 'Accept', icon: Check, status: 'ACCEPTED' };
     case 'ACCEPTED': return { label: 'Start', icon: Play, status: 'IN_PROGRESS' };
     case 'IN_PROGRESS':
     case 'REOPENED':
-      return task.requiresApproval
-        ? { label: 'Submit for Review', icon: Send, status: 'SUBMITTED' }
-        : { label: 'Mark Complete', icon: CheckCircle2, status: 'COMPLETED' };
+      // already ticked, just waiting on a colleague
+      if (task.myAssignment?.status === 'COMPLETED') return null;
+      return finish;
     case 'ON_HOLD': return { label: 'Resume', icon: Play, status: 'IN_PROGRESS' };
     default: return null;
   }
@@ -77,7 +85,11 @@ export default function MyTasksPage() {
   async function runAction(task, action) {
     setBusyId(task.id);
     try {
-      await api.patch(`/tasks/${task.id}/status`, { status: action.status });
+      if (action.tick) {
+        await api.patch(`/tasks/${task.id}/my-completion`, { done: true });
+      } else {
+        await api.patch(`/tasks/${task.id}/status`, { status: action.status });
+      }
       toast.success(`${action.label} — done`);
       load();
     } catch (err) {
@@ -170,6 +182,13 @@ export default function MyTasksPage() {
                       <span>Due {date(t.dueDate)}</span>
                     </div>
                   </div>
+
+                  {t.assigneeTotal > 1 && (
+                    <div className="text-[11px] text-slate-500">
+                      Shared task — {t.assigneeDoneCount}/{t.assigneeTotal} operators done
+                      {t.myAssignment?.status === 'COMPLETED' && <span className="text-success-600 font-medium"> · your part is done</span>}
+                    </div>
+                  )}
 
                   <ProgressBar value={t.progressPercent} />
 

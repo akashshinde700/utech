@@ -176,6 +176,9 @@ async function main() {
   // order the vendor invoices against, and book the parts back in on a GRN.
   const deptHeadPerms = allPerms.filter((p) =>
     deptScopedPerms.includes(p) ||
+    // only the Head may delete a Task Progress item (and only one that carries
+    // no completion history — task.controller.js refuses the rest)
+    (p.module === 'task' && p.action === 'delete') ||
     (p.module === 'vendorWorkOrder' && ['create', 'update'].includes(p.action)) ||
     (['party', 'item'].includes(p.module) && p.action === 'read') ||
     (p.module === 'jobwork' && p.action === 'read') ||

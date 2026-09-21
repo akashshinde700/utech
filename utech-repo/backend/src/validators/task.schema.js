@@ -14,6 +14,9 @@ const createTaskSchema = z.object({
   notes: z.string().optional().nullable(),
   departmentId: z.number().int(), // a task always belongs to one department
   assignedToId: z.number().int().optional().nullable(),
+  // multi-operator assignment; `assignedToId` above is still accepted and is
+  // folded into this list by the controller
+  assigneeIds: z.array(z.number().int()).max(25).optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).default('MEDIUM'),
   // when true the assignee submits for review instead of completing directly
   requiresApproval: z.boolean().optional(),
@@ -28,9 +31,15 @@ const createTaskSchema = z.object({
 
 const updateTaskSchema = createTaskSchema.omit({ jobcardId: true }).partial();
 
+// Either form is accepted: a single `assignedToId` (existing callers) or the
+// full `assigneeIds` set, which replaces the task's operator list outright.
 const assignTaskSchema = z.object({
-  assignedToId: z.number().int(),
+  assignedToId: z.number().int().optional(),
+  assigneeIds: z.array(z.number().int()).min(1).max(25).optional(),
   notes: z.string().optional().nullable(),
+}).refine((v) => v.assignedToId || (v.assigneeIds && v.assigneeIds.length), {
+  message: 'Select at least one operator',
+  path: ['assigneeIds'],
 });
 
 // only the transitions the UI actually offers; the controller re-validates
@@ -38,6 +47,12 @@ const assignTaskSchema = z.object({
 const setStatusSchema = z.object({
   status: z.enum(STATUSES),
   reason: z.string().optional().nullable(), // required by the controller for ON_HOLD / REJECTED / CANCELLED
+});
+
+// the operator's own checkbox on a task that may have several operators
+const myCompletionSchema = z.object({
+  done: z.boolean(),
+  remarks: z.string().max(1000).optional().nullable(),
 });
 
 const setProgressSchema = z.object({
@@ -59,5 +74,5 @@ const taskNoteSchema = z.object({
 
 module.exports = {
   createTaskSchema, updateTaskSchema, assignTaskSchema,
-  setStatusSchema, setProgressSchema, reworkTaskSchema, taskNoteSchema,
+  setStatusSchema, setProgressSchema, myCompletionSchema, reworkTaskSchema, taskNoteSchema,
 };

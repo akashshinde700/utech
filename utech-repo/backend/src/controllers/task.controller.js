@@ -21,15 +21,48 @@ const TASK_INCLUDE = {
   parentOperation: { select: { id: true, title: true, status: true } },
   dependsOnOperation: { select: { id: true, title: true, status: true, process: { select: { name: true } } } },
   reworkTasks: { select: { id: true, title: true, status: true } },
+  assignees: {
+    include: { user: { select: { id: true, name: true, email: true } }, assignedBy: { select: { id: true, name: true } } },
+    orderBy: { id: 'asc' },
+  },
 };
 
 const OPEN_STATUSES = ['NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD', 'SUBMITTED', 'REOPENED'];
 const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED', 'REJECTED'];
 
-function withComputed(t) {
+// `userId` (the caller) drives `myAssignment`/`canTick`, which is what the
+// operator's checkbox binds to. Omit it for contexts with no single viewer.
+function withComputed(t, userId = null) {
   const overdue = OPEN_STATUSES.includes(t.status) && t.dueDate && new Date(t.dueDate) < new Date();
   const displayTitle = t.title || t.process?.name || `Task #${t.id}`;
-  return { ...t, overdue: !!overdue, displayTitle };
+  const assignees = t.assignees || [];
+  const myAssignment = userId ? assignees.find((a) => a.userId === userId) || null : null;
+  return {
+    ...t,
+    overdue: !!overdue,
+    displayTitle,
+    assigneeTotal: assignees.length,
+    assigneeDoneCount: assignees.filter((a) => a.status === 'COMPLETED').length,
+    myAssignment,
+    // the checkbox is live only while the task is still open
+    canTick: !!myAssignment && !TERMINAL_STATUSES.includes(t.status),
+  };
+}
+
+// True when `userId` is on the hook for this task — either as the (legacy,
+// kept-in-sync) primary assignee or as one of the multi-operator assignees.
+function isAssigneeOf(task, userId) {
+  if (task.assignedToId === userId) return true;
+  return (task.assignees || []).some((a) => a.userId === userId);
+}
+
+// Normalizes the assignee list a client may send as `assigneeIds` (new,
+// multi-operator) or `assignedToId` (existing single-assignee callers).
+function requestedAssigneeIds(body) {
+  const ids = [];
+  if (Array.isArray(body.assigneeIds)) ids.push(...body.assigneeIds);
+  if (body.assignedToId) ids.push(body.assignedToId);
+  return [...new Set(ids.map((n) => parseInt(n, 10)).filter(Boolean))];
 }
 
 // A scoped user (Department Head / Supervisor / Team Leader) only ever
@@ -39,7 +72,9 @@ function withComputed(t) {
 function scopeWhere(req) {
   if (req.user.role === 'SUPERADMIN') return {};
   if (req.user.scopeToDepartment) return { departmentId: req.user.departmentId };
-  if (req.user.role === 'OPERATOR') return { assignedToId: req.user.id };
+  if (req.user.role === 'OPERATOR') {
+    return { OR: [{ assignedToId: req.user.id }, { assignees: { some: { userId: req.user.id } } }] };
+  }
   return {};
 }
 
@@ -50,7 +85,7 @@ async function assertTaskAccess(req, task) {
     return;
   }
   if (req.user.role === 'OPERATOR') {
-    if (task.assignedToId !== req.user.id) throw new HttpError(403, 'This task is not assigned to you');
+    if (!isAssigneeOf(task, req.user.id)) throw new HttpError(403, 'This task is not assigned to you');
     return;
   }
   // unscoped roles with task.update/task.read (Admin, Manager, Project Engineer) fall through
@@ -73,7 +108,11 @@ async function list(req, res) {
   if (q.departmentId) where.AND.push({ departmentId: parseInt(q.departmentId, 10) });
   if (q.processId) where.AND.push({ processId: parseInt(q.processId, 10) });
   if (q.stage) where.AND.push({ process: { stage: q.stage } });
-  if (q.assignedToId) where.AND.push({ assignedToId: parseInt(q.assignedToId, 10) });
+  if (q.assignedToId) {
+    // matches the primary assignee or anyone on the multi-operator list
+    const uid = parseInt(q.assignedToId, 10);
+    where.AND.push({ OR: [{ assignedToId: uid }, { assignees: { some: { userId: uid } } }] });
+  }
   if (q.priority) where.AND.push({ priority: q.priority });
   if (q.status) {
     const statuses = q.status.split(',').map((s) => s.trim());
@@ -82,7 +121,10 @@ async function list(req, res) {
   if (q.overdue === '1') {
     where.AND.push({ status: { in: OPEN_STATUSES }, dueDate: { lt: new Date() } });
   }
-  if (q.unassigned === '1') where.AND.push({ assignedToId: null });
+  if (q.unassigned === '1') where.AND.push({ assignedToId: null, assignees: { none: {} } });
+  // completion filter, independent of the workflow status
+  if (q.completion === 'done') where.AND.push({ status: 'COMPLETED' });
+  if (q.completion === 'pending') where.AND.push({ status: { in: OPEN_STATUSES } });
   if (search) {
     where.AND.push({
       OR: [
@@ -90,6 +132,9 @@ async function list(req, res) {
         { notes: { contains: search } },
         { process: { name: { contains: search } } },
         { jobcard: { number: { contains: search } } },
+        { jobcard: { project: { name: { contains: search } } } },
+        // search by the operator doing the work, not just the task text
+        { assignees: { some: { user: { name: { contains: search } } } } },
       ],
     });
   }
@@ -99,14 +144,14 @@ async function list(req, res) {
     }),
     prisma.jobcardOperation.count({ where }),
   ]);
-  res.json(paginated(items.map(withComputed), total, page, pageSize));
+  res.json(paginated(items.map((t) => withComputed(t, req.user.id)), total, page, pageSize));
 }
 
 async function get(req, res) {
   const id = parseInt(req.params.id, 10);
   const t = await loadTask(id);
   await assertTaskAccess(req, t);
-  res.json(withComputed(t));
+  res.json(withComputed(t, req.user.id));
 }
 
 // Summary cards + per-stage breakdown for the Department Head Task Progress
@@ -185,14 +230,28 @@ async function assertDepartmentUser(departmentId, userId, label) {
   }
 }
 
+// Fan a task assignment out to every assigned operator's notification inbox.
+async function notifyAssignees(task, userIds, title, body) {
+  if (!userIds.length) return;
+  await prisma.notification.createMany({
+    data: userIds.map((userId) => ({
+      userId, type: 'TASK_ASSIGNED', title, body,
+      refType: 'JOBCARD_OPERATION', refId: task.id,
+    })),
+  }).catch(() => {});
+}
+
 async function create(req, res) {
-  const { assignedToId, departmentId, parentOperationId, ...rest } = req.body;
+  const { assignedToId, assigneeIds: _ignored, departmentId, parentOperationId, ...rest } = req.body;
   if (req.user.scopeToDepartment && departmentId !== req.user.departmentId) {
     throw new HttpError(403, 'You can only create tasks for your own department');
   }
   const jc = await prisma.jobcard.findUnique({ where: { id: rest.jobcardId }, select: { id: true } });
   if (!jc) throw new HttpError(400, 'Jobcard not found');
-  if (assignedToId) await assertDepartmentUser(departmentId, assignedToId, 'Assigned To');
+
+  const ids = requestedAssigneeIds(req.body);
+  for (const uid of ids) await assertDepartmentUser(departmentId, uid, 'Assigned operator');
+
   if (parentOperationId) {
     const parent = await loadTask(parentOperationId);
     if (parent.status !== 'COMPLETED') throw new HttpError(400, 'Rework can only be created from a completed task — use POST /tasks/:id/rework instead');
@@ -202,26 +261,24 @@ async function create(req, res) {
     data: {
       ...rest,
       departmentId,
-      assignedToId: assignedToId || null,
-      assignedById: assignedToId ? req.user.id : null,
+      // kept in sync with the first assignee so every existing single-assignee
+      // query (My Tasks filter, dashboards, notifications) keeps working
+      assignedToId: ids[0] || null,
+      assignedById: ids.length ? req.user.id : null,
       createdById: req.user.id,
       parentOperationId: parentOperationId || null,
-      status: assignedToId ? 'ASSIGNED' : 'NOT_STARTED',
+      status: ids.length ? 'ASSIGNED' : 'NOT_STARTED',
+      assignees: { create: ids.map((userId) => ({ userId, assignedById: req.user.id })) },
     },
     include: TASK_INCLUDE,
   });
-  await audit(req, 'create', 'JobcardOperation', task.id, { title: task.title, jobcardId: task.jobcardId });
-  if (task.assignedToId) {
-    await prisma.notification.create({
-      data: {
-        userId: task.assignedToId, type: 'TASK_ASSIGNED',
-        title: `New task assigned: ${task.title || task.process?.name || 'Task'}`,
-        body: `On jobcard ${task.jobcard.number}${task.dueDate ? ` — due ${new Date(task.dueDate).toLocaleDateString('en-IN')}` : ''}`,
-        refType: 'JOBCARD_OPERATION', refId: task.id,
-      },
-    }).catch(() => {});
-  }
-  res.status(201).json(withComputed(task));
+  await audit(req, 'create', 'JobcardOperation', task.id, { title: task.title, jobcardId: task.jobcardId, assigneeIds: ids });
+  await notifyAssignees(
+    task, ids,
+    `New task assigned: ${task.title || task.process?.name || 'Task'}`,
+    `On project ${task.jobcard.number}${task.dueDate ? ` — due ${new Date(task.dueDate).toLocaleDateString('en-IN')}` : ''}`,
+  );
+  res.status(201).json(withComputed(task, req.user.id));
 }
 
 async function update(req, res) {
@@ -232,7 +289,7 @@ async function update(req, res) {
     throw new HttpError(400, `Cannot edit a ${existing.status.toLowerCase()} task`);
   }
   // reassignment goes through POST /:id/assign so it gets its own history entry
-  const { assignedToId, departmentId, ...rest } = req.body;
+  const { assignedToId, assigneeIds, departmentId, ...rest } = req.body;
   if (departmentId && req.user.scopeToDepartment && departmentId !== req.user.departmentId) {
     throw new HttpError(403, 'You can only move a task within your own department');
   }
@@ -240,52 +297,94 @@ async function update(req, res) {
   if (departmentId !== undefined) data.departmentId = departmentId;
   const task = await prisma.jobcardOperation.update({ where: { id }, data, include: TASK_INCLUDE });
   await audit(req, 'update', 'JobcardOperation', id);
-  res.json(withComputed(task));
+  res.json(withComputed(task, req.user.id));
 }
 
+// Set the exact operator list for a task. Adds/removes are diffed so an
+// existing operator's own completion tick and assignment timestamp survive a
+// reassignment that merely adds a colleague.
 async function assign(req, res) {
   const id = parseInt(req.params.id, 10);
-  const { assignedToId, notes: reassignNote } = req.body;
+  const { notes: reassignNote } = req.body;
   const existing = await loadTask(id);
   await assertTaskAccess(req, existing);
   if (TERMINAL_STATUSES.includes(existing.status)) {
     throw new HttpError(400, `Cannot assign a ${existing.status.toLowerCase()} task`);
   }
-  await assertDepartmentUser(existing.departmentId, assignedToId, 'Assigned To');
+  const ids = requestedAssigneeIds(req.body);
+  if (!ids.length) throw new HttpError(400, 'Select at least one operator');
+  for (const uid of ids) await assertDepartmentUser(existing.departmentId, uid, 'Assigned operator');
 
-  const wasAssignedToSomeoneElse = existing.assignedToId && existing.assignedToId !== assignedToId;
+  const current = (existing.assignees || []).map((a) => a.userId);
+  const added = ids.filter((u) => !current.includes(u));
+  const removed = current.filter((u) => !ids.includes(u));
+  if (!added.length && !removed.length && existing.assignedToId === ids[0]) {
+    return res.json(withComputed(existing, req.user.id));
+  }
+  const removedNames = (existing.assignees || [])
+    .filter((a) => removed.includes(a.userId))
+    .map((a) => `${a.user.name}${a.status === 'COMPLETED' ? ' (had completed)' : ''}`);
+
   const task = await prisma.$transaction(async (tx) => {
-    const updated = await tx.jobcardOperation.update({
-      where: { id },
-      data: {
-        assignedToId,
-        assignedById: req.user.id,
-        status: 'ASSIGNED',
-        acceptedAt: null,
-        startAt: null,
-      },
-      include: TASK_INCLUDE,
-    });
+    if (removed.length) {
+      await tx.jobcardOperationAssignee.deleteMany({ where: { operationId: id, userId: { in: removed } } });
+    }
+    if (added.length) {
+      await tx.jobcardOperationAssignee.createMany({
+        data: added.map((userId) => ({ operationId: id, userId, assignedById: req.user.id })),
+        skipDuplicates: true,
+      });
+    }
+    // anyone still pending means the task is back to being outstanding work
+    const rows = await tx.jobcardOperationAssignee.findMany({ where: { operationId: id } });
+    const allDone = rows.length > 0 && rows.every((r) => r.status === 'COMPLETED');
+    const data = {
+      assignedToId: ids[0],
+      assignedById: req.user.id,
+      progressPercent: rows.length ? Math.round((rows.filter((r) => r.status === 'COMPLETED').length / rows.length) * 100) : 0,
+    };
+    if (allDone) {
+      // dropping the last outstanding operator finishes the task, exactly as
+      // that operator ticking their own checkbox would have
+      const now = new Date();
+      if (existing.requiresApproval) {
+        data.status = 'SUBMITTED';
+        data.submittedAt = existing.submittedAt || now;
+      } else {
+        data.status = 'COMPLETED';
+        data.endAt = existing.endAt || now;
+      }
+    } else {
+      // someone still owes work, so the task is open again: it goes back to
+      // ASSIGNED only when nothing has actually been started yet
+      const anyProgress = rows.some((r) => r.status === 'COMPLETED') || !!existing.acceptedAt || !!existing.startAt;
+      data.status = anyProgress ? 'IN_PROGRESS' : 'ASSIGNED';
+      data.submittedAt = null;
+      data.approvedAt = null;
+      data.approvedById = null;
+      data.endAt = null;
+      if (!anyProgress) { data.acceptedAt = null; data.startAt = null; }
+    }
+    const updated = await tx.jobcardOperation.update({ where: { id }, data, include: TASK_INCLUDE });
+    const parts = [];
+    if (added.length) parts.push(`Assigned to ${updated.assignees.filter((a) => added.includes(a.userId)).map((a) => a.user.name).join(', ')}.`);
+    if (removedNames.length) parts.push(`Removed ${removedNames.join(', ')}.`);
+    if (reassignNote) parts.push(reassignNote);
     await tx.jobcardNote.create({
       data: {
         jobcardId: existing.jobcardId, operationId: id, kind: 'COMMENT', authorId: req.user.id,
-        body: wasAssignedToSomeoneElse
-          ? `Reassigned from ${existing.assignedTo?.name || 'unassigned'} to ${updated.assignedTo.name}.${reassignNote ? ` ${reassignNote}` : ''}`
-          : `Assigned to ${updated.assignedTo.name}.${reassignNote ? ` ${reassignNote}` : ''}`,
+        body: parts.join(' '),
       },
     });
     return updated;
   });
-  await audit(req, 'assign', 'JobcardOperation', id, { assignedToId, reassigned: !!wasAssignedToSomeoneElse });
-  await prisma.notification.create({
-    data: {
-      userId: assignedToId, type: 'TASK_ASSIGNED',
-      title: `Task assigned: ${task.title || task.process?.name || 'Task'}`,
-      body: `On jobcard ${task.jobcard.number}`,
-      refType: 'JOBCARD_OPERATION', refId: id,
-    },
-  }).catch(() => {});
-  res.json(withComputed(task));
+  await audit(req, 'assign', 'JobcardOperation', id, { added, removed, assigneeIds: ids });
+  await notifyAssignees(
+    task, added,
+    `Task assigned: ${task.title || task.process?.name || 'Task'}`,
+    `On project ${task.jobcard.number}`,
+  );
+  res.json(withComputed(task, req.user.id));
 }
 
 // guarded state machine — {from: [allowed to states]}
@@ -315,7 +414,7 @@ async function setStatus(req, res) {
   if (!allowed.includes(status)) {
     throw new HttpError(400, `Cannot move a ${existing.status} task to ${status}`);
   }
-  const isAssignee = existing.assignedToId === req.user.id;
+  const isAssignee = isAssigneeOf(existing, req.user.id);
   const isManager = req.user.role === 'SUPERADMIN' || req.user.permissions.includes('task.update');
   // acceptance/starting the work is the assignee's own action; a manager can
   // still hold/cancel/reopen/reassign-after-reject
@@ -341,6 +440,13 @@ async function setStatus(req, res) {
   if (REASON_REQUIRED.has(status) && !reason) {
     throw new HttpError(400, `A reason is required to set status to ${status}`);
   }
+  // With several operators on one task, an assignee closing it outright would
+  // silently discard their colleagues' outstanding work. They tick their own
+  // checkbox instead (PATCH /:id/my-completion); a manager may still override.
+  const pendingOthers = (existing.assignees || []).filter((a) => a.status !== 'COMPLETED' && a.userId !== req.user.id);
+  if (['COMPLETED', 'SUBMITTED'].includes(status) && !isManager && pendingOthers.length) {
+    throw new HttpError(400, `${pendingOthers.length} other operator(s) still have this task open — tick your own checkbox instead`);
+  }
 
   const data = { status };
   const now = new Date();
@@ -352,9 +458,21 @@ async function setStatus(req, res) {
     data.progressPercent = 100;
     if (existing.requiresApproval) { data.approvedAt = now; data.approvedById = req.user.id; }
   }
-  if (status === 'REOPENED') { data.endAt = null; data.submittedAt = null; data.approvedAt = null; data.approvedById = null; }
+  if (status === 'REOPENED') { data.endAt = null; data.submittedAt = null; data.approvedAt = null; data.approvedById = null; data.progressPercent = 0; }
 
   const task = await prisma.$transaction(async (tx) => {
+    if (status === 'COMPLETED') {
+      await tx.jobcardOperationAssignee.updateMany({
+        where: { operationId: id, status: 'PENDING' },
+        data: { status: 'COMPLETED', completedAt: now },
+      });
+    }
+    if (status === 'REOPENED') {
+      await tx.jobcardOperationAssignee.updateMany({
+        where: { operationId: id },
+        data: { status: 'PENDING', completedAt: null },
+      });
+    }
     const updated = await tx.jobcardOperation.update({ where: { id }, data, include: TASK_INCLUDE });
     if (reason) {
       await tx.jobcardNote.create({
@@ -377,7 +495,131 @@ async function setStatus(req, res) {
       data: { userId, type: 'TASK_STATUS', title, refType: 'JOBCARD_OPERATION', refId: id },
     }).catch(() => {});
   }
-  res.json(withComputed(task));
+  res.json(withComputed(task, req.user.id));
+}
+
+// The operator's checkbox. Ticks (or un-ticks) only the caller's own row, then
+// derives the parent task's state from the full assignee set: the task closes
+// only once every assigned operator has ticked — or goes to review first when
+// the task was created with a review gate.
+async function setMyCompletion(req, res) {
+  const id = parseInt(req.params.id, 10);
+  const { done, remarks } = req.body;
+  const existing = await loadTask(id);
+  await assertTaskAccess(req, existing);
+
+  const mine = (existing.assignees || []).find((a) => a.userId === req.user.id);
+  if (!mine) throw new HttpError(403, 'This task is not assigned to you');
+  if (TERMINAL_STATUSES.includes(existing.status)) {
+    throw new HttpError(400, `This task is already ${existing.status.toLowerCase().replace(/_/g, ' ')}`);
+  }
+  // idempotent: a double tap/double submit is a no-op, never a second record
+  if (done === (mine.status === 'COMPLETED')) {
+    return res.json(withComputed(existing, req.user.id));
+  }
+
+  const now = new Date();
+  const task = await prisma.$transaction(async (tx) => {
+    await tx.jobcardOperationAssignee.update({
+      where: { id: mine.id },
+      data: {
+        status: done ? 'COMPLETED' : 'PENDING',
+        completedAt: done ? now : null,
+        remarks: remarks || mine.remarks,
+      },
+    });
+    const rows = await tx.jobcardOperationAssignee.findMany({ where: { operationId: id } });
+    const doneCount = rows.filter((r) => r.status === 'COMPLETED').length;
+    const allDone = rows.length > 0 && doneCount === rows.length;
+
+    const data = { progressPercent: rows.length ? Math.round((doneCount / rows.length) * 100) : 0 };
+    if (allDone) {
+      if (existing.requiresApproval) {
+        data.status = 'SUBMITTED';
+        data.submittedAt = now;
+      } else {
+        data.status = 'COMPLETED';
+        data.endAt = now;
+      }
+    } else {
+      // partially done (or just un-ticked) — the task is live work again
+      data.status = 'IN_PROGRESS';
+      data.submittedAt = null;
+      data.endAt = null;
+      if (!existing.startAt) data.startAt = now;
+      if (!existing.acceptedAt) data.acceptedAt = now;
+    }
+    const updated = await tx.jobcardOperation.update({ where: { id }, data, include: TASK_INCLUDE });
+    await tx.jobcardNote.create({
+      data: {
+        jobcardId: existing.jobcardId, operationId: id, kind: 'COMMENT', authorId: req.user.id,
+        body: done
+          ? `Marked complete by ${req.user.name || 'operator'} (${doneCount}/${rows.length} done).${remarks ? ` ${remarks}` : ''}`
+          : `Completion withdrawn by ${req.user.name || 'operator'} (${doneCount}/${rows.length} done).`,
+      },
+    });
+    return updated;
+  });
+
+  await audit(req, done ? 'taskCompleted' : 'taskCompletionUndone', 'JobcardOperation', id, {
+    assigneeId: mine.id, doneCount: task.assignees.filter((a) => a.status === 'COMPLETED').length, total: task.assignees.length,
+  });
+
+  // tell whoever handed the work out
+  const manager = existing.assignedById || existing.createdById;
+  if (done && manager && manager !== req.user.id) {
+    const label = task.title || task.process?.name || 'Task';
+    await prisma.notification.create({
+      data: {
+        userId: manager, type: 'TASK_STATUS',
+        title: task.status === 'SUBMITTED'
+          ? `Task submitted for review: ${label}`
+          : task.status === 'COMPLETED'
+            ? `Task completed: ${label}`
+            : `${req.user.name || 'Operator'} completed their part of: ${label}`,
+        body: `Project ${task.jobcard.number} — ${task.assignees.filter((a) => a.status === 'COMPLETED').length}/${task.assignees.length} operators done`,
+        refType: 'JOBCARD_OPERATION', refId: id,
+      },
+    }).catch(() => {});
+  }
+  res.json(withComputed(task, req.user.id));
+}
+
+// Delete a Task Progress item. Anything that carries completion history is
+// refused outright — cancelling preserves the record, deleting would erase it
+// from project reporting.
+async function remove(req, res) {
+  const id = parseInt(req.params.id, 10);
+  const existing = await loadTask(id);
+  await assertTaskAccess(req, existing);
+
+  const hasHistory =
+    existing.status === 'COMPLETED' ||
+    !!existing.endAt ||
+    !!existing.submittedAt ||
+    (existing.assignees || []).some((a) => a.status === 'COMPLETED') ||
+    (existing.reworkTasks || []).length > 0;
+  if (hasHistory) {
+    throw new HttpError(400, 'This task has completion history — cancel it instead so the record stays in project reporting');
+  }
+  const label = existing.title || existing.process?.name || `Task #${id}`;
+  const assigneeIds = (existing.assignees || []).map((a) => a.userId);
+
+  // assignee rows and the task's own comment thread cascade with it
+  await prisma.jobcardOperation.delete({ where: { id } });
+  await audit(req, 'delete', 'JobcardOperation', id, { title: label, jobcardId: existing.jobcardId, assigneeIds });
+
+  if (assigneeIds.length) {
+    await prisma.notification.createMany({
+      data: assigneeIds.map((userId) => ({
+        userId, type: 'TASK_STATUS',
+        title: `Task removed: ${label}`,
+        body: `On project ${existing.jobcard.number}`,
+        refType: 'JOBCARD', refId: existing.jobcardId,
+      })),
+    }).catch(() => {});
+  }
+  res.json({ ok: true, deletedId: id });
 }
 
 async function setProgress(req, res) {
@@ -392,7 +634,7 @@ async function setProgress(req, res) {
   if (actualHours !== undefined) data.actualHours = actualHours;
   const task = await prisma.jobcardOperation.update({ where: { id }, data, include: TASK_INCLUDE });
   await audit(req, 'progress', 'JobcardOperation', id, { progressPercent });
-  res.json(withComputed(task));
+  res.json(withComputed(task, req.user.id));
 }
 
 // Rework: spawn a fresh task linked to a completed (failed-inspection) one.
@@ -436,7 +678,7 @@ async function rework(req, res) {
       },
     }).catch(() => {});
   }
-  res.status(201).json(withComputed(task));
+  res.status(201).json(withComputed(task, req.user.id));
 }
 
 async function listNotes(req, res) {
@@ -487,6 +729,6 @@ async function activity(req, res) {
 }
 
 module.exports = {
-  list, get, dashboard, workload, create, update, assign,
-  setStatus, setProgress, rework, listNotes, addNote, activity,
+  list, get, dashboard, workload, create, update, assign, remove,
+  setStatus, setProgress, setMyCompletion, rework, listNotes, addNote, activity,
 };

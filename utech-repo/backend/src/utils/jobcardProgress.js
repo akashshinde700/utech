@@ -25,6 +25,19 @@ function effectiveChecklist(jc) {
 }
 
 function computeProgress(jc) {
+  // Once the Department Head has created real Task Progress items for this
+  // project, those are the unit of work and supersede the fixed checklist.
+  // Cancelled tasks are excluded so dropping one doesn't drag progress down.
+  const tasks = Array.isArray(jc.operations)
+    ? jc.operations.filter((t) => t.status !== 'CANCELLED')
+    : [];
+  if (tasks.length) {
+    const sum = tasks.reduce(
+      (a, t) => a + (t.status === 'COMPLETED' ? 100 : t.progressPercent || 0),
+      0,
+    );
+    return Math.round(sum / tasks.length);
+  }
   const checklist = effectiveChecklist(jc);
   const checked = checklist.filter((i) => i.done).length;
   if (checked > 0) return Math.round((checked / checklist.length) * 100);
