@@ -65,10 +65,10 @@ async function main() {
 
   const manager = await prisma.role.upsert({
     where: { name: 'MANAGER' },
-    // system: the app keys behaviour on this role's name, so it can't be
-    // deleted or renamed from the Roles page (permissions stay editable)
-    update: { isSystem: true, code: 'MANAGER' },
-    create: { name: 'MANAGER', code: 'MANAGER', description: 'Operations manager', isSystem: true },
+    // deletable: only named for a notification and the project-page progress
+    // shortcut, both of which SUPERADMIN still covers without it
+    update: { isSystem: false, code: 'MANAGER' },
+    create: { name: 'MANAGER', code: 'MANAGER', description: 'Operations manager', isSystem: false },
   });
   const managerMods = ['customerParty', 'vendorParty', 'item', 'invoice', 'customerQuotation', 'vendorQuotation', 'jobcard',
     'jobwork', 'dispatch', 'machine', 'process', 'purchase', 'grn',
