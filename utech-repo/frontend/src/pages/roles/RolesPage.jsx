@@ -132,6 +132,14 @@ export default function RolesPage() {
     }
   }
 
+  // tick/untick a whole set of permission keys at once (a module, or all)
+  function setPerms(keys, on) {
+    const set = new Set(editing.permissions);
+    keys.forEach((k) => (on ? set.add(k) : set.delete(k)));
+    setEditing({ ...editing, permissions: [...set] });
+  }
+  const allPermKeys = Object.values(permissions).flat().map((p) => p.key);
+
   function togglePerm(key) {
     const set = new Set(editing.permissions);
     if (set.has(key)) set.delete(key); else set.add(key);
@@ -397,13 +405,38 @@ export default function RolesPage() {
               description={`${editing.permissions.length} granted — click a chip to toggle`}
             >
               <div className="space-y-4">
+                <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand-300">
+                  <input
+                    type="checkbox" className="h-4 w-4 accent-brand-600"
+                    checked={allPermKeys.length > 0 && allPermKeys.every((k) => editing.permissions.includes(k))}
+                    ref={(el) => {
+                      if (el) {
+                        const n = allPermKeys.filter((k) => editing.permissions.includes(k)).length;
+                        el.indeterminate = n > 0 && n < allPermKeys.length;
+                      }
+                    }}
+                    onChange={(e) => setPerms(allPermKeys, e.target.checked)}
+                  />
+                  Select all permissions
+                </label>
                 {Object.entries(permissions).map(([mod, perms]) => {
                   const granted = perms.filter((p) => editing.permissions.includes(p.key)).length;
+                  const modKeys = perms.map((p) => p.key);
                   return (
                     <div key={mod} className="bg-slate-50 rounded-xl p-4 border border-slate-100">
                       <div className="font-semibold text-sm mb-3 capitalize text-slate-800 flex items-center gap-2">
                         <Shield className="w-4 h-4 text-brand-500" aria-hidden="true" /> {mod.replace(/([a-z])([A-Z])/g, '$1 $2')}
                         <span className="ml-auto text-xs font-normal text-slate-400 tabular-nums">{granted}/{perms.length}</span>
+                        <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium normal-case text-slate-600 hover:border-brand-300">
+                          <input
+                            type="checkbox" className="h-3.5 w-3.5 accent-brand-600"
+                            checked={granted === perms.length}
+                            ref={(el) => { if (el) el.indeterminate = granted > 0 && granted < perms.length; }}
+                            onChange={(e) => setPerms(modKeys, e.target.checked)}
+                            aria-label={`Select all ${mod} permissions`}
+                          />
+                          All
+                        </label>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {perms.map((p) => (

@@ -54,8 +54,8 @@ async function main() {
   const allPerms = await prisma.permission.findMany();
   const superadmin = await prisma.role.upsert({
     where: { name: 'SUPERADMIN' },
-    update: { hierarchyLevel: 0 },
-    create: { name: 'SUPERADMIN', description: 'Full access', isSystem: true, hierarchyLevel: 0 },
+    update: { hierarchyLevel: 0, code: 'SUPERADMIN' },
+    create: { name: 'SUPERADMIN', code: 'SUPERADMIN', description: 'Full access', isSystem: true, hierarchyLevel: 0 },
   });
   await prisma.rolePermission.deleteMany({ where: { roleId: superadmin.id } });
   await prisma.rolePermission.createMany({
@@ -67,8 +67,8 @@ async function main() {
     where: { name: 'MANAGER' },
     // system: the app keys behaviour on this role's name, so it can't be
     // deleted or renamed from the Roles page (permissions stay editable)
-    update: { isSystem: true },
-    create: { name: 'MANAGER', description: 'Operations manager', isSystem: true },
+    update: { isSystem: true, code: 'MANAGER' },
+    create: { name: 'MANAGER', code: 'MANAGER', description: 'Operations manager', isSystem: true },
   });
   const managerMods = ['customerParty', 'vendorParty', 'item', 'invoice', 'customerQuotation', 'vendorQuotation', 'jobcard',
     'jobwork', 'dispatch', 'machine', 'process', 'purchase', 'grn',
@@ -90,8 +90,8 @@ async function main() {
 
   const operator = await prisma.role.upsert({
     where: { name: 'OPERATOR' },
-    update: { hierarchyLevel: 6, requiresDepartment: true, isSystem: true },
-    create: { name: 'OPERATOR', description: 'Shopfloor operator', isSystem: true, hierarchyLevel: 6, requiresDepartment: true },
+    update: { hierarchyLevel: 6, requiresDepartment: true, isSystem: true, code: 'OPERATOR' },
+    create: { name: 'OPERATOR', code: 'OPERATOR', description: 'Shopfloor operator', isSystem: true, hierarchyLevel: 6, requiresDepartment: true },
   });
   const operatorPerms = allPerms.filter((p) =>
     (p.module === 'jobcard' && ['read', 'update'].includes(p.action)) ||
@@ -124,7 +124,11 @@ async function main() {
     // system (undeletable) only where the app keys behaviour on the name:
     // Department Head and Project Engineer. Admin / Plant Head only receive
     // notifications by name, Supervisor / Team Leader aren't named anywhere.
-    const row = { ...r, isSystem: ['Department Head', 'Project Engineer'].includes(r.name) };
+    const row = {
+      ...r,
+      code: r.name.toUpperCase().replace(/[^A-Z0-9]+/g, '_'), // PLANT_HEAD, DEPARTMENT_HEAD, ...
+      isSystem: ['Department Head', 'Project Engineer'].includes(r.name),
+    };
     hierarchyRoleRows[r.name] = await prisma.role.upsert({ where: { name: r.name }, update: row, create: row });
   }
 
