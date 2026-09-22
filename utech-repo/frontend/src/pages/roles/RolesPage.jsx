@@ -39,8 +39,15 @@ export default function RolesPage() {
     setPerson((x) => ({ ...x, [k]: v }));
     setPersonErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
   };
+  const [members, setMembers] = useState([]);
   useEffect(() => {
-    if (!editing || editing.id || !editing.requiresDepartment || departments.length) return;
+    if (!editing?.id) { setMembers([]); return; }
+    api.get('/users', { params: { roleId: editing.id, pageSize: 200 } })
+      .then((r) => setMembers(r.data.items || []))
+      .catch(() => setMembers([]));
+  }, [editing?.id]);
+  useEffect(() => {
+    if (!editing || !editing.requiresDepartment || departments.length) return;
     api.get('/departments', { params: { pageSize: 200 } }).then((r) => setDepartments(r.data.items || [])).catch(() => {});
   }, [editing, departments.length]);
 
@@ -74,7 +81,7 @@ export default function RolesPage() {
     // the person block is optional, but once started it must be complete —
     // checked before the role is saved so a half-filled person never lands
     const pErr = {};
-    if (!editing.id && personFilled) {
+    if (personFilled) {
       if (!person.name.trim()) pErr.name = 'Name is required';
       pErr.email = required(person.email, 'Email') || emailRule(person.email) || undefined;
       if (!person.password) pErr.password = 'Password is required';
@@ -96,7 +103,7 @@ export default function RolesPage() {
       let roleId = editing.id;
       if (editing.id) await api.put(`/roles/${editing.id}`, payload);
       else roleId = (await api.post('/roles', payload)).data.id;
-      if (!editing.id && personFilled) {
+      if (personFilled) {
         try {
           await api.post('/users', {
             name: person.name.trim(),
@@ -208,10 +215,19 @@ export default function RolesPage() {
                 <span className="flex items-center gap-1"><Users className="w-3 h-3" aria-hidden="true" /> {r.userCount} users</span>
               </div>
               <div className="flex gap-2">
-                <button className="btn-secondary !px-2.5 !py-1.5 text-xs" onClick={() => { setErrors({}); setEditing({ ...r, parentRoleId: r.parentRoleId || '' }); }}><Pencil className="w-3.5 h-3.5" /> Edit</button>
+                <button className="btn-secondary !px-2.5 !py-1.5 text-xs" onClick={() => { setErrors({}); setPerson(EMPTY_PERSON); setPersonErrors({}); setEditing({ ...r, parentRoleId: r.parentRoleId || '' }); }}><Pencil className="w-3.5 h-3.5" /> Edit</button>
                 {canDelete && !r.isSystem && (
                   <button className="btn-danger !px-2.5 !py-1.5 text-xs" onClick={() => setDeleting(r)}>
                     <Trash2 className="w-3.5 h-3.5" /> Delete
+                  </button>
+                )}
+                {canDelete && r.isSystem && (
+                  <button
+                    type="button" disabled
+                    className="btn-secondary !px-2.5 !py-1.5 text-xs cursor-not-allowed opacity-60"
+                    title="The app depends on this role (logins, task progress, project access) — it can't be deleted. Untick Active in Edit to stop using it."
+                  >
+                    <Lock className="w-3.5 h-3.5" /> Required
                   </button>
                 )}
               </div>
@@ -326,7 +342,25 @@ export default function RolesPage() {
               </div>
             </FormSection>
 
-            {!editing.id && (
+            {editing.id && (
+              <FormSection icon={Users} title={`People with this role (${members.length})`} description="Change a person's details or password from Users → Edit.">
+                {members.length ? (
+                  <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                    {members.map((m) => (
+                      <div key={m.id} className="flex flex-wrap items-center gap-x-4 gap-y-0.5 px-3 py-2 text-sm">
+                        <span className="font-medium text-slate-800">{m.name}</span>
+                        <span className="text-slate-500">{m.email}</span>
+                        {m.phone && <span className="text-slate-500">{m.phone}</span>}
+                        {m.department?.name && <span className="text-slate-400 text-xs">{m.department.name}</span>}
+                        {m.isActive === false && <span className="text-xs text-danger-600">inactive</span>}
+                      </div>
+                    ))}
+                  </div>
+                ) : <div className="text-sm text-slate-400">Nobody has this role yet.</div>}
+              </FormSection>
+            )}
+
+            {(
               <FormSection
                 icon={UserPlus}
                 title="Add a person with this role (optional)"

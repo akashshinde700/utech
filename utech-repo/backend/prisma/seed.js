@@ -121,8 +121,10 @@ async function main() {
   ];
   const hierarchyRoleRows = {};
   for (const r of HIERARCHY_ROLES) {
-    // system roles: task/project access and scoping are keyed on these names
-    const row = { ...r, isSystem: true };
+    // system (undeletable) only where the app keys behaviour on the name:
+    // Department Head and Project Engineer. Admin / Plant Head only receive
+    // notifications by name, Supervisor / Team Leader aren't named anywhere.
+    const row = { ...r, isSystem: ['Department Head', 'Project Engineer'].includes(r.name) };
     hierarchyRoleRows[r.name] = await prisma.role.upsert({ where: { name: r.name }, update: row, create: row });
   }
 
