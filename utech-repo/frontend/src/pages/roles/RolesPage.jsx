@@ -189,9 +189,16 @@ export default function RolesPage() {
           }
         >
           <div className="space-y-5">
+            {!editing.id && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+                A role is a <span className="font-semibold">job position</span> — e.g. "Quality Inspector" — not a person.
+                To add a person, go to <span className="font-semibold">Users → Add User</span> and pick their role there.
+                Standard roles (Plant Head, Department Head, Operator, …) already exist.
+              </div>
+            )}
             <FormSection icon={Shield} title="Role Details">
               <div className={styles.formGrid}>
-                <FormField id="role-name" label="Name" required error={errors.name}>
+                <FormField id="role-name" label="Role name (position)" required error={errors.name} hint={editing.id ? undefined : 'e.g. Quality Inspector, Store Keeper'}>
                   <input
                     id="role-name"
                     className={inputCls('name')}

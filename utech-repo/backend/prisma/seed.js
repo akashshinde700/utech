@@ -65,8 +65,10 @@ async function main() {
 
   const manager = await prisma.role.upsert({
     where: { name: 'MANAGER' },
-    update: {},
-    create: { name: 'MANAGER', description: 'Operations manager', isSystem: false },
+    // system: the app keys behaviour on this role's name, so it can't be
+    // deleted or renamed from the Roles page (permissions stay editable)
+    update: { isSystem: true },
+    create: { name: 'MANAGER', description: 'Operations manager', isSystem: true },
   });
   const managerMods = ['party', 'item', 'invoice', 'quotation', 'jobcard',
     'jobwork', 'dispatch', 'machine', 'process', 'purchase', 'grn',
@@ -88,8 +90,8 @@ async function main() {
 
   const operator = await prisma.role.upsert({
     where: { name: 'OPERATOR' },
-    update: { hierarchyLevel: 6, requiresDepartment: true },
-    create: { name: 'OPERATOR', description: 'Shopfloor operator', isSystem: false, hierarchyLevel: 6, requiresDepartment: true },
+    update: { hierarchyLevel: 6, requiresDepartment: true, isSystem: true },
+    create: { name: 'OPERATOR', description: 'Shopfloor operator', isSystem: true, hierarchyLevel: 6, requiresDepartment: true },
   });
   const operatorPerms = allPerms.filter((p) =>
     (p.module === 'jobcard' && ['read', 'update'].includes(p.action)) ||
@@ -119,7 +121,9 @@ async function main() {
   ];
   const hierarchyRoleRows = {};
   for (const r of HIERARCHY_ROLES) {
-    hierarchyRoleRows[r.name] = await prisma.role.upsert({ where: { name: r.name }, update: r, create: r });
+    // system roles: task/project access and scoping are keyed on these names
+    const row = { ...r, isSystem: true };
+    hierarchyRoleRows[r.name] = await prisma.role.upsert({ where: { name: r.name }, update: row, create: row });
   }
 
   console.log('Seeding hierarchy role permissions...');
