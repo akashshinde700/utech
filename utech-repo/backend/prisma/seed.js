@@ -322,6 +322,12 @@ async function main() {
     });
   }
 
+  // SEED_CONFIG_ONLY=1: roles, permissions, departments, Process Master and
+  // UoM only — no default admin and no sample parties/items/invoices/shifts.
+  // Used after wiping a database that gets its own admin accounts.
+  const CONFIG_ONLY = process.env.SEED_CONFIG_ONLY === '1';
+
+  if (!CONFIG_ONLY) {
   console.log('Seeding admin user...');
   // C9: the password hash is only set on CREATE — re-seeding must never reset
   // a (possibly changed) admin password back to the default credential
@@ -336,6 +342,7 @@ async function main() {
       roleId: superadmin.id,
     },
   });
+  }
 
   console.log('Seeding UoM + categories...');
   const uoms = [
@@ -350,6 +357,11 @@ async function main() {
   }
   for (const name of ['Steel', 'Plastic', 'Hardware', 'Service']) {
     await prisma.itemCategory.upsert({ where: { name }, update: {}, create: { name } });
+  }
+
+  if (CONFIG_ONLY) {
+    console.log('Config-only seed: skipping sample data.');
+    return;
   }
 
   console.log('Seeding sample parties...');
