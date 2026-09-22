@@ -15,6 +15,7 @@ import { required, email, phone10, passwordStrong, validateAll } from '../../lib
 import { hasPermission } from '../../lib/permissions';
 import { useAuth } from '../../store/auth';
 import toast from 'react-hot-toast';
+import { roleLabel } from '../../lib/roleLabel';
 
 const empty = { name: '', email: '', password: '', phone: '', roleId: '', departmentId: '', departmentSubCategoryId: '', reportingToId: '', isActive: true };
 const emptyRole = { name: '', code: '', hierarchyLevel: '', parentRoleId: '', description: '', requiresDepartment: false, scopeToDepartment: false, isActive: true };
@@ -128,7 +129,22 @@ export default function UsersPage() {
   const roleFilterOptions = roles.map((r) => ({ value: r.id, label: r.name, subtitle: r.code || undefined }));
   const departmentFilterOptions = departments.map((d) => ({ value: d.id, label: d.name, subtitle: d.code || undefined }));
   const subCategoryFilterOptions = allSubCategories.map((sc) => ({ value: sc.id, label: sc.name, subtitle: sc.department?.name || undefined }));
-  const roleOptions = roles.filter((r) => r.isActive !== false).map((r) => ({ value: r.id, label: r.name, subtitle: r.code || undefined }));
+  // The single OPERATOR role is offered once per department ("Fabrication
+  // Operator", "Quality Operator", ...): picking one sets role + department.
+  const operatorRole = roles.find((r) => r.name === 'OPERATOR');
+  const roleOptions = roles.filter((r) => r.isActive !== false).flatMap((r) => (r === operatorRole && departments.length
+    ? departments.map((d) => ({ value: `op:${d.id}`, label: roleLabel('OPERATOR', d.name), subtitle: 'Operator' }))
+    : [{ value: r.id, label: r.name, subtitle: r.code || undefined }]));
+  const roleValue = operatorRole && String(editing?.roleId) === String(operatorRole.id) && editing?.departmentId
+    ? `op:${editing.departmentId}`
+    : editing?.roleId || '';
+  function pickRole(v) {
+    if (typeof v === 'string' && v.startsWith('op:')) {
+      setUserField('roleId', operatorRole.id, { departmentId: Number(v.slice(3)), departmentSubCategoryId: '', reportingToId: '' });
+    } else {
+      setUserField('roleId', v, { departmentId: '', departmentSubCategoryId: '', reportingToId: '' });
+    }
+  }
   const departmentOptions = departments.map((d) => ({ value: d.id, label: d.name }));
   const subCategoryOptions = subCategories.map((sc) => ({ value: sc.id, label: sc.name }));
   const reportingOptions = reportingCandidates.map((u) => ({ value: u.id, label: u.name, subtitle: u.role?.name || undefined }));
@@ -418,7 +434,7 @@ export default function UsersPage() {
         columns={[
           { key: 'name', title: 'Name' },
           { key: 'email', title: 'Email' },
-          { key: 'role', title: 'Role', render: (r) => r.role?.name || '—' },
+          { key: 'role', title: 'Role', render: (r) => roleLabel(r.role?.name, r.department?.name) },
           { key: 'department', title: 'Department', render: (r) => r.department?.name || '—' },
           { key: 'departmentSubCategory', title: 'Department Role', render: (r) => r.departmentSubCategory?.name || '—' },
           { key: 'reportingTo', title: 'Reporting To', render: (r) => r.reportingTo?.name || '—' },
@@ -513,8 +529,8 @@ export default function UsersPage() {
                 <FormField id="user-role" label="Role" className="sm:col-span-2" hint="Roles with “Requires department” reveal the department fields">
                   <SearchableSelect
                     id="user-role"
-                    value={editing.roleId || ''}
-                    onChange={(v) => setUserField('roleId', v, { departmentId: '', departmentSubCategoryId: '', reportingToId: '' })}
+                    value={roleValue}
+                    onChange={pickRole}
                     options={roleOptions}
                     placeholder="— none —"
                   />

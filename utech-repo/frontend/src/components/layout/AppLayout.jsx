@@ -5,6 +5,7 @@ import { hasPermission } from '../../lib/permissions';
 import NotificationBell from './NotificationBell';
 import ChangePasswordModal from './ChangePasswordModal';
 import useClickOutside from '../../lib/useClickOutside';
+import { roleLabel } from '../../lib/roleLabel';
 import {
   LayoutDashboard, Users, Package, FileText, ClipboardList,
   Factory, Truck, Shield, ChevronDown, LogOut, UserCircle, Box,
@@ -317,7 +318,7 @@ export default function AppLayout() {
                 </div>
                 <div className="text-left hidden sm:block">
                   <div className="text-sm font-semibold text-slate-800 leading-tight">{user?.name}</div>
-                  <div className="text-[11px] text-brand-600 leading-tight font-medium">{user?.role || '—'}</div>
+                  <div className="text-[11px] text-brand-600 leading-tight font-medium">{roleLabel(user?.role, user?.departmentName)}</div>
                 </div>
                 <ChevronDown className={`w-4 h-4 text-brand-600 transition-transform ${userOpen ? 'rotate-180' : ''}`} />
               </button>

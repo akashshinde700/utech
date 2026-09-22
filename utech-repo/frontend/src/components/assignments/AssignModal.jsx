@@ -6,6 +6,7 @@ import Modal from '../ui/Modal';
 import FormField from '../ui/FormField';
 import SearchableSelect from '../ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
+import { roleLabel } from '../../lib/roleLabel';
 
 // Opened either from a "Project Files" card (whole document, pageNumbers=null)
 // or from PdfViewerModal's page-select mode (pageNumbers = selected pages).
@@ -119,7 +120,7 @@ export default function AssignModal({ attachment, pageNumbers, onClose, onSaved 
                           options={eligibleUsersByDept[d.id].map((u) => ({
                             value: u.id,
                             label: u.name,
-                            subtitle: u.role?.name || undefined,
+                            subtitle: u.role?.name ? roleLabel(u.role.name, d.name) : undefined,
                           }))}
                           placeholder="— select user —"
                           loading={!eligibleUsersByDept[d.id]}

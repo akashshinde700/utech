@@ -12,6 +12,7 @@ import { styles } from '../../lib/formStyles';
 import { date, datetime } from '../../lib/format';
 import { hasPermission } from '../../lib/permissions';
 import { stageLabel, stageNumber } from '../../lib/workflowStages';
+import { roleLabel } from '../../lib/roleLabel';
 import { useAuth } from '../../store/auth';
 import toast from 'react-hot-toast';
 
@@ -203,7 +204,7 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
                 />
                 <span className="flex-1 min-w-0 truncate text-slate-700">
                   {p.name}
-                  {p.roleName && p.roleName !== 'OPERATOR' && <span className="ml-1.5 text-[11px] text-slate-400">({p.roleName})</span>}
+                  {p.roleName && <span className="ml-1.5 text-[11px] text-slate-400">({roleLabel(p.roleName, deptName)})</span>}
                 </span>
                 <span className="text-[11px] text-slate-400 shrink-0">
                   {p.activeTasks + p.pendingTasks} open{p.overdueTasks ? ` · ${p.overdueTasks} overdue` : ''}
