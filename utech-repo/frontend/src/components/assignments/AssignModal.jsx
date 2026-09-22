@@ -4,7 +4,6 @@ import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import Modal from '../ui/Modal';
 import FormField from '../ui/FormField';
-import SearchableSelect from '../ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
 import { roleLabel } from '../../lib/roleLabel';
 
@@ -90,7 +89,7 @@ export default function AssignModal({ attachment, pageNumbers, onClose, onSaved 
           hint="Select one or more departments — each gets its own assignee."
           required
         >
-          <div className="space-y-1.5 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/50 p-2">
+          <div className="space-y-1.5 max-h-80 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/50 p-2">
             {departments.map((d) => {
               const checked = d.id in selected;
               return (
@@ -113,18 +112,21 @@ export default function AssignModal({ attachment, pageNumbers, onClose, onSaved 
                           No users found in this department.
                         </div>
                       ) : (
-                        <SearchableSelect
-                          id={`assign-user-${d.id}`}
-                          value={selected[d.id]}
-                          onChange={(v) => setSelected((prev) => ({ ...prev, [d.id]: v }))}
-                          options={eligibleUsersByDept[d.id].map((u) => ({
-                            value: u.id,
-                            label: u.name,
-                            subtitle: u.role?.name ? roleLabel(u.role.name, d.name) : undefined,
-                          }))}
-                          placeholder="— select user —"
-                          loading={!eligibleUsersByDept[d.id]}
-                        />
+                        // inline list, not a popup: a popup menu inside this
+                        // scroll box gets clipped and the users never show
+                        <div role="radiogroup" aria-label={`Assign ${d.name} to`} className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                          {eligibleUsersByDept[d.id].map((u) => (
+                            <label key={u.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50">
+                              <input
+                                type="radio" name={`assign-user-${d.id}`} className="h-4 w-4 shrink-0 accent-brand-600"
+                                checked={String(selected[d.id]) === String(u.id)}
+                                onChange={() => setSelected((prev) => ({ ...prev, [d.id]: u.id }))}
+                              />
+                              <span className="flex-1 min-w-0 truncate text-slate-700">{u.name}</span>
+                              {u.role?.name && <span className="text-[11px] text-slate-400 shrink-0">{roleLabel(u.role.name, d.name)}</span>}
+                            </label>
+                          ))}
+                        </div>
                       )}
                     </div>
                   )}

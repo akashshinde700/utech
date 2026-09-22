@@ -22,6 +22,7 @@ import toast from 'react-hot-toast';
 // rows drive the project's Overall Progress (completed / total).
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+const NEW_GROUP = '__new_group__';
 
 function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds }) {
   const user = useAuth((s) => s.user);
@@ -43,6 +44,7 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
     if (!open) return;
     setErr(null);
     setProcessIds([]);
+    setAddingTo(null);
     setDepartmentId(editing ? editing.departmentId : (locked ? user.departmentId : ''));
     setAssigneeIds(editing ? (editing.assignees || []).map((a) => a.userId) : []);
     setPriority(editing?.priority || 'MEDIUM');
@@ -81,6 +83,70 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
   }, [processes]);
 
   const toggle = (list, setList, id) => setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+
+  // New items straight into the department's Process Master — under an
+  // existing stage group, or as a brand-new group with its first item.
+  const canAddItems = hasPermission(user, 'process.create');
+  const [addingTo, setAddingTo] = useState(null); // stage name | NEW_GROUP | null
+  const [newItemName, setNewItemName] = useState('');
+  const [newGroupName, setNewGroupName] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
+  const [addErr, setAddErr] = useState(null);
+
+  function startAdding(target) {
+    setAddingTo(target); setNewItemName(''); setNewGroupName(''); setAddErr(null);
+  }
+
+  async function addItem() {
+    const stage = addingTo === NEW_GROUP ? newGroupName.trim() : addingTo;
+    const name = newItemName.trim();
+    if (addingTo === NEW_GROUP && stage.length < 2) { setAddErr('Enter a group name'); return; }
+    if (name.length < 2) { setAddErr('Enter an item name'); return; }
+    setAddBusy(true);
+    setAddErr(null);
+    try {
+      const r = await api.post('/processes', { name, stage: stage || null, departmentId: Number(departmentId) });
+      setProcesses((list) => [...list, r.data]);
+      setProcessIds((list) => [...list, r.data.id]); // it was added to be used — tick it
+      toast.success(`"${r.data.name}" added to ${stage || 'the list'}`);
+      setAddingTo(null);
+    } catch (e2) {
+      setAddErr(e2.response?.data?.message || 'Could not add the item');
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
+  // Enter inside these inputs must add the item, not submit the task form
+  const onAddKey = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addItem(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setAddingTo(null); }
+  };
+
+  const addRow = (
+    <div className="space-y-2 bg-brand-50/40 px-3 py-2.5">
+      {addingTo === NEW_GROUP && (
+        <input
+          className={styles.input} placeholder="Group name, e.g. Heat Treatment" autoFocus
+          value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} onKeyDown={onAddKey}
+          aria-label="New group name"
+        />
+      )}
+      <div className="flex gap-2">
+        <input
+          className={styles.input} placeholder={addingTo === NEW_GROUP ? 'First item, e.g. Annealing' : 'Item name, e.g. Waterjet Cutting'}
+          autoFocus={addingTo !== NEW_GROUP}
+          value={newItemName} onChange={(e) => setNewItemName(e.target.value)} onKeyDown={onAddKey}
+          aria-label="New item name"
+        />
+        <button type="button" className={`${styles.primaryBtn} shrink-0`} onClick={addItem} disabled={addBusy}>
+          {addBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add'}
+        </button>
+        <button type="button" className={`${styles.secondaryBtn} shrink-0`} onClick={() => setAddingTo(null)} disabled={addBusy}>Cancel</button>
+      </div>
+      {addErr && <div role="alert" className="text-xs text-danger-600">{addErr}</div>}
+    </div>
+  );
 
   async function submit(e) {
     e.preventDefault();
@@ -160,7 +226,7 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
 
         {!editing && (
           <FormField id="tp-items" label="Task Progress Items" required hint={departmentId ? `Only ${deptName || 'this department'}'s items are listed.` : 'Pick a department first.'}>
-            <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-200">
+            <div className="max-h-80 overflow-y-auto rounded-lg border border-slate-200">
               {!departmentId && <div className="px-3 py-4 text-sm text-slate-400">Select a department to list its items.</div>}
               {departmentId && !processes.length && (
                 <div className="px-3 py-4 text-sm text-slate-400">No Task Progress items are set up for this department in the Process Master.</div>
@@ -186,7 +252,28 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
                       </label>
                     );
                   })}
+                  {canAddItems && (addingTo === g.stage ? addRow : (
+                    <button
+                      type="button" onClick={() => startAdding(g.stage)}
+                      className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-brand-600 hover:bg-brand-50"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add item to {g.stage || 'this group'}
+                    </button>
+                  ))}
                 </div>
+              ))}
+              {canAddItems && departmentId && (addingTo === NEW_GROUP ? (
+                <div className="border-t border-slate-200">
+                  <div className="bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">New group</div>
+                  {addRow}
+                </div>
+              ) : (
+                <button
+                  type="button" onClick={() => startAdding(NEW_GROUP)}
+                  className="flex w-full items-center gap-1.5 border-t border-slate-200 px-3 py-2.5 text-sm font-medium text-brand-700 hover:bg-brand-50"
+                >
+                  <Plus className="w-4 h-4" /> New group
+                </button>
               ))}
             </div>
           </FormField>

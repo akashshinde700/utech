@@ -73,6 +73,24 @@ async function create(req, res) {
     const parent = await prisma.process.findUnique({ where: { id: req.body.parentProcessId }, select: { departmentId: true } });
     if (!parent) throw new HttpError(400, 'Parent process not found');
   }
+  req.body.name = req.body.name.trim();
+  if (req.body.stage) req.body.stage = req.body.stage.trim();
+  // one live item per name within a department (collation is case-insensitive)
+  const clash = await prisma.process.findFirst({
+    where: { name: req.body.name, departmentId: req.body.departmentId ?? null, isActive: true },
+    select: { stage: true },
+  });
+  if (clash) {
+    throw new HttpError(409, `"${req.body.name}" already exists${clash.stage ? ` under ${clash.stage}` : ''}`);
+  }
+  // a new item lands at the end of its stage group, not ahead of the seeded ones
+  if (req.body.displayOrder === undefined) {
+    const last = await prisma.process.aggregate({
+      where: { stage: req.body.stage ?? null },
+      _max: { displayOrder: true },
+    });
+    req.body.displayOrder = (last._max.displayOrder ?? 0) + 10;
+  }
   const code = req.body.code || await nextCode('process', 'process');
   const data = { ...req.body, code };
   data.createdById = req.user.id;
