@@ -32,11 +32,9 @@ function computeProgress(jc) {
     ? jc.operations.filter((t) => t.status !== 'CANCELLED')
     : [];
   if (tasks.length) {
-    const sum = tasks.reduce(
-      (a, t) => a + (t.status === 'COMPLETED' ? 100 : t.progressPercent || 0),
-      0,
-    );
-    return Math.round(sum / tasks.length);
+    // completed items / total items — 1 of 4 done is 25%, no partial credit
+    const done = tasks.filter((t) => t.status === 'COMPLETED').length;
+    return Math.round((done / tasks.length) * 100);
   }
   const checklist = effectiveChecklist(jc);
   const checked = checklist.filter((i) => i.done).length;

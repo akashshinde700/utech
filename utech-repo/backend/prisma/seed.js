@@ -208,89 +208,114 @@ async function main() {
   // screen (Process.parentProcessId), department-scoped exactly like these.
   // deptCode null = GLOBAL (any department's tasks can use it).
   const WORKFLOW_PROCESSES = [
-    ['WF-MTIN', 'Material Inward', 'Material Inward', null],
-    ['WF-MTVER', 'Material Verification (PMI / Grade Check)', 'Material Verification', null],
+    ['WF-MTIN', 'Material Inward', 'Material Inward'],
+    ['WF-MTVER', 'Material Verification (PMI / Grade Check)', 'Material Verification'],
 
-    ['WF-LASERCUT', 'Laser Cutting', 'Cutting', null],
-    ['WF-PLASMACUT', 'Plasma Cutting', 'Cutting', null],
-    ['WF-BANDSAW', 'Bandsaw Cutting', 'Cutting', null],
+    ['WF-LASERCUT', 'Laser Cutting', 'Cutting'],
+    ['WF-PLASMACUT', 'Plasma Cutting', 'Cutting'],
+    ['WF-BANDSAW', 'Bandsaw Cutting', 'Cutting'],
 
-    ['WF-ROLL', 'Rolling', 'Forming', null],
-    ['WF-REROLL', 'Re-Rolling', 'Forming', null],
-    ['WF-BEND', 'Bending', 'Forming', null],
+    ['WF-ROLL', 'Rolling', 'Forming'],
+    ['WF-REROLL', 'Re-Rolling', 'Forming'],
+    ['WF-BEND', 'Bending', 'Forming'],
 
-    ['WF-ROOTWELD', 'Root Welding', 'Fabrication', 'FAB'],
-    ['WF-FILL', 'Filling', 'Fabrication', 'FAB'],
-    ['WF-CAP', 'Capping', 'Fabrication', 'FAB'],
+    ['WF-ROOTWELD', 'Root Welding', 'Fabrication'],
+    ['WF-FILL', 'Filling', 'Fabrication'],
+    ['WF-CAP', 'Capping', 'Fabrication'],
 
-    ['WF-PRETURN', 'Pre-Turning', 'Machining', 'MACH'],
-    ['WF-FACING', 'Facing', 'Machining', 'MACH'],
-    ['WF-ODTURN', 'OD Turning', 'Machining', 'MACH'],
-    ['WF-IDTURN', 'ID Turning', 'Machining', 'MACH'],
-    ['WF-GROOVE', 'Grooving', 'Machining', 'MACH'],
-    ['WF-THREAD', 'Threading', 'Machining', 'MACH'],
-    ['WF-BORE', 'Boring', 'Machining', 'MACH'],
-    ['WF-POSTTURN', 'Post-Turning', 'Machining', 'MACH'],
-    ['WF-FINALTURN', 'Final Turning', 'Machining', 'MACH'],
+    ['WF-PRETURN', 'Pre-Turning', 'Machining'],
+    ['WF-FACING', 'Facing', 'Machining'],
+    ['WF-ODTURN', 'OD Turning', 'Machining'],
+    ['WF-IDTURN', 'ID Turning', 'Machining'],
+    ['WF-GROOVE', 'Grooving', 'Machining'],
+    ['WF-THREAD', 'Threading', 'Machining'],
+    ['WF-BORE', 'Boring', 'Machining'],
+    ['WF-POSTTURN', 'Post-Turning', 'Machining'],
+    ['WF-FINALTURN', 'Final Turning', 'Machining'],
 
-    ['WF-PREMILL', 'Pre-Milling', 'VMC Machining', 'CNCVMC'],
-    ['WF-FACEMILL', 'Face Milling', 'VMC Machining', 'CNCVMC'],
-    ['WF-DRILL', 'Drilling', 'VMC Machining', 'CNCVMC'],
-    ['WF-REAM', 'Reaming', 'VMC Machining', 'CNCVMC'],
-    ['WF-VMCBORE', 'VMC Boring', 'VMC Machining', 'CNCVMC'],
-    ['WF-TAP', 'Tapping', 'VMC Machining', 'CNCVMC'],
+    ['WF-PREMILL', 'Pre-Milling', 'VMC Machining'],
+    ['WF-FACEMILL', 'Face Milling', 'VMC Machining'],
+    ['WF-DRILL', 'Drilling', 'VMC Machining'],
+    ['WF-REAM', 'Reaming', 'VMC Machining'],
+    ['WF-VMCBORE', 'VMC Boring', 'VMC Machining'],
+    ['WF-TAP', 'Tapping', 'VMC Machining'],
 
-    ['WF-WIREEDM', 'Wire EDM', 'Other Machining', 'CNCVMC'],
-    ['WF-EDM', 'EDM', 'Other Machining', 'CNCVMC'],
-    ['WF-CNCGRIND', 'CNC Grinding', 'Other Machining', 'CNCVMC'],
-    ['WF-SURFGRIND', 'Surface Grinding', 'Other Machining', 'CNCVMC'],
-    ['WF-CYLGRIND', 'Cylindrical Grinding', 'Other Machining', 'CNCVMC'],
+    ['WF-WIREEDM', 'Wire EDM', 'Other Machining'],
+    ['WF-EDM', 'EDM', 'Other Machining'],
+    ['WF-CNCGRIND', 'CNC Grinding', 'Other Machining'],
+    ['WF-SURFGRIND', 'Surface Grinding', 'Other Machining'],
+    ['WF-CYLGRIND', 'Cylindrical Grinding', 'Other Machining'],
 
-    ['WF-BUFFMATTE', 'Buffing — Matte', 'Surface Finishing', null],
-    ['WF-BUFFMIRROR', 'Buffing — Mirror', 'Surface Finishing', null],
-    ['WF-SANDBLAST', 'Sand Blasting', 'Surface Finishing', null],
-    ['WF-SHOTBLAST', 'Shot Blasting', 'Surface Finishing', null],
-    ['WF-ACIDCLEAN', 'Acid Cleaning', 'Surface Finishing', null],
+    ['WF-BUFFMATTE', 'Buffing — Matte', 'Surface Finishing'],
+    ['WF-BUFFMIRROR', 'Buffing — Mirror', 'Surface Finishing'],
+    ['WF-SANDBLAST', 'Sand Blasting', 'Surface Finishing'],
+    ['WF-SHOTBLAST', 'Shot Blasting', 'Surface Finishing'],
+    ['WF-ACIDCLEAN', 'Acid Cleaning', 'Surface Finishing'],
 
-    ['WF-PLATING', 'Plating', 'Surface Treatment', 'VDEV'],
-    ['WF-POWDERCOAT', 'Powder Coating', 'Surface Treatment', 'VDEV'],
+    ['WF-PLATING', 'Plating', 'Surface Treatment'],
+    ['WF-POWDERCOAT', 'Powder Coating', 'Surface Treatment'],
 
-    ['WF-LASERMARK', 'Laser Marking', 'Marking', null],
-    ['WF-ENGRAVE', 'Engraving', 'Marking', null],
+    ['WF-LASERMARK', 'Laser Marking', 'Marking'],
+    ['WF-ENGRAVE', 'Engraving', 'Marking'],
 
-    ['WF-ASSY', 'Assembly', 'Assembly', null],
+    ['WF-ASSY', 'Assembly', 'Assembly'],
 
-    ['WF-MATINSP', 'Material Inspection', 'Inspection / Quality', 'QC'],
-    ['WF-WELDINSP', 'Welding Inspection', 'Inspection / Quality', 'QC'],
-    ['WF-DIMINSP', 'Dimension Inspection', 'Inspection / Quality', 'QC'],
-    ['WF-DRGVERIFY', 'Drawing Verification', 'Inspection / Quality', 'QC'],
-    ['WF-THREADINSP', 'Thread Inspection', 'Inspection / Quality', 'QC'],
-    ['WF-ASSYINSP', 'Assembly Inspection', 'Inspection / Quality', 'QC'],
-    ['WF-QTYINSP', 'Quantity Inspection', 'Inspection / Quality', 'QC'],
+    ['WF-MATINSP', 'Material Inspection', 'Inspection / Quality'],
+    ['WF-WELDINSP', 'Welding Inspection', 'Inspection / Quality'],
+    ['WF-DIMINSP', 'Dimension Inspection', 'Inspection / Quality'],
+    ['WF-DRGVERIFY', 'Drawing Verification', 'Inspection / Quality'],
+    ['WF-THREADINSP', 'Thread Inspection', 'Inspection / Quality'],
+    ['WF-ASSYINSP', 'Assembly Inspection', 'Inspection / Quality'],
+    ['WF-QTYINSP', 'Quantity Inspection', 'Inspection / Quality'],
 
-    ['WF-DPT', 'DPT (Dye Penetrant Test)', 'Testing', 'QC'],
-    ['WF-RT', 'RT (Radiography Test)', 'Testing', 'QC'],
-    ['WF-LEAKTEST', 'Leak Test', 'Testing', 'QC'],
-    ['WF-PRESSTEST', 'Pressure Test', 'Testing', 'QC'],
+    ['WF-DPT', 'DPT (Dye Penetrant Test)', 'Testing'],
+    ['WF-RT', 'RT (Radiography Test)', 'Testing'],
+    ['WF-LEAKTEST', 'Leak Test', 'Testing'],
+    ['WF-PRESSTEST', 'Pressure Test', 'Testing'],
 
-    ['WF-WELDREPAIR', 'Welding Repair', 'Rework', null],
-    ['WF-REGRIND', 'Grinding (Rework)', 'Rework', null],
-    ['WF-REMACH', 'Re-Machining', 'Rework', null],
-    ['WF-RETAP', 'Re-Tapping', 'Rework', null],
-    ['WF-RECUT', 'Re-Cutting', 'Rework', null],
-    ['WF-REINSP', 'Re-Inspection', 'Rework', null],
-    ['WF-SCRAP', 'Scrap', 'Rework', null],
+    ['WF-WELDREPAIR', 'Welding Repair', 'Rework'],
+    ['WF-REGRIND', 'Grinding (Rework)', 'Rework'],
+    ['WF-REMACH', 'Re-Machining', 'Rework'],
+    ['WF-RETAP', 'Re-Tapping', 'Rework'],
+    ['WF-RECUT', 'Re-Cutting', 'Rework'],
+    ['WF-REINSP', 'Re-Inspection', 'Rework'],
+    ['WF-SCRAP', 'Scrap', 'Rework'],
 
-    ['WF-PACK', 'Packing', 'Packing', null],
-    ['WF-DISPATCH', 'Dispatch', 'Dispatch', null],
+    ['WF-PACK', 'Packing', 'Packing'],
+    ['WF-DISPATCH', 'Dispatch', 'Dispatch'],
   ];
+  // Which department owns which workflow stage — the plant's own mapping
+  // (numbers are the notebook's stage numbers). A Department Head can put only
+  // their department's items on a project (task.controller.js resolveProcess).
+  // Stages 1-2 (Material Inward / Verification) belong to no department.
+  const STAGE_DEPARTMENT = {
+    'Cutting': 'FAB', // 3
+    'Forming': 'FAB', // 4
+    'Fabrication': 'FAB', // 5
+    'Machining': 'CNCVMC', // 6
+    'VMC Machining': 'CNCVMC', // 7
+    'Other Machining': 'VDEV', // 8
+    'Surface Finishing': 'VDEV', // 9
+    'Surface Treatment': 'VDEV', // 10
+    'Marking': 'VDEV', // 11
+    'Assembly': 'QC', // 12
+    'Inspection / Quality': 'QC', // 13
+    'Testing': 'QC', // 14
+    'Rework': 'QC', // 15
+    'Packing': 'QC', // 16
+    'Dispatch': 'QC', // 17
+  };
   let displayOrder = 0;
-  for (const [code, name, stage, deptCode] of WORKFLOW_PROCESSES) {
+  for (const [code, name, stage] of WORKFLOW_PROCESSES) {
     displayOrder += 10;
+    const deptCode = STAGE_DEPARTMENT[stage] || null;
+    const departmentId = deptCode ? deptRows[deptCode].id : null;
     await prisma.process.upsert({
       where: { code },
-      update: {},
-      create: { code, name, stage, displayOrder, departmentId: deptCode ? deptRows[deptCode].id : null },
+      // re-seeding re-applies the stage ownership; names/order edited in the
+      // Process Master are left alone
+      update: { departmentId },
+      create: { code, name, stage, displayOrder, departmentId },
     });
   }
 

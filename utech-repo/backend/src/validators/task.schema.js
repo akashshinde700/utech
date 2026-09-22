@@ -31,6 +31,18 @@ const createTaskSchema = z.object({
 
 const updateTaskSchema = createTaskSchema.omit({ jobcardId: true }).partial();
 
+// several predefined items onto one project, same operators for all
+const bulkCreateTaskSchema = z.object({
+  jobcardId: z.number().int(),
+  departmentId: z.number().int(),
+  processIds: z.array(z.number().int()).min(1, 'Select at least one Task Progress item').max(40),
+  assigneeIds: z.array(z.number().int()).max(25).optional(),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).default('MEDIUM'),
+  dueDate: z.coerce.date().optional().nullable(),
+  notes: z.string().max(2000).optional().nullable(),
+  requiresApproval: z.boolean().optional(),
+});
+
 // Either form is accepted: a single `assignedToId` (existing callers) or the
 // full `assigneeIds` set, which replaces the task's operator list outright.
 const assignTaskSchema = z.object({
@@ -73,6 +85,6 @@ const taskNoteSchema = z.object({
 });
 
 module.exports = {
-  createTaskSchema, updateTaskSchema, assignTaskSchema,
+  createTaskSchema, bulkCreateTaskSchema, updateTaskSchema, assignTaskSchema,
   setStatusSchema, setProgressSchema, myCompletionSchema, reworkTaskSchema, taskNoteSchema,
 };

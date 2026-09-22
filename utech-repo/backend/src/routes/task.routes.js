@@ -5,7 +5,7 @@ const validate = require('../middleware/validate');
 const ah = require('../utils/asyncHandler');
 const ctrl = require('../controllers/task.controller');
 const {
-  createTaskSchema, updateTaskSchema, assignTaskSchema,
+  createTaskSchema, bulkCreateTaskSchema, updateTaskSchema, assignTaskSchema,
   setStatusSchema, setProgressSchema, myCompletionSchema, reworkTaskSchema, taskNoteSchema,
 } = require('../validators/task.schema');
 
@@ -20,6 +20,7 @@ router.post('/:id/notes', requirePermission('task.update', 'task.progress'), val
 router.get('/:id/activity', requirePermission('task.read', 'task.progress'), ah(ctrl.activity));
 
 router.post('/', requirePermission('task.create'), validate(createTaskSchema), ah(ctrl.create));
+router.post('/bulk', requirePermission('task.create'), validate(bulkCreateTaskSchema), ah(ctrl.createBulk));
 router.put('/:id', requirePermission('task.update'), validate(updateTaskSchema), ah(ctrl.update));
 router.post('/:id/assign', requirePermission('task.update', 'task.create'), validate(assignTaskSchema), ah(ctrl.assign));
 router.post('/:id/rework', requirePermission('task.update', 'task.create'), validate(reworkTaskSchema), ah(ctrl.rework));

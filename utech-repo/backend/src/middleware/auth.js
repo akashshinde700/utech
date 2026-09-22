@@ -32,6 +32,7 @@ async function requireAuth(req, res, next) {
       include: {
         role: { include: { permissions: { include: { permission: true } } } },
         permissionOverrides: { include: { permission: true } },
+        department: { select: { name: true } },
       },
     });
     if (!user || !user.isActive) return unauthorized(res, 'User inactive or missing');
@@ -42,6 +43,7 @@ async function requireAuth(req, res, next) {
       name: user.name,
       role: user.role && user.role.name,
       departmentId: user.departmentId,
+      departmentName: user.department ? user.department.name : null,
       scopeToDepartment: !!(user.role && user.role.scopeToDepartment),
       hierarchyLevel: user.role ? user.role.hierarchyLevel : null,
       permissions: effectivePermissions(user),

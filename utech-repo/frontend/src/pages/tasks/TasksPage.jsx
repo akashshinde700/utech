@@ -131,8 +131,12 @@ export default function TasksPage() {
       subtitle: w ? `Active: ${w.activeTasks} · Pending: ${w.pendingTasks}${w.overdueTasks ? ` · Overdue: ${w.overdueTasks}` : ''}` : u.email,
     };
   });
+  // a department's Task Progress items are the processes it owns; general
+  // (department-less) processes are only offered to unscoped managers
   const processOptions = (processes || [])
-    .filter((p) => !adding?.departmentId || !p.departmentId || p.departmentId === Number(adding.departmentId))
+    .filter((p) => (scopedDeptId
+      ? p.departmentId === scopedDeptId
+      : !adding?.departmentId || !p.departmentId || p.departmentId === Number(adding.departmentId)))
     .map((p) => ({ value: p.id, label: `${p.name}${p.stage ? ` — ${p.stage}` : ''}` }));
   const jobcardOptions = jobcards.map((j) => ({ value: j.id, label: `${j.number}${j.itemDescription ? ` — ${j.itemDescription}` : ''}` }));
 
@@ -140,6 +144,7 @@ export default function TasksPage() {
     const { errors, ok } = validateAll(adding, {
       jobcardId: (v) => required(v, 'Jobcard'),
       departmentId: (v) => required(v, 'Department'),
+      ...(scopedDeptId ? { processId: (v) => required(v, 'Task Progress item') } : {}),
     });
     if (!ok) { setAddErrors(errors); toast.error('Please fix the highlighted fields'); return; }
     setAddBusy(true);
@@ -343,7 +348,7 @@ export default function TasksPage() {
               <FormField id="add-dept" label="Department" required error={addErrors.departmentId} hint={scopedDeptId ? 'Locked to your department' : undefined}>
                 <SearchableSelect id="add-dept" value={adding.departmentId} onChange={(v) => setAddField('departmentId', v)} options={departments.map((d) => ({ value: d.id, label: d.name }))} disabled={!!scopedDeptId} allowClear={false} />
               </FormField>
-              <FormField id="add-process" label="Stage / Sub-Process">
+              <FormField id="add-process" label="Stage / Sub-Process" required={!!scopedDeptId} error={addErrors.processId}>
                 <SearchableSelect id="add-process" value={adding.processId} onChange={(v) => setAddField('processId', v)} options={processOptions} placeholder="Select process…" />
               </FormField>
             </div>

@@ -3,6 +3,7 @@ const prisma = require('../config/prisma');
 const HttpError = require('../utils/httpError');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { audit } = require('../utils/audit');
+const { hasAssignmentAccess } = require('../utils/jobcardAccess');
 
 // Task Progress / Task Assignment module — the "task" here is a JobcardOperation
 // row (see schema.prisma). Reuses Jobcard (=project/work-order context),
@@ -44,8 +45,10 @@ function withComputed(t, userId = null) {
     assigneeTotal: assignees.length,
     assigneeDoneCount: assignees.filter((a) => a.status === 'COMPLETED').length,
     myAssignment,
-    // the checkbox is live only while the task is still open
-    canTick: !!myAssignment && !TERMINAL_STATUSES.includes(t.status),
+    // live while the task is open; after it closes the operator may still
+    // withdraw their own tick, unless a reviewer has already signed it off
+    canTick: !!myAssignment && !['CANCELLED', 'REJECTED'].includes(t.status)
+      && !(t.status === 'COMPLETED' && t.approvedAt),
   };
 }
 
@@ -201,7 +204,7 @@ async function workload(req, res) {
 
   const users = await prisma.user.findMany({
     where: userWhere,
-    select: { id: true, name: true, email: true, departmentId: true },
+    select: { id: true, name: true, email: true, departmentId: true, role: { select: { name: true } } },
     orderBy: { name: 'asc' },
   });
   const tasks = await prisma.jobcardOperation.findMany({
@@ -209,8 +212,8 @@ async function workload(req, res) {
     select: { assignedToId: true, status: true, dueDate: true },
   });
   const now = new Date();
-  const byUser = Object.fromEntries(users.map((u) => [u.id, {
-    ...u, activeTasks: 0, pendingTasks: 0, overdueTasks: 0,
+  const byUser = Object.fromEntries(users.map(({ role, ...u }) => [u.id, {
+    ...u, roleName: role?.name || null, activeTasks: 0, pendingTasks: 0, overdueTasks: 0,
   }]));
   for (const t of tasks) {
     const row = byUser[t.assignedToId];
@@ -230,6 +233,56 @@ async function assertDepartmentUser(departmentId, userId, label) {
   }
 }
 
+// A department-scoped creator may only put work on a project they can
+// actually reach (drawing Assignment chain or an existing task there), exactly
+// as the project page itself is gated. Unscoped managers are unrestricted.
+async function assertProjectAccess(req, jobcardId) {
+  const jc = await prisma.jobcard.findUnique({ where: { id: jobcardId }, select: { id: true } });
+  if (!jc) throw new HttpError(400, 'Project not found');
+  if (req.user.role === 'SUPERADMIN' || !req.user.scopeToDepartment) return;
+  if (!(await hasAssignmentAccess(req.user.id, jobcardId))) {
+    throw new HttpError(403, 'This project is not assigned to you');
+  }
+}
+
+// Task Progress items come from the Process Master. A department-scoped
+// creator picks only from their own department's items (stage mapping lives
+// on Process.departmentId); nobody may file a department's item under another
+// department.
+async function resolveProcess(req, processId, departmentId) {
+  if (!processId) {
+    if (req.user.scopeToDepartment) throw new HttpError(400, "Pick a Task Progress item from your department's list");
+    return null;
+  }
+  const proc = await prisma.process.findUnique({
+    where: { id: processId },
+    select: { id: true, name: true, stage: true, departmentId: true, isActive: true },
+  });
+  if (!proc || !proc.isActive) throw new HttpError(400, 'Task Progress item not found');
+  if (req.user.scopeToDepartment && proc.departmentId !== req.user.departmentId) {
+    throw new HttpError(403, `"${proc.name}" is not one of your department's Task Progress items`);
+  }
+  if (proc.departmentId && proc.departmentId !== departmentId) {
+    throw new HttpError(400, `"${proc.name}" belongs to another department`);
+  }
+  return proc;
+}
+
+// The same item may be on a project only once while it is live; a cancelled
+// one can be re-added, and rework tasks are deliberately repeats.
+async function assertNotDuplicate(jobcardId, processId, excludeId = null) {
+  if (!processId) return;
+  const clash = await prisma.jobcardOperation.findFirst({
+    where: {
+      jobcardId, processId, parentOperationId: null,
+      status: { not: 'CANCELLED' },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true, process: { select: { name: true } } },
+  });
+  if (clash) throw new HttpError(409, `"${clash.process.name}" is already on this project`);
+}
+
 // Fan a task assignment out to every assigned operator's notification inbox.
 async function notifyAssignees(task, userIds, title, body) {
   if (!userIds.length) return;
@@ -246,8 +299,10 @@ async function create(req, res) {
   if (req.user.scopeToDepartment && departmentId !== req.user.departmentId) {
     throw new HttpError(403, 'You can only create tasks for your own department');
   }
-  const jc = await prisma.jobcard.findUnique({ where: { id: rest.jobcardId }, select: { id: true } });
-  if (!jc) throw new HttpError(400, 'Jobcard not found');
+  await assertProjectAccess(req, rest.jobcardId);
+  const proc = await resolveProcess(req, rest.processId, departmentId);
+  if (!proc && !(rest.title || '').trim()) throw new HttpError(400, 'Task name is required');
+  if (!parentOperationId) await assertNotDuplicate(rest.jobcardId, rest.processId);
 
   const ids = requestedAssigneeIds(req.body);
   for (const uid of ids) await assertDepartmentUser(departmentId, uid, 'Assigned operator');
@@ -281,6 +336,56 @@ async function create(req, res) {
   res.status(201).json(withComputed(task, req.user.id));
 }
 
+// Add several of a department's Task Progress items to a project in one go,
+// all given to the same operators. All-or-nothing: one invalid or duplicate
+// item rejects the whole request, so a half-applied selection never lands.
+async function createBulk(req, res) {
+  const { jobcardId, departmentId, processIds, priority, dueDate, notes, requiresApproval } = req.body;
+  if (req.user.scopeToDepartment && departmentId !== req.user.departmentId) {
+    throw new HttpError(403, 'You can only create tasks for your own department');
+  }
+  await assertProjectAccess(req, jobcardId);
+  const uniqueProcessIds = [...new Set(processIds)];
+  const procs = [];
+  for (const pid of uniqueProcessIds) {
+    procs.push(await resolveProcess(req, pid, departmentId));
+    await assertNotDuplicate(jobcardId, pid);
+  }
+  const ids = requestedAssigneeIds(req.body);
+  for (const uid of ids) await assertDepartmentUser(departmentId, uid, 'Assigned operator');
+
+  const created = await prisma.$transaction((tx) => Promise.all(procs.map((proc, i) => tx.jobcardOperation.create({
+    data: {
+      jobcardId, departmentId, processId: proc.id, title: proc.name, sequence: i,
+      notes: notes || null, priority: priority || 'MEDIUM', dueDate: dueDate || null,
+      requiresApproval: !!requiresApproval,
+      assignedToId: ids[0] || null,
+      assignedById: ids.length ? req.user.id : null,
+      createdById: req.user.id,
+      status: ids.length ? 'ASSIGNED' : 'NOT_STARTED',
+      assignees: { create: ids.map((userId) => ({ userId, assignedById: req.user.id })) },
+    },
+    include: TASK_INCLUDE,
+  }))));
+
+  for (const t of created) {
+    await audit(req, 'create', 'JobcardOperation', t.id, { title: t.title, jobcardId, processId: t.processId, assigneeIds: ids });
+  }
+  if (ids.length && created.length) {
+    const jcNumber = created[0].jobcard.number;
+    const names = created.map((t) => t.title).join(', ');
+    await prisma.notification.createMany({
+      data: ids.map((userId) => ({
+        userId, type: 'TASK_ASSIGNED',
+        title: created.length === 1 ? `New task assigned: ${names}` : `${created.length} new tasks assigned on ${jcNumber}`,
+        body: `${names} — project ${jcNumber}${dueDate ? `, due ${new Date(dueDate).toLocaleDateString('en-IN')}` : ''}`,
+        refType: 'JOBCARD', refId: jobcardId,
+      })),
+    }).catch(() => {});
+  }
+  res.status(201).json(created.map((t) => withComputed(t, req.user.id)));
+}
+
 async function update(req, res) {
   const id = parseInt(req.params.id, 10);
   const existing = await loadTask(id);
@@ -295,6 +400,14 @@ async function update(req, res) {
   }
   const data = { ...rest };
   if (departmentId !== undefined) data.departmentId = departmentId;
+  const processChanged = rest.processId !== undefined && (rest.processId || null) !== existing.processId;
+  const deptChanged = departmentId !== undefined && departmentId !== existing.departmentId;
+  if (processChanged || deptChanged) {
+    const nextProcessId = rest.processId !== undefined ? rest.processId : existing.processId;
+    const nextDept = departmentId !== undefined ? departmentId : existing.departmentId;
+    await resolveProcess(req, nextProcessId, nextDept);
+    if (!existing.parentOperationId) await assertNotDuplicate(existing.jobcardId, nextProcessId, id);
+  }
   const task = await prisma.jobcardOperation.update({ where: { id }, data, include: TASK_INCLUDE });
   await audit(req, 'update', 'JobcardOperation', id);
   res.json(withComputed(task, req.user.id));
@@ -510,8 +623,15 @@ async function setMyCompletion(req, res) {
 
   const mine = (existing.assignees || []).find((a) => a.userId === req.user.id);
   if (!mine) throw new HttpError(403, 'This task is not assigned to you');
-  if (TERMINAL_STATUSES.includes(existing.status)) {
-    throw new HttpError(400, `This task is already ${existing.status.toLowerCase().replace(/_/g, ' ')}`);
+  if (['CANCELLED', 'REJECTED'].includes(existing.status)) {
+    throw new HttpError(400, `This task is ${existing.status.toLowerCase()}`);
+  }
+  if (existing.status === 'COMPLETED') {
+    // un-ticking reopens the operator's share; a reviewed sign-off or a rework
+    // already raised against the result is final
+    if (done) return res.json(withComputed(existing, req.user.id));
+    if (existing.approvedAt) throw new HttpError(400, 'This task was approved — ask your Department Head to reopen it');
+    if ((existing.reworkTasks || []).length) throw new HttpError(400, 'A rework task exists for this item — ask your Department Head to reopen it');
   }
   // idempotent: a double tap/double submit is a no-op, never a second record
   if (done === (mine.status === 'COMPLETED')) {
@@ -729,6 +849,6 @@ async function activity(req, res) {
 }
 
 module.exports = {
-  list, get, dashboard, workload, create, update, assign, remove,
+  list, get, dashboard, workload, create, createBulk, update, assign, remove,
   setStatus, setProgress, setMyCompletion, rework, listNotes, addNote, activity,
 };

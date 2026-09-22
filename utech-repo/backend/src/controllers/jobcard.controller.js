@@ -9,6 +9,7 @@ const { audit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { effectiveChecklist, computeProgress, validateChecklistPayload } = require('../utils/jobcardProgress');
 const env = require('../config/env');
+const { hasAssignmentAccess, jobcardIdsAssignedTo } = require('../utils/jobcardAccess');
 
 const uploadBaseDir = path.resolve(env.UPLOAD_DIR);
 
@@ -24,17 +25,9 @@ const INCLUDE = {
 
 // Project Engineers only ever see/act on jobcards assigned to them via
 // "Assigned Engineer" (assignedOperatorId). Operators AND department-scoped
-// roles (Department Head and anyone under them) can additionally receive
-// work document-by-document via the Assignment chain, so their access is
-// also keyed off having at least one Assignment pointing at this jobcard's
-// attachments. Every other role is unrestricted.
-async function hasAssignmentAccess(userId, jobcardId) {
-  const count = await prisma.assignment.count({
-    where: { assignedToId: userId, attachment: { refType: 'JOBCARD', refId: jobcardId } },
-  });
-  return count > 0;
-}
-
+// roles can additionally reach a jobcard through the drawing Assignment chain
+// or a Task Progress item assigned to them (utils/jobcardAccess.js). Every
+// other role is unrestricted.
 async function assertOwnership(req, jc) {
   if (!req.user) return;
   if (req.user.role === 'Project Engineer' && jc.assignedOperatorId !== req.user.id) {
@@ -49,14 +42,6 @@ async function assertOwnership(req, jc) {
   if (req.user.scopeToDepartment && !(await hasAssignmentAccess(req.user.id, jc.id))) {
     throw new HttpError(403, 'This project is not assigned to you');
   }
-}
-
-async function jobcardIdsAssignedTo(userId) {
-  const rows = await prisma.assignment.findMany({
-    where: { assignedToId: userId, attachment: { refType: 'JOBCARD' } },
-    select: { attachment: { select: { refId: true } } },
-  });
-  return [...new Set(rows.map((r) => r.attachment.refId))];
 }
 
 function withProgress(jc) {
@@ -95,6 +80,8 @@ async function list(req, res) {
         createdBy: { select: { id: true, name: true } },
         assignedOperator: { select: { id: true, name: true } },
         projectEngineer: { select: { id: true, name: true } },
+        // just enough for computeProgress to use Task Progress on the cards
+        operations: { select: { status: true } },
       },
     }),
     prisma.jobcard.count({ where }),
