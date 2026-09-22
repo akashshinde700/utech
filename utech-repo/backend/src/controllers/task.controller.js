@@ -340,21 +340,30 @@ async function create(req, res) {
 // all given to the same operators. All-or-nothing: one invalid or duplicate
 // item rejects the whole request, so a half-applied selection never lands.
 async function createBulk(req, res) {
-  const { jobcardId, departmentId, processIds, priority, dueDate, notes, requiresApproval } = req.body;
+  const { jobcardId, departmentId, priority, dueDate, notes, requiresApproval } = req.body;
   if (req.user.scopeToDepartment && departmentId !== req.user.departmentId) {
     throw new HttpError(403, 'You can only create tasks for your own department');
   }
   await assertProjectAccess(req, jobcardId);
-  const uniqueProcessIds = [...new Set(processIds)];
-  const procs = [];
-  for (const pid of uniqueProcessIds) {
-    procs.push(await resolveProcess(req, pid, departmentId));
-    await assertNotDuplicate(jobcardId, pid);
-  }
-  const ids = requestedAssigneeIds(req.body);
-  for (const uid of ids) await assertDepartmentUser(departmentId, uid, 'Assigned operator');
 
-  const created = await prisma.$transaction((tx) => Promise.all(procs.map((proc, i) => tx.jobcardOperation.create({
+  // `items` gives each item its own operators; the older `processIds` form
+  // gives every item the same `assigneeIds`
+  const shared = requestedAssigneeIds(req.body);
+  const requested = req.body.items
+    ? req.body.items.map((i) => ({ processId: i.processId, ids: requestedAssigneeIds(i) }))
+    : req.body.processIds.map((processId) => ({ processId, ids: shared }));
+  const seen = new Set();
+  const plan = [];
+  for (const r of requested) {
+    if (seen.has(r.processId)) continue;
+    seen.add(r.processId);
+    const proc = await resolveProcess(req, r.processId, departmentId);
+    await assertNotDuplicate(jobcardId, r.processId);
+    for (const uid of r.ids) await assertDepartmentUser(departmentId, uid, 'Assigned operator');
+    plan.push({ proc, ids: r.ids });
+  }
+
+  const created = await prisma.$transaction((tx) => Promise.all(plan.map(({ proc, ids }, i) => tx.jobcardOperation.create({
     data: {
       jobcardId, departmentId, processId: proc.id, title: proc.name, sequence: i,
       notes: notes || null, priority: priority || 'MEDIUM', dueDate: dueDate || null,
@@ -369,16 +378,20 @@ async function createBulk(req, res) {
   }))));
 
   for (const t of created) {
-    await audit(req, 'create', 'JobcardOperation', t.id, { title: t.title, jobcardId, processId: t.processId, assigneeIds: ids });
+    await audit(req, 'create', 'JobcardOperation', t.id, {
+      title: t.title, jobcardId, processId: t.processId, assigneeIds: t.assignees.map((a) => a.userId),
+    });
   }
-  if (ids.length && created.length) {
+  // one notification per operator, listing only the items that are theirs
+  const perUser = {};
+  for (const t of created) for (const a of t.assignees) (perUser[a.userId] ||= []).push(t.title);
+  if (created.length && Object.keys(perUser).length) {
     const jcNumber = created[0].jobcard.number;
-    const names = created.map((t) => t.title).join(', ');
     await prisma.notification.createMany({
-      data: ids.map((userId) => ({
-        userId, type: 'TASK_ASSIGNED',
-        title: created.length === 1 ? `New task assigned: ${names}` : `${created.length} new tasks assigned on ${jcNumber}`,
-        body: `${names} — project ${jcNumber}${dueDate ? `, due ${new Date(dueDate).toLocaleDateString('en-IN')}` : ''}`,
+      data: Object.entries(perUser).map(([userId, titles]) => ({
+        userId: Number(userId), type: 'TASK_ASSIGNED',
+        title: titles.length === 1 ? `New task assigned: ${titles[0]}` : `${titles.length} new tasks assigned on ${jcNumber}`,
+        body: `${titles.join(', ')} — project ${jcNumber}${dueDate ? `, due ${new Date(dueDate).toLocaleDateString('en-IN')}` : ''}`,
         refType: 'JOBCARD', refId: jobcardId,
       })),
     }).catch(() => {});

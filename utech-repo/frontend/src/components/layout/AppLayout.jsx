@@ -11,7 +11,7 @@ import {
   Factory, Truck, Shield, ChevronDown, LogOut, UserCircle, Box,
   ShoppingCart, PackageCheck, Briefcase, Wallet, FileSpreadsheet, Cog,
   RotateCcw, ArrowLeftToLine, FileDown, BarChart3, ChevronRight, Home,
-  Boxes, SlidersHorizontal, Building2, ListChecks, Layers, Menu, X, KeyRound,
+  Boxes, SlidersHorizontal, Building2, ListChecks, CheckSquare, Layers, Menu, X, KeyRound,
 } from 'lucide-react';
 
 // perm = the permission key the backend actually requires for that page's GET
@@ -135,7 +135,10 @@ const RESTRICTED_NAV_SECTIONS = [
     icon: ClipboardList,
     items: [
       { to: '/', label: 'My Projects', icon: ClipboardList },
-      { to: '/assignments', label: 'My Assignments', icon: ListChecks },
+      // an operator's Task Progress checklist across every project — kept up
+      // here, not inside a collapsed section, because it is their main screen
+      { to: '/my-tasks', label: 'My Tasks', icon: CheckSquare, perm: 'task.progress' },
+      { to: '/assignments', label: 'My Drawing Assignments', icon: ListChecks },
     ],
   },
   // scopeToDepartment roles (Department Head / Supervisor / Team Leader) land
@@ -148,7 +151,6 @@ const RESTRICTED_NAV_SECTIONS = [
     label: 'Task Management',
     icon: ListChecks,
     items: [
-      { to: '/my-tasks', label: 'My Tasks', icon: ListChecks, perm: 'task.progress' },
       { to: '/tasks', label: 'Task Progress', icon: Layers, perm: 'task.create' },
       { to: '/processes', label: 'Process Master', icon: Cog, perm: 'process.read' },
     ],

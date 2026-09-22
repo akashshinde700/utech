@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ListChecks, AlertTriangle, Clock, CheckCircle2, Loader2,
   Check, Play, Send, ChevronRight, Calendar, User,
@@ -61,7 +62,17 @@ export default function MyTasksPage() {
   const [data, setData] = useState({ items: [], pagination: null });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [openTaskId, setOpenTaskId] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [openTaskId, setOpenTaskIdState] = useState(() => Number(searchParams.get('task')) || null);
+  // keep ?task= in step so a notification link (and back/forward) opens it
+  function setOpenTaskId(id) {
+    setOpenTaskIdState(id);
+    setSearchParams(id ? { task: String(id) } : {}, { replace: true });
+  }
+  useEffect(() => {
+    const fromUrl = Number(searchParams.get('task')) || null;
+    if (fromUrl !== openTaskId) setOpenTaskIdState(fromUrl);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busyId, setBusyId] = useState(null);
 
   async function load() {

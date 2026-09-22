@@ -24,12 +24,15 @@ import toast from 'react-hot-toast';
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
 const NEW_GROUP = '__new_group__';
 
-function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds }) {
+function TaskForm({ open, onClose, onSaved, jobcardId, editing, projectTasks }) {
   const user = useAuth((s) => s.user);
   const locked = !!user?.scopeToDepartment; // Department Head / Supervisor / Team Leader
   const [departmentId, setDepartmentId] = useState('');
-  const [processIds, setProcessIds] = useState([]);
-  const [assigneeIds, setAssigneeIds] = useState([]);
+  // the assignment board: newly ticked items -> their operators, and changed
+  // operators on items already on the project (taskId -> operators)
+  const [selection, setSelection] = useState({});
+  const [existingEdits, setExistingEdits] = useState({});
+  const [assigneeIds, setAssigneeIds] = useState([]); // edit mode (one task)
   const [priority, setPriority] = useState('MEDIUM');
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -43,7 +46,8 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
   useEffect(() => {
     if (!open) return;
     setErr(null);
-    setProcessIds([]);
+    setSelection({});
+    setExistingEdits({});
     setAddingTo(null);
     setDepartmentId(editing ? editing.departmentId : (locked ? user.departmentId : ''));
     setAssigneeIds(editing ? (editing.assignees || []).map((a) => a.userId) : []);
@@ -83,6 +87,67 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
   }, [processes]);
 
   const toggle = (list, setList, id) => setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  const flip = (list, id) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+
+  // live, non-rework task already on this project for a given item
+  const taskByProcess = useMemo(() => {
+    const m = {};
+    for (const t of projectTasks || []) {
+      if (t.processId && !t.parentOperationId && t.status !== 'CANCELLED') m[t.processId] = t;
+    }
+    return m;
+  }, [projectTasks]);
+  const operatorsOf = (t) => existingEdits[t.id] ?? t.assignees.map((a) => a.userId);
+  // a department with a single operator needs no choosing
+  const onlyOperator = people.filter((u) => u.roleName === 'OPERATOR');
+  const defaultOperators = () => (onlyOperator.length === 1 ? [onlyOperator[0].id] : []);
+
+  function tickItem(pid) {
+    setSelection((sel) => {
+      const next = { ...sel };
+      if (pid in next) delete next[pid]; else next[pid] = defaultOperators();
+      return next;
+    });
+  }
+  // quick assign: give (or take back) one operator on every ticked new item
+  function quickAssign(uid) {
+    setSelection((sel) => {
+      const keys = Object.keys(sel);
+      const allHave = keys.every((k) => sel[k].includes(uid));
+      return Object.fromEntries(keys.map((k) => [k, allHave ? sel[k].filter((x) => x !== uid) : [...new Set([...sel[k], uid])]]));
+    });
+  }
+  function toggleExisting(task, uid) {
+    setExistingEdits((m) => {
+      const next = flip(operatorsOf(task), uid);
+      const original = task.assignees.map((a) => a.userId);
+      const same = next.length === original.length && next.every((x) => original.includes(x));
+      const copy = { ...m };
+      if (same) delete copy[task.id]; else copy[task.id] = next;
+      return copy;
+    });
+  }
+  const tickedCount = Object.keys(selection).length;
+  const editedCount = Object.keys(existingEdits).length;
+
+  const operatorChips = (value, onToggle, disabled = false) => (
+    <div className="flex flex-wrap gap-1.5">
+      {people.map((u) => {
+        const on = value.includes(u.id);
+        return (
+          <button
+            key={u.id} type="button" disabled={disabled} aria-pressed={on}
+            onClick={() => onToggle(u.id)}
+            className={`rounded-full border px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${on
+              ? 'border-brand-600 bg-brand-600 text-white'
+              : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300'}`}
+          >
+            {on ? '\u2713 ' : ''}{u.name}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   // New items straight into the department's Process Master — under an
   // existing stage group, or as a brand-new group with its first item.
@@ -107,7 +172,7 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
     try {
       const r = await api.post('/processes', { name, stage: stage || null, departmentId: Number(departmentId) });
       setProcesses((list) => [...list, r.data]);
-      setProcessIds((list) => [...list, r.data.id]); // it was added to be used — tick it
+      setSelection((sel) => ({ ...sel, [r.data.id]: defaultOperators() })); // added to be used — tick it
       toast.success(`"${r.data.name}" added to ${stage || 'the list'}`);
       setAddingTo(null);
     } catch (e2) {
@@ -152,7 +217,10 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
     e.preventDefault();
     setErr(null);
     if (!departmentId) { setErr('Department is required'); return; }
-    if (!editing && !processIds.length) { setErr('Select at least one Task Progress item'); return; }
+    if (!editing && !tickedCount && !editedCount) { setErr('Tick an item, or change who an item on the project is assigned to'); return; }
+    if (!editing && Object.values(existingEdits).some((ids) => !ids.length)) {
+      setErr('An item already on the project needs at least one operator'); return;
+    }
     setSaving(true);
     try {
       const common = {
@@ -169,11 +237,21 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
           await api.post(`/tasks/${editing.id}/assign`, { assigneeIds });
         }
       } else {
-        await api.post('/tasks/bulk', {
-          ...common, jobcardId, departmentId: Number(departmentId), processIds, assigneeIds,
-        });
+        if (tickedCount) {
+          await api.post('/tasks/bulk', {
+            ...common, jobcardId, departmentId: Number(departmentId),
+            items: Object.entries(selection).map(([pid, ids]) => ({ processId: Number(pid), assigneeIds: ids })),
+          });
+        }
+        // reassignments go one by one through /assign so each keeps its history
+        for (const [taskId, ids] of Object.entries(existingEdits)) {
+          await api.post(`/tasks/${taskId}/assign`, { assigneeIds: ids });
+        }
       }
-      toast.success(editing ? 'Task updated' : `${processIds.length} task${processIds.length > 1 ? 's' : ''} added`);
+      const parts = [];
+      if (tickedCount) parts.push(`${tickedCount} added`);
+      if (editedCount) parts.push(`${editedCount} reassigned`);
+      toast.success(editing ? 'Task updated' : `Tasks ${parts.join(', ')}`);
       onSaved();
       onClose();
     } catch (e2) {
@@ -183,21 +261,22 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
     }
   }
 
+  const saveLabel = [tickedCount && `${tickedCount} new`, editedCount && `${editedCount} reassigned`].filter(Boolean).join(', ');
   const deptName = editing?.department?.name || (locked ? user?.departmentName : departments.find((d) => d.id === Number(departmentId))?.name);
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={editing ? 'Edit Task Progress' : 'Add Task Progress'}
-      description={editing ? editing.displayTitle : "Pick items from your department's list and assign the operators who will do them."}
+      title={editing ? 'Edit Task Progress' : 'Assign Task Progress'}
+      description={editing ? editing.displayTitle : "Every item in your department's list for this project. Tick new ones and pick who does each; change operators on ones already here."}
       size="lg"
       footer={(
         <div className="flex justify-end gap-2">
           <button type="button" className={styles.secondaryBtn} onClick={onClose} disabled={saving}>Cancel</button>
           <button type="submit" form="task-progress-form" className={styles.primaryBtn} disabled={saving}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            {editing ? 'Save changes' : processIds.length > 1 ? `Add ${processIds.length} tasks` : 'Add task'}
+            {editing ? 'Save changes' : saveLabel ? `Save (${saveLabel})` : 'Save'}
           </button>
         </div>
       )}
@@ -216,7 +295,7 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
           ) : (
             <select
               id="tp-dept" className={styles.input} value={departmentId}
-              onChange={(e) => { setDepartmentId(e.target.value ? Number(e.target.value) : ''); setProcessIds([]); setAssigneeIds([]); }}
+              onChange={(e) => { setDepartmentId(e.target.value ? Number(e.target.value) : ''); setSelection({}); setExistingEdits({}); }}
             >
               <option value="">Select department</option>
               {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -225,8 +304,17 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
         </FormField>
 
         {!editing && (
-          <FormField id="tp-items" label="Task Progress Items" required hint={departmentId ? `Only ${deptName || 'this department'}'s items are listed.` : 'Pick a department first.'}>
-            <div className="max-h-80 overflow-y-auto rounded-lg border border-slate-200">
+          <FormField id="tp-items" label="Task Progress Items" required hint={departmentId ? `All of ${deptName || 'this department'}'s items. Tap a name under an item to give it to that operator.` : 'Pick a department first.'}>
+            {tickedCount > 1 && people.length > 0 && (
+              <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="mb-1.5 text-[11px] font-medium text-slate-500">Give all {tickedCount} ticked items to:</div>
+                {operatorChips(
+                  people.filter((u) => Object.values(selection).every((ids) => ids.includes(u.id))).map((u) => u.id),
+                  quickAssign,
+                )}
+              </div>
+            )}
+            <div className="max-h-[26rem] overflow-y-auto rounded-lg border border-slate-200">
               {!departmentId && <div className="px-3 py-4 text-sm text-slate-400">Select a department to list its items.</div>}
               {departmentId && !processes.length && (
                 <div className="px-3 py-4 text-sm text-slate-400">No Task Progress items are set up for this department in the Process Master.</div>
@@ -235,21 +323,41 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
                 <div key={g.stage || 'other'} className="border-b border-slate-100 last:border-b-0">
                   <div className="bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{stageLabel(g.stage)}</div>
                   {g.items.map((p) => {
-                    const taken = takenProcessIds.includes(p.id);
-                    const on = processIds.includes(p.id);
+                    const existing = taskByProcess[p.id];
+                    if (existing) {
+                      const closedTask = ['COMPLETED', 'SUBMITTED', 'REJECTED'].includes(existing.status);
+                      const changed = existing.id in existingEdits;
+                      return (
+                        <div key={p.id} className={`px-3 py-2.5 ${changed ? 'bg-amber-50/70' : ''}`}>
+                          <div className="flex items-center gap-2.5 text-sm">
+                            <CheckSquare className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                            <span className="flex-1 min-w-0 text-slate-700">{p.name}</span>
+                            <span className="text-[11px] text-slate-400 shrink-0">on project · {existing.status.replace(/_/g, ' ').toLowerCase()}</span>
+                          </div>
+                          <div className="mt-2 pl-6">
+                            {operatorChips(operatorsOf(existing), (uid) => toggleExisting(existing, uid), closedTask)}
+                            {closedTask && <div className="mt-1 text-[11px] text-slate-400">Already {existing.status.toLowerCase()} — can't reassign.</div>}
+                          </div>
+                        </div>
+                      );
+                    }
+                    const on = p.id in selection;
                     return (
-                      <label
-                        key={p.id}
-                        className={`flex items-center gap-2.5 px-3 py-2.5 text-sm ${taken ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50'}`}
-                      >
-                        <input
-                          type="checkbox" className="h-4 w-4 shrink-0 accent-brand-600"
-                          checked={on || taken} disabled={taken}
-                          onChange={() => toggle(processIds, setProcessIds, p.id)}
-                        />
-                        <span className="flex-1 min-w-0 text-slate-700">{p.name}</span>
-                        {taken && <span className="text-[11px] text-slate-400 shrink-0">already on project</span>}
-                      </label>
+                      <div key={p.id} className={`px-3 py-2.5 ${on ? 'bg-brand-50/40' : ''}`}>
+                        <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+                          <input
+                            type="checkbox" className="h-4 w-4 shrink-0 accent-brand-600"
+                            checked={on} onChange={() => tickItem(p.id)}
+                          />
+                          <span className="flex-1 min-w-0 text-slate-700">{p.name}</span>
+                          {on && !selection[p.id].length && <span className="text-[11px] text-amber-600 shrink-0">pick an operator</span>}
+                        </label>
+                        {on && (
+                          <div className="mt-2 pl-6">
+                            {operatorChips(selection[p.id], (uid) => setSelection((sel) => ({ ...sel, [p.id]: flip(sel[p.id], uid) })))}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                   {canAddItems && (addingTo === g.stage ? addRow : (
@@ -279,7 +387,8 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
           </FormField>
         )}
 
-        <FormField id="tp-ops" label="Assign Operators" hint={departmentId ? 'The items appear only for the people you tick. Each ticks their own checkbox.' : 'Pick a department first.'}>
+        {editing && (
+        <FormField id="tp-ops" label="Assign Operators" hint="The item appears only for the people you tick. Each ticks their own checkbox.">
           <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
             {!departmentId && <div className="px-3 py-4 text-sm text-slate-400">Select a department to list its people.</div>}
             {departmentId && !people.length && <div className="px-3 py-4 text-sm text-slate-400">No active users in this department.</div>}
@@ -300,7 +409,9 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, takenProcessIds 
             ))}
           </div>
         </FormField>
+        )}
 
+        {!editing && <div className="text-xs font-medium uppercase tracking-wide text-slate-400">For newly added items</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField id="tp-priority" label="Priority">
             <select id="tp-priority" className={styles.input} value={priority} onChange={(e) => setPriority(e.target.value)}>
@@ -484,7 +595,7 @@ export default function JobcardTaskProgress({ jobcardId, onChanged }) {
   // managers and the Project Engineer read it department by department
   const byDepartment = useMemo(() => {
     const groups = {};
-    for (const t of tasks) {
+    for (const t of live) {
       const key = t.department?.name || 'No department';
       (groups[key] ||= []).push(t);
     }
@@ -492,13 +603,11 @@ export default function JobcardTaskProgress({ jobcardId, onChanged }) {
       list.sort((a, b) => (stageNumber(a.process?.stage) ?? 99) - (stageNumber(b.process?.stage) ?? 99) || a.id - b.id);
     }
     return Object.entries(groups);
-  }, [tasks]);
-  const isOperatorView = tasks.length > 0 && tasks.every((t) => t.myAssignment);
+  }, [live]);
+  // cancelled items stay in history but out of the working list
+  const cancelledCount = tasks.length - live.length;
+  const isOperatorView = live.length > 0 && live.every((t) => t.myAssignment);
 
-  const takenProcessIds = useMemo(
-    () => live.filter((t) => t.processId && !t.parentOperationId).map((t) => t.processId),
-    [live],
-  );
 
   // the operator's checkbox — flips immediately, rolls back if the save fails
   async function tick(task, nextDone) {
@@ -583,7 +692,7 @@ export default function JobcardTaskProgress({ jobcardId, onChanged }) {
         </div>
       )}
 
-      {!loading && !error && !tasks.length && (
+      {!loading && !error && !live.length && (
         <EmptyState
           icon={ListChecks}
           title="No Task Progress yet"
@@ -594,9 +703,13 @@ export default function JobcardTaskProgress({ jobcardId, onChanged }) {
         />
       )}
 
-      {!loading && !error && !!tasks.length && (isOperatorView ? (
+      {!loading && !error && cancelledCount > 0 && canManage && (
+        <div className="mb-2 text-[11px] text-slate-400">{cancelledCount} cancelled item{cancelledCount > 1 ? 's' : ''} hidden</div>
+      )}
+
+      {!loading && !error && !!live.length && (isOperatorView ? (
         <ul className="divide-y divide-slate-100">
-          {[...tasks]
+          {[...live]
             .sort((a, b) => (stageNumber(a.process?.stage) ?? 99) - (stageNumber(b.process?.stage) ?? 99) || a.id - b.id)
             .map((t) => <TaskRow key={t.id} {...rowProps(t)} />)}
         </ul>
@@ -626,7 +739,7 @@ export default function JobcardTaskProgress({ jobcardId, onChanged }) {
         open={formOpen}
         editing={editing}
         jobcardId={Number(jobcardId)}
-        takenProcessIds={takenProcessIds}
+        projectTasks={live}
         onClose={() => { setFormOpen(false); setEditing(null); }}
         onSaved={() => { load(); onChanged?.(); }}
       />

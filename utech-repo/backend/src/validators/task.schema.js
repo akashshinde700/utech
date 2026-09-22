@@ -35,12 +35,20 @@ const updateTaskSchema = createTaskSchema.omit({ jobcardId: true }).partial();
 const bulkCreateTaskSchema = z.object({
   jobcardId: z.number().int(),
   departmentId: z.number().int(),
-  processIds: z.array(z.number().int()).min(1, 'Select at least one Task Progress item').max(40),
+  processIds: z.array(z.number().int()).max(40).optional(),
   assigneeIds: z.array(z.number().int()).max(25).optional(),
+  // per-item operators; takes precedence over processIds + assigneeIds
+  items: z.array(z.object({
+    processId: z.number().int(),
+    assigneeIds: z.array(z.number().int()).max(25).optional(),
+  })).max(40).optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).default('MEDIUM'),
   dueDate: z.coerce.date().optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
   requiresApproval: z.boolean().optional(),
+}).refine((v) => (v.items && v.items.length) || (v.processIds && v.processIds.length), {
+  message: 'Select at least one Task Progress item',
+  path: ['items'],
 });
 
 // Either form is accepted: a single `assignedToId` (existing callers) or the

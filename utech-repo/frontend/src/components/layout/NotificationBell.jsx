@@ -43,6 +43,8 @@ const TYPE_PREFIX_ROUTES = [
 // the referenced record, else the section page, else null (stay put)
 export function routeForNotification(n) {
   const refType = (n.refType || '').toUpperCase();
+  // a Task Progress item: My Tasks opens it straight in its detail drawer
+  if (refType === 'JOBCARD_OPERATION') return n.refId != null ? `/my-tasks?task=${n.refId}` : '/my-tasks';
   if (refType && REF_TYPE_ROUTES[refType]) {
     return n.refId != null ? `${REF_TYPE_ROUTES[refType]}/${n.refId}` : REF_TYPE_ROUTES[refType];
   }
