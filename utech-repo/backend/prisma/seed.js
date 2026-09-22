@@ -8,8 +8,8 @@ const { calcLineAmount, calcTaxes, round2 } = require('../src/utils/gst');
 const prisma = new PrismaClient();
 
 const MODULES = [
-  'user', 'role', 'party', 'item', 'machine', 'process',
-  'invoice', 'quotation', 'jobcard', 'jobwork', 'dispatch',
+  'user', 'role', 'customerParty', 'vendorParty', 'item', 'machine', 'process',
+  'invoice', 'customerQuotation', 'vendorQuotation', 'jobcard', 'jobwork', 'dispatch',
   'purchase', 'grn', 'quality', 'project', 'bom', 'expense',
   'attachment', 'report', 'customerMaterial', 'stock', 'department',
   'departmentSubcategory', 'assignment', 'vendorWorkOrder', 'task',
@@ -70,7 +70,7 @@ async function main() {
     update: { isSystem: true },
     create: { name: 'MANAGER', description: 'Operations manager', isSystem: true },
   });
-  const managerMods = ['party', 'item', 'invoice', 'quotation', 'jobcard',
+  const managerMods = ['customerParty', 'vendorParty', 'item', 'invoice', 'customerQuotation', 'vendorQuotation', 'jobcard',
     'jobwork', 'dispatch', 'machine', 'process', 'purchase', 'grn',
     'quality', 'project', 'expense', 'attachment', 'report', 'customerMaterial', 'stock',
     'vendorWorkOrder', 'task'];
@@ -135,7 +135,7 @@ async function main() {
       skipDuplicates: true,
     });
   }
-  const adminMods = ['party', 'item', 'invoice', 'quotation', 'jobcard', 'jobwork',
+  const adminMods = ['customerParty', 'vendorParty', 'item', 'invoice', 'customerQuotation', 'vendorQuotation', 'jobcard', 'jobwork',
     'dispatch', 'machine', 'process', 'purchase', 'grn', 'quality', 'project',
     'expense', 'attachment', 'report', 'customerMaterial', 'stock', 'user', 'department',
     'departmentSubcategory', 'assignment', 'vendorWorkOrder', 'task'];
@@ -145,7 +145,7 @@ async function main() {
   // jobcard.progress grant follows its own role list (Operator and the
   // department-scoped roles), so Project Engineer is excluded here too
   await grant('Project Engineer', allPerms.filter((p) =>
-    (['jobcard', 'quotation', 'project'].includes(p.module) && !(p.module === 'jobcard' && ['delete', 'progress'].includes(p.action))) ||
+    (['jobcard', 'customerQuotation', 'vendorQuotation', 'project'].includes(p.module) && !(p.module === 'jobcard' && ['delete', 'progress'].includes(p.action))) ||
     (p.module === 'invoice' && p.action === 'read') ||
     (p.module === 'user' && p.action === 'read') ||
     (['department', 'departmentSubcategory'].includes(p.module) && p.action === 'read') ||
@@ -187,7 +187,7 @@ async function main() {
     // delete is a soft deactivate, so tasks already using an item keep it.
     (p.module === 'process' && p.action === 'delete') ||
     (p.module === 'vendorWorkOrder' && ['create', 'update'].includes(p.action)) ||
-    (['party', 'item'].includes(p.module) && p.action === 'read') ||
+    (['customerParty', 'vendorParty', 'item'].includes(p.module) && p.action === 'read') ||
     (p.module === 'jobwork' && p.action === 'read') ||
     (['purchase', 'grn'].includes(p.module) && ['create', 'read'].includes(p.action))
   );

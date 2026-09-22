@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { User, MapPin, CreditCard, StickyNote, Save, Landmark, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
@@ -9,6 +9,8 @@ import { styles } from '../../lib/formStyles';
 import { email, gstin, normalizePhone, phone10, pincode, required, validateAll } from '../../lib/validation';
 import { deriveFromGstin, suggestNickName } from '../../lib/gstin';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../store/auth';
+import { writablePartyTypes } from '../../lib/permissions';
 
 const empty = {
   name: '', nickName: '', type: 'CUSTOMER', contactPerson: '', email: '', phone: '', altPhone: '',
@@ -54,7 +56,15 @@ const schema = {
 export default function PartyForm() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [form, setForm] = useState(empty);
+  const user = useAuth((s) => s.user);
+  const [searchParams] = useSearchParams();
+  // a user with only customer (or only vendor) party rights only gets that type
+  const typeOptions = writablePartyTypes(user, id ? 'update' : 'create');
+  const wantedType = searchParams.get('type');
+  const [form, setForm] = useState(() => ({
+    ...empty,
+    type: typeOptions.includes(wantedType) ? wantedType : (typeOptions[0] || empty.type),
+  }));
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [ifscBusy, setIfscBusy] = useState(false);
@@ -180,9 +190,9 @@ export default function PartyForm() {
                 onBlur={() => blur('type')}
                 aria-invalid={!!errors.type}
               >
-                <option value="CUSTOMER">Customer</option>
-                <option value="VENDOR">Vendor</option>
-                <option value="BOTH">Both</option>
+                {[['CUSTOMER', 'Customer'], ['VENDOR', 'Vendor'], ['BOTH', 'Both (customer and vendor)']]
+                  .filter(([v]) => typeOptions.includes(v) || v === form.type)
+                  .map(([v, label]) => <option key={v} value={v}>{label}</option>)}
               </select>
             </FormField>
             <FormField id="party-contact" label="Contact Person" error={errors.contactPerson}>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Shield, Plus, Pencil, Trash2, Loader2, Lock, Users, KeyRound } from 'lucide-react';
+import { Shield, Plus, Pencil, Trash2, Loader2, Lock, Users, KeyRound, UserPlus } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import Badge from '../../components/ui/Badge';
@@ -10,7 +10,7 @@ import FormSection from '../../components/ui/FormSection';
 import FormField from '../../components/ui/FormField';
 import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
-import { required, validateAll } from '../../lib/validation';
+import { email as emailRule, required, validateAll } from '../../lib/validation';
 import { hasPermission } from '../../lib/permissions';
 import { useAuth } from '../../store/auth';
 import toast from 'react-hot-toast';
@@ -29,6 +29,20 @@ export default function RolesPage() {
   const [deleting, setDeleting] = useState(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  // optional: a person to create with this role in the same save (new roles only)
+  const EMPTY_PERSON = { name: '', email: '', phone: '', password: '', departmentId: '' };
+  const [person, setPerson] = useState(EMPTY_PERSON);
+  const [personErrors, setPersonErrors] = useState({});
+  const [departments, setDepartments] = useState([]);
+  const personFilled = !!(person.name.trim() || person.email.trim() || person.password);
+  const setPersonField = (k, v) => {
+    setPerson((x) => ({ ...x, [k]: v }));
+    setPersonErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
+  };
+  useEffect(() => {
+    if (!editing || editing.id || !editing.requiresDepartment || departments.length) return;
+    api.get('/departments', { params: { pageSize: 200 } }).then((r) => setDepartments(r.data.items || [])).catch(() => {});
+  }, [editing, departments.length]);
 
   async function load() {
     const [r, p] = await Promise.all([api.get('/roles'), api.get('/roles/permissions/all')]);
@@ -57,18 +71,51 @@ export default function RolesPage() {
         return null;
       },
     });
-    if (!ok) {
+    // the person block is optional, but once started it must be complete —
+    // checked before the role is saved so a half-filled person never lands
+    const pErr = {};
+    if (!editing.id && personFilled) {
+      if (!person.name.trim()) pErr.name = 'Name is required';
+      pErr.email = required(person.email, 'Email') || emailRule(person.email) || undefined;
+      if (!person.password) pErr.password = 'Password is required';
+      else if (person.password.length < 8 || !/[A-Za-z]/.test(person.password) || !/\d/.test(person.password)) {
+        pErr.password = 'Min 8 characters with at least one letter and one number';
+      }
+      if (editing.requiresDepartment && !person.departmentId) pErr.departmentId = 'This role needs a department';
+      Object.keys(pErr).forEach((k) => pErr[k] === undefined && delete pErr[k]);
+    }
+    if (!ok || Object.keys(pErr).length) {
       setErrors(nextErrors);
+      setPersonErrors(pErr);
       toast.error('Please fix the highlighted fields');
       return;
     }
     setSaving(true);
     try {
       const payload = { ...editing, parentRoleId: editing.parentRoleId ? Number(editing.parentRoleId) : null };
+      let roleId = editing.id;
       if (editing.id) await api.put(`/roles/${editing.id}`, payload);
-      else await api.post('/roles', payload);
-      toast.success('Saved successfully');
+      else roleId = (await api.post('/roles', payload)).data.id;
+      if (!editing.id && personFilled) {
+        try {
+          await api.post('/users', {
+            name: person.name.trim(),
+            email: person.email.trim(),
+            phone: person.phone.trim() || undefined,
+            password: person.password,
+            roleId,
+            departmentId: editing.requiresDepartment ? Number(person.departmentId) : null,
+            isActive: true,
+          });
+          toast.success(`Role saved and ${person.name.trim()} added as ${editing.name}`);
+        } catch (uErr) {
+          toast.error(`Role saved, but the user wasn't created: ${uErr.response?.data?.message || 'error'}. Add them from Users.`);
+        }
+      } else {
+        toast.success('Saved successfully');
+      }
       setEditing(null);
+      setPerson(EMPTY_PERSON);
       load();
     } catch (err) {
       console.error(err);
@@ -113,6 +160,8 @@ export default function RolesPage() {
 
   const openNew = () => {
     setErrors({});
+    setPerson(EMPTY_PERSON);
+    setPersonErrors({});
     setEditing(blankRole());
   };
 
@@ -277,6 +326,37 @@ export default function RolesPage() {
               </div>
             </FormSection>
 
+            {!editing.id && (
+              <FormSection
+                icon={UserPlus}
+                title="Add a person with this role (optional)"
+                description="Fill this to create their login right away — or leave it empty and add people later from Users."
+              >
+                <div className={styles.formGrid}>
+                  <FormField id="rp-name" label="Person's name" error={personErrors.name}>
+                    <input id="rp-name" className={styles.input} value={person.name} onChange={(e) => setPersonField('name', e.target.value)} placeholder="e.g. Prathibha Rajendra Kulkarni" />
+                  </FormField>
+                  <FormField id="rp-email" label="Email" hint="Used to log in" error={personErrors.email}>
+                    <input id="rp-email" type="email" className={styles.input} value={person.email} onChange={(e) => setPersonField('email', e.target.value)} />
+                  </FormField>
+                  <FormField id="rp-phone" label="Phone" hint="10-digit mobile">
+                    <input id="rp-phone" className={styles.input} value={person.phone} onChange={(e) => setPersonField('phone', e.target.value)} />
+                  </FormField>
+                  <FormField id="rp-password" label="Password" hint="Min 8 characters with at least one letter and one number" error={personErrors.password}>
+                    <input id="rp-password" type="password" autoComplete="new-password" className={styles.input} value={person.password} onChange={(e) => setPersonField('password', e.target.value)} />
+                  </FormField>
+                  {editing.requiresDepartment && (
+                    <FormField id="rp-dept" label="Department" error={personErrors.departmentId}>
+                      <select id="rp-dept" className={styles.input} value={person.departmentId} onChange={(e) => setPersonField('departmentId', e.target.value)}>
+                        <option value="">Select department</option>
+                        {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </FormField>
+                  )}
+                </div>
+              </FormSection>
+            )}
+
             <FormSection
               icon={KeyRound}
               title="Permissions"
@@ -288,7 +368,7 @@ export default function RolesPage() {
                   return (
                     <div key={mod} className="bg-slate-50 rounded-xl p-4 border border-slate-100">
                       <div className="font-semibold text-sm mb-3 capitalize text-slate-800 flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-brand-500" aria-hidden="true" /> {mod}
+                        <Shield className="w-4 h-4 text-brand-500" aria-hidden="true" /> {mod.replace(/([a-z])([A-Z])/g, '$1 $2')}
                         <span className="ml-auto text-xs font-normal text-slate-400 tabular-nums">{granted}/{perms.length}</span>
                       </div>
                       <div className="flex flex-wrap gap-2">

@@ -32,8 +32,10 @@ const NAV_SECTIONS = [
     label: 'Masters',
     icon: Box,
     items: [
-      { to: '/quotations', label: 'Quotations', icon: FileDown, perm: 'quotation.read' },
-      { to: '/parties', label: 'Parties', icon: Users, perm: 'party.read' },
+      { to: '/quotations?type=CUSTOMER', label: 'Customer Quotations', icon: FileDown, perm: 'customerQuotation.read' },
+      { to: '/quotations?type=VENDOR', label: 'Vendor Quotations', icon: FileDown, perm: 'vendorQuotation.read' },
+      { to: '/parties?type=CUSTOMER', label: 'Customers', icon: Users, perm: 'customerParty.read' },
+      { to: '/parties?type=VENDOR', label: 'Vendors', icon: Users, perm: 'vendorParty.read' },
       { to: '/jobcards', label: 'Jobcards', icon: ClipboardList, perm: 'jobcard.read' },
       { to: '/assignments', label: 'Assignments', icon: ListChecks, perm: 'assignment.read' },
       { to: '/machines', label: 'Machines', icon: Cog, perm: 'machine.read' },
@@ -159,6 +161,17 @@ const RESTRICTED_NAV_SECTIONS = [
 
 export default function AppLayout() {
   const user = useAuth((s) => s.user);
+  const { search: currentSearch } = useLocation();
+  // a nav entry with a query (e.g. /parties?type=VENDOR) is active only when
+  // the query matches too, so Customers and Vendors don't both light up
+  const linkActive = (item, isActive) => {
+    if (!isActive) return false;
+    const q = item.to.indexOf('?');
+    if (q === -1) return true;
+    const want = new URLSearchParams(item.to.slice(q));
+    const have = new URLSearchParams(currentSearch);
+    return [...want.entries()].every(([k, v]) => have.get(k) === v);
+  };
   const logout = useAuth((s) => s.logout);
   const navigate = useNavigate();
   const location = useLocation();
@@ -264,7 +277,7 @@ export default function AppLayout() {
                           end={item.to === '/'}
                           className={({ isActive }) =>
                             'relative flex items-center gap-3 rounded-lg py-2 pl-4 pr-3 ml-4 text-sm font-medium transition-all duration-200 ' +
-                            (isActive
+                            (linkActive(item, isActive)
                               ? 'bg-brand-600/30 text-white shadow-sm ring-1 ring-brand-400/30'
                               : 'text-brand-100 hover:bg-white/10 hover:text-white')
                           }
@@ -273,7 +286,7 @@ export default function AppLayout() {
                             <>
                               {/* active left accent bar */}
                               <span
-                                className={`absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full transition-opacity ${isActive ? 'bg-brand-300 opacity-100' : 'opacity-0'}`}
+                                className={`absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full transition-opacity ${linkActive(item, isActive) ? 'bg-brand-300 opacity-100' : 'opacity-0'}`}
                                 aria-hidden="true"
                               />
                               <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/5 text-brand-200 transition-colors duration-200">

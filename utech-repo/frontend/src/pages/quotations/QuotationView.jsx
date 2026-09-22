@@ -170,7 +170,7 @@ export default function QuotationView() {
                   <button className="btn-danger" onClick={() => updateStatus('REJECTED')}><XCircle className="w-4 h-4" /> Reject</button>
                 </>
               )}
-              {q.status === 'APPROVED' && (
+              {q.status === 'APPROVED' && q.type !== 'VENDOR' && (
                 <button className="btn-success" onClick={() => setConvertOpen(true)}><FileText className="w-4 h-4" /> Convert to Invoice</button>
               )}
             </div>

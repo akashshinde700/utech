@@ -31,7 +31,8 @@ const base = {
   lines: z.array(lineSchema).min(1),
 };
 
-const createQuotationSchema = z.object(base);
+// type is fixed at creation — a customer quote never becomes a vendor one
+const createQuotationSchema = z.object({ ...base, type: z.enum(['CUSTOMER', 'VENDOR']).default('CUSTOMER') });
 const updateQuotationSchema = z.object(base).partial();
 
 module.exports = { createQuotationSchema, updateQuotationSchema };

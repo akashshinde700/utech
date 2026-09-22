@@ -15,6 +15,7 @@ const prisma = require('../config/prisma');
 const PREFIXES = {
   invoice: 'INV',
   quotation: 'QT',
+  vendorQuotation: 'VQ',
   jobcard: 'JC',
   jobwork: 'JW',
   dispatch: 'DC',

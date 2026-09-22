@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, Plus, Trash2, Users } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
@@ -9,17 +9,23 @@ import Badge from '../../components/ui/Badge';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import EmptyState from '../../components/ui/EmptyState';
 import { styles } from '../../lib/formStyles';
-import { hasPermission } from '../../lib/permissions';
+import { allowedKinds } from '../../lib/permissions';
 import { useAuth } from '../../store/auth';
 import toast from 'react-hot-toast';
 
 export default function PartiesPage() {
   const navigate = useNavigate();
   const user = useAuth((s) => s.user);
-  const canDelete = hasPermission(user, 'party.delete');
+  // the backend refuses per row; this only hides the button when neither side may delete
+  const canDelete = allowedKinds(user, 'Party', 'delete').length > 0;
+  const readable = allowedKinds(user, 'Party', 'read');
+  const creatable = allowedKinds(user, 'Party', 'create');
+  // ?type= comes from the sidebar (Customers / Vendors)
+  const [searchParams, setSearchParams] = useSearchParams();
+  const type = searchParams.get('type') || '';
+  const setType = (t) => setSearchParams(t ? { type: t } : {}, { replace: true });
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
-  const [type, setType] = useState('');
   // deactivated parties are soft-deleted (isActive=false) but still listed —
   // this filter + the row badge make their state visible. The backend list
   // endpoint has no ?isActive filter, so this filters the loaded rows client-side.
@@ -68,9 +74,13 @@ export default function PartiesPage() {
   return (
     <div>
       <PageHeader
-        title="Parties"
-        subtitle="Customers and vendors"
-        action={<Link to="/parties/new" className="btn-primary"><Plus className="w-4 h-4" /> New party</Link>}
+        title={type === 'CUSTOMER' ? 'Customers' : type === 'VENDOR' ? 'Vendors' : 'Parties'}
+        subtitle={type === 'CUSTOMER' ? 'Customer parties (including ones that are also vendors)' : type === 'VENDOR' ? 'Vendor parties (including ones that are also customers)' : 'Customers and vendors'}
+        action={creatable.length > 0 && (
+          <Link to={`/parties/new${type && creatable.includes(type) ? `?type=${type}` : ''}`} className="btn-primary">
+            <Plus className="w-4 h-4" /> {type === 'VENDOR' ? 'New vendor' : type === 'CUSTOMER' ? 'New customer' : 'New party'}
+          </Link>
+        )}
       />
 
       <div className="flex flex-wrap gap-3 mb-4 bg-white p-3 rounded-xl border border-slate-200/80 shadow-sm items-center">
@@ -85,10 +95,10 @@ export default function PartiesPage() {
           />
         </div>
         <select className={`${styles.input} max-w-[180px]`} value={type} onChange={(e) => { setType(e.target.value); setPage(1); }} aria-label="Filter by party type">
-          <option value="">All types</option>
-          <option value="CUSTOMER">Customers</option>
-          <option value="VENDOR">Vendors</option>
-          <option value="BOTH">Both</option>
+          {readable.length > 1 && <option value="">All types</option>}
+          {readable.includes('CUSTOMER') && <option value="CUSTOMER">Customers</option>}
+          {readable.includes('VENDOR') && <option value="VENDOR">Vendors</option>}
+          {readable.length > 1 && <option value="BOTH">Both</option>}
         </select>
         <select className={`${styles.input} max-w-[150px]`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by status">
           <option value="all">All parties</option>

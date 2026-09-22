@@ -34,8 +34,9 @@ const STAT_META = [
 // same policy as the sidebar). Hidden entirely when nothing is permitted.
 const QUICK_ACTIONS = [
   { to: '/invoices/new', label: 'New Invoice', icon: FileText, perm: 'invoice.create' },
-  { to: '/quotations/new', label: 'New Quotation', icon: FilePlus2, perm: 'quotation.create' },
-  { to: '/parties/new', label: 'Add Party', icon: Building2, perm: 'party.create' },
+  { to: '/quotations/new?type=CUSTOMER', label: 'New Quotation', icon: FilePlus2, perm: 'customerQuotation.create' },
+  { to: '/parties/new?type=CUSTOMER', label: 'Add Customer', icon: Building2, perm: 'customerParty.create' },
+  { to: '/parties/new?type=VENDOR', label: 'Add Vendor', icon: Building2, perm: 'vendorParty.create' },
 ];
 
 // StatCard — same KPI language as the analytics pages' MetricCard: label over

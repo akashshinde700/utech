@@ -5,6 +5,7 @@ const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { calcLineAmount, calcTaxes, round2 } = require('../utils/gst');
 const { audit } = require('../utils/audit');
+const { quotationTypesFor, assertQuotationType } = require('../utils/typedAccess');
 
 const INCLUDE = { party: true, lines: { include: { item: true } } };
 
@@ -13,6 +14,9 @@ async function list(req, res) {
     'date', 'createdAt', 'number', 'total',
   ]);
   const where = {};
+  // only the kinds (customer / vendor) the caller may read, optionally narrowed
+  const readable = quotationTypesFor(req, 'read');
+  where.type = { in: req.query.type ? readable.filter((t) => t === req.query.type) : readable };
   if (req.query.status) where.status = req.query.status;
   if (search) where.OR = [{ number: { contains: search } }, { party: { name: { contains: search } } }];
   const [items, total] = await Promise.all([
@@ -29,7 +33,19 @@ async function get(req, res) {
   const id = parseInt(req.params.id, 10);
   const q = await prisma.quotation.findUnique({ where: { id }, include: INCLUDE });
   if (!q) throw new HttpError(404, 'Quotation not found');
+  assertQuotationType(req, 'read', q.type);
   res.json(q);
+}
+
+// A customer quotation goes to a customer, a vendor quotation comes from a
+// vendor; a BOTH party fits either.
+async function assertPartyFits(partyId, type) {
+  const party = await prisma.party.findUnique({ where: { id: partyId }, select: { type: true, name: true } });
+  if (!party) throw new HttpError(400, 'Party not found');
+  const ok = party.type === 'BOTH' || party.type === type;
+  if (!ok) {
+    throw new HttpError(400, `${party.name} is a ${party.type.toLowerCase()} — pick a ${type.toLowerCase()} for a ${type.toLowerCase()} quotation`);
+  }
 }
 
 function buildLines(lines) {
@@ -46,13 +62,16 @@ function buildLines(lines) {
 }
 
 async function create(req, res) {
-  const { lines, isIntraState = true, discount = 0, validUntil, notes = '', headerText, footerText, ...rest } = req.body;
+  const { lines, isIntraState = true, discount = 0, validUntil, notes = '', headerText, footerText, type = 'CUSTOMER', ...rest } = req.body;
+  assertQuotationType(req, 'create', type);
+  await assertPartyFits(rest.partyId, type);
   const taxes = calcTaxes(lines, isIntraState);
   const total = round2(taxes.total - Number(discount || 0));
-  const number = await nextNumber('quotation', 'quotation');
+  const number = await nextNumber('quotation', type === 'VENDOR' ? 'vendorQuotation' : 'quotation');
   const q = await prisma.quotation.create({
     data: {
       ...rest,
+      type,
       date: new Date(rest.date),
       validTill: validUntil ? new Date(validUntil) : null,
       number,
@@ -76,7 +95,11 @@ async function create(req, res) {
 
 async function update(req, res) {
   const id = parseInt(req.params.id, 10);
+  const existing = await prisma.quotation.findUnique({ where: { id }, select: { type: true } });
+  if (!existing) throw new HttpError(404, 'Quotation not found');
+  assertQuotationType(req, 'update', existing.type);
   const { lines, isIntraState = true, discount = 0, validUntil, notes, headerText, footerText, ...rest } = req.body;
+  if (rest.partyId) await assertPartyFits(rest.partyId, existing.type);
   const data = {
     ...rest,
     ...(rest.date ? { date: new Date(rest.date) } : {}),
@@ -115,6 +138,9 @@ async function convertToInvoice(req, res) {
   const id = parseInt(req.params.id, 10);
   const q = await prisma.quotation.findUnique({ where: { id }, include: { lines: true } });
   if (!q) throw new HttpError(404, 'Quotation not found');
+  // a vendor's quote is something we buy — it never becomes our sales invoice
+  if (q.type !== 'CUSTOMER') throw new HttpError(400, 'Only a customer quotation can be converted to an invoice');
+  assertQuotationType(req, 'update', q.type);
   if (q.status === 'CONVERTED') throw new HttpError(400, 'Already converted');
 
   const number = await nextNumber('invoice', 'invoice');
@@ -162,6 +188,7 @@ async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
   const q = await prisma.quotation.findUnique({ where: { id } });
   if (!q) throw new HttpError(404, 'Quotation not found');
+  assertQuotationType(req, 'delete', q.type);
 
   // first delete = cancel; deleting an already-cancelled quotation removes it for good
   if (q.status === 'CANCELLED') {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, Plus, FileText, Eye, Pencil, Printer, Trash2 } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
@@ -11,9 +11,18 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import { styles } from '../../lib/formStyles';
 import { inr, date } from '../../lib/format';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../store/auth';
+import { allowedKinds } from '../../lib/permissions';
 
 export default function QuotationsPage() {
   const navigate = useNavigate();
+  const user = useAuth((s) => s.user);
+  // ?type= comes from the sidebar (Customer / Vendor Quotations)
+  const [searchParams] = useSearchParams();
+  const qType = searchParams.get('type') || '';
+  const creatable = allowedKinds(user, 'Quotation', 'create');
+  const newType = qType && creatable.includes(qType) ? qType : creatable[0] || 'CUSTOMER';
+  const canCreateHere = creatable.length > 0 && (!qType || creatable.includes(qType));
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -29,7 +38,7 @@ export default function QuotationsPage() {
     setLoading(true);
     setError(null);
     try {
-      const { data: response } = await api.get('/quotations', { params: { page, q: search, status: status || undefined } });
+      const { data: response } = await api.get('/quotations', { params: { page, q: search, status: status || undefined, type: qType || undefined } });
       setData(response);
     } catch (err) {
       console.error(err);
@@ -38,7 +47,7 @@ export default function QuotationsPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page, status]);
+  useEffect(() => { load(); }, [page, status, qType]);
 
   const pristine = !search && !status;
 
@@ -66,8 +75,9 @@ export default function QuotationsPage() {
   return (
     <div>
       <PageHeader
-        title="Quotations"
-        action={<Link to="/quotations/new" className="btn-primary"><Plus className="w-4 h-4" /> New Quotation</Link>}
+        title={qType === 'VENDOR' ? 'Vendor Quotations' : qType === 'CUSTOMER' ? 'Customer Quotations' : 'Quotations'}
+        subtitle={qType === 'VENDOR' ? 'Rates quoted to us by vendors' : qType === 'CUSTOMER' ? 'Quotes we send to customers' : undefined}
+        action={canCreateHere && <Link to={`/quotations/new?type=${newType}`} className="btn-primary"><Plus className="w-4 h-4" /> New {newType === 'VENDOR' ? 'Vendor' : 'Customer'} Quotation</Link>}
       />
       <div className="flex flex-wrap gap-3 mb-4 bg-white p-3 rounded-xl border border-slate-200/80 shadow-sm items-center">
         <div className="relative">
@@ -97,7 +107,7 @@ export default function QuotationsPage() {
             icon={FileText}
             title={pristine ? 'No quotations yet' : 'No matching quotations'}
             description={pristine ? 'Create your first quotation to start pitching customers.' : 'Try a different search or clear the filters.'}
-            action={pristine ? { label: 'New Quotation', onClick: () => navigate('/quotations/new'), icon: Plus } : undefined}
+            action={pristine && canCreateHere ? { label: 'New Quotation', onClick: () => navigate(`/quotations/new?type=${newType}`), icon: Plus } : undefined}
           />
         </div>
       ) : (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   BookmarkPlus, FileText, LayoutTemplate, ListPlus, Loader2, Plus, Save, Trash2, Upload, X,
 } from 'lucide-react';
@@ -23,6 +23,10 @@ export default function QuotationForm() {
   const navigate = useNavigate();
   const { id } = useParams();
   const isEdit = !!id;
+  const [searchParams] = useSearchParams();
+  // CUSTOMER: we quote a customer. VENDOR: a vendor quoted us. Fixed at creation.
+  const [qType, setQType] = useState(searchParams.get('type') === 'VENDOR' ? 'VENDOR' : 'CUSTOMER');
+  const isVendor = qType === 'VENDOR';
   const [loading, setLoading] = useState(false);
   const [parties, setParties] = useState([]);
   const [lines, setLines] = useState([]);
@@ -51,7 +55,7 @@ export default function QuotationForm() {
   const [uploadingFooter, setUploadingFooter] = useState(false);
 
   async function loadParties() {
-    const { data: response } = await api.get('/parties', { params: { pageSize: 1000, type: 'CUSTOMER' } });
+    const { data: response } = await api.get('/parties', { params: { pageSize: 1000, type: qType } });
     setParties(response.items || []);
   }
 
@@ -64,6 +68,7 @@ export default function QuotationForm() {
     if (!id) return;
     const { data: response } = await api.get(`/quotations/${id}`);
     setData(response);
+    if (response.type) setQType(response.type);
     setFormData({
       partyId: response.partyId,
       date: response.date.split('T')[0],
@@ -77,7 +82,9 @@ export default function QuotationForm() {
     setLines(response.lines || []);
   }
 
-  useEffect(() => { loadParties(); loadTemplates(); if (id) loadQuotation(); }, [id]);
+  useEffect(() => { loadTemplates(); if (id) loadQuotation(); }, [id]);
+  // the party list follows the quotation's kind (known only after load when editing)
+  useEffect(() => { loadParties(); }, [qType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function blobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
@@ -252,9 +259,9 @@ export default function QuotationForm() {
       if (isEdit) {
         await api.put(`/quotations/${id}`, payload);
       } else {
-        await api.post('/quotations', payload);
+        await api.post('/quotations', { ...payload, type: qType });
       }
-      navigate('/quotations');
+      navigate(`/quotations?type=${qType}`);
     } catch (err) {
       console.error(err);
       toast.error(err.response?.data?.message || 'Error saving quotation');
@@ -268,7 +275,7 @@ export default function QuotationForm() {
   return (
     <div>
       <PageHeader
-        title={isEdit ? `Quotation ${data?.number}` : 'New Quotation'}
+        title={isEdit ? `${isVendor ? 'Vendor ' : ''}Quotation ${data?.number}` : `New ${isVendor ? 'Vendor' : 'Customer'} Quotation`}
         action={
           <button onClick={() => navigate('/quotations')} className="btn-secondary">
             <X className="w-4 h-4" /> Cancel
@@ -276,16 +283,16 @@ export default function QuotationForm() {
         }
       />
       <form onSubmit={handleSubmit} noValidate className="max-w-5xl space-y-5">
-        <FormSection icon={FileText} title="Quotation Details" description="Customer, validity and notes for this quotation">
+        <FormSection icon={FileText} title="Quotation Details" description={isVendor ? 'Vendor, validity and notes for the rate they quoted' : 'Customer, validity and notes for this quotation'}>
           <div className={styles.formGrid}>
-            <FormField id="quotation-party" label="Party" required error={errors.partyId} className="sm:col-span-2" hint="Only customers are listed">
+            <FormField id="quotation-party" label={isVendor ? 'Vendor' : 'Customer'} required error={errors.partyId} className="sm:col-span-2" hint={isVendor ? 'Only vendors are listed' : 'Only customers are listed'}>
               <SearchableSelect
                 id="quotation-party"
                 value={formData.partyId}
                 onChange={(v) => setField('partyId', v)}
                 options={partyOptions}
-                placeholder="Select customer…"
-                emptyText="No matching customers"
+                placeholder={isVendor ? 'Select vendor…' : 'Select customer…'}
+                emptyText={isVendor ? 'No matching vendors' : 'No matching customers'}
                 disabled={isEdit}
               />
             </FormField>

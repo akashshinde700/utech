@@ -14,3 +14,18 @@ export function hasPermission(user, key) {
   if (!Array.isArray(user.permissions) || user.permissions.length === 0) return false;
   return user.permissions.includes(key);
 }
+
+// Parties and quotations each have a customer and a vendor permission set.
+// Which of the two kinds may this user do `action` on?
+export function allowedKinds(user, base, action) {
+  const kinds = [];
+  if (hasPermission(user, `customer${base}.${action}`)) kinds.push('CUSTOMER');
+  if (hasPermission(user, `vendor${base}.${action}`)) kinds.push('VENDOR');
+  return kinds;
+}
+
+// Party types this user may create/edit: BOTH needs both permission sets.
+export function writablePartyTypes(user, action = 'create') {
+  const k = allowedKinds(user, 'Party', action);
+  return k.length === 2 ? ['CUSTOMER', 'VENDOR', 'BOTH'] : k;
+}

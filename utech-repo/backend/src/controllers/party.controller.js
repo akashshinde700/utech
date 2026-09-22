@@ -5,6 +5,7 @@ const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextCode } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
 const { deriveFromGstin } = require('../utils/gstin');
+const { partyTypesFor, assertPartyType } = require('../utils/typedAccess');
 
 // Fill stateCode / state / pan from the GSTIN when they weren't supplied.
 // GSTIN is the source of truth for the GST state code, so it always wins there.
@@ -26,9 +27,12 @@ async function list(req, res) {
   // A party saved as BOTH is a customer *and* a vendor, so a ?type=VENDOR
   // filter has to match it too — otherwise every vendor dropdown in the app
   // (purchase order, GRN, jobwork, purchase return) silently hides them.
-  if (req.query.type) {
-    where.type = req.query.type === 'BOTH' ? 'BOTH' : { in: [req.query.type, 'BOTH'] };
-  }
+  // The result is then cut down to the types the caller may read.
+  const readable = partyTypesFor(req, 'read');
+  const wanted = req.query.type
+    ? (req.query.type === 'BOTH' ? ['BOTH'] : [req.query.type, 'BOTH'])
+    : ['CUSTOMER', 'VENDOR', 'BOTH'];
+  where.type = { in: wanted.filter((t) => readable.includes(t)) };
   if (search) {
     where.OR = [
       { name: { contains: search } },
@@ -48,10 +52,12 @@ async function get(req, res) {
   const id = parseInt(req.params.id, 10);
   const party = await prisma.party.findUnique({ where: { id } });
   if (!party) throw new HttpError(404, 'Party not found');
+  assertPartyType(req, 'read', party.type);
   res.json(party);
 }
 
 async function create(req, res) {
+  assertPartyType(req, 'create', req.body.type || 'CUSTOMER');
   const code = await nextCode('party', 'party');
   const data = applyGstinDerivations({ ...req.body, code });
   const party = await prisma.party.create({ data });
@@ -61,6 +67,11 @@ async function create(req, res) {
 
 async function update(req, res) {
   const id = parseInt(req.params.id, 10);
+  const existing = await prisma.party.findUnique({ where: { id }, select: { type: true } });
+  if (!existing) throw new HttpError(404, 'Party not found');
+  // editing needs rights over what the party is now and what it becomes
+  assertPartyType(req, 'update', existing.type);
+  if (req.body.type && req.body.type !== existing.type) assertPartyType(req, 'update', req.body.type);
   const party = await prisma.party.update({ where: { id }, data: applyGstinDerivations({ ...req.body }) });
   await audit(req, 'update', 'Party', id, { code: party.code, name: party.name });
   res.json(party);
@@ -102,6 +113,9 @@ async function gstinLookup(req, res) {
 
 async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
+  const existing = await prisma.party.findUnique({ where: { id }, select: { type: true } });
+  if (!existing) throw new HttpError(404, 'Party not found');
+  assertPartyType(req, 'delete', existing.type);
   await prisma.party.update({ where: { id }, data: { isActive: false } });
   await audit(req, 'deactivate', 'Party', id);
   res.json({ ok: true });
@@ -110,9 +124,10 @@ async function remove(req, res) {
 async function ledger(req, res) {
   const id = parseInt(req.params.id, 10);
   const party = await prisma.party.findUnique({
-    where: { id }, select: { id: true, openingBalance: true },
+    where: { id }, select: { id: true, openingBalance: true, type: true },
   });
   if (!party) throw new HttpError(404, 'Party not found');
+  assertPartyType(req, 'read', party.type);
   const entries = await prisma.partyLedger.findMany({
     where: { partyId: id },
     orderBy: [{ date: 'asc' }, { id: 'asc' }],

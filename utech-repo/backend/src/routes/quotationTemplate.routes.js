@@ -12,12 +12,12 @@ router.use(requireAuth);
 // company, so they are gated on the quotation module's own rights. Previously
 // these four endpoints were open to any authenticated user — an operator could
 // delete the company letterhead.
-router.post('/upload-image', requirePermission('quotation.update', 'quotation.create'), ctrl.upload.single('file'), ah(ctrl.uploadImage));
-router.get('/image/:storedName', requirePermission('quotation.read'), ah(ctrl.serveImage));
+router.post('/upload-image', requirePermission('customerQuotation.update', 'vendorQuotation.update', 'customerQuotation.create', 'vendorQuotation.create'), ctrl.upload.single('file'), ah(ctrl.uploadImage));
+router.get('/image/:storedName', requirePermission('customerQuotation.read', 'vendorQuotation.read'), ah(ctrl.serveImage));
 
-router.get('/', requirePermission('quotation.read'), ah(ctrl.list));
-router.post('/', requirePermission('quotation.create'), validate(createTemplateSchema), ah(ctrl.create));
-router.put('/:id', requirePermission('quotation.update'), validate(updateTemplateSchema), ah(ctrl.update));
-router.delete('/:id', requirePermission('quotation.delete'), ah(ctrl.remove));
+router.get('/', requirePermission('customerQuotation.read', 'vendorQuotation.read'), ah(ctrl.list));
+router.post('/', requirePermission('customerQuotation.create', 'vendorQuotation.create'), validate(createTemplateSchema), ah(ctrl.create));
+router.put('/:id', requirePermission('customerQuotation.update', 'vendorQuotation.update'), validate(updateTemplateSchema), ah(ctrl.update));
+router.delete('/:id', requirePermission('customerQuotation.delete', 'vendorQuotation.delete'), ah(ctrl.remove));
 
 module.exports = router;
