@@ -101,9 +101,22 @@ async function create(req, res) {
 
 async function update(req, res) {
   const id = parseInt(req.params.id, 10);
-  const existing = await prisma.process.findUnique({ where: { id }, select: { departmentId: true } });
+  const existing = await prisma.process.findUnique({ where: { id }, select: { departmentId: true, name: true } });
   if (!existing) throw new HttpError(404, 'Process not found');
   await assertWritableDepartment(req, existing.departmentId);
+  if (typeof req.body.name === 'string') req.body.name = req.body.name.trim();
+  if (typeof req.body.stage === 'string') req.body.stage = req.body.stage.trim();
+  // renaming must not collide with another live item in the same department
+  if (req.body.name && req.body.name !== existing.name) {
+    const clash = await prisma.process.findFirst({
+      where: {
+        id: { not: id }, name: req.body.name, isActive: true,
+        departmentId: req.body.departmentId !== undefined ? req.body.departmentId : existing.departmentId,
+      },
+      select: { stage: true },
+    });
+    if (clash) throw new HttpError(409, `"${req.body.name}" already exists${clash.stage ? ` under ${clash.stage}` : ''}`);
+  }
   // a scoped user may edit their own department's process but may never move
   // it to another department or make it global
   if (req.body.departmentId !== undefined) await assertWritableDepartment(req, req.body.departmentId);

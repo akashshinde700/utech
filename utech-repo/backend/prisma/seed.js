@@ -179,6 +179,9 @@ async function main() {
     // only the Head may delete a Task Progress item (and only one that carries
     // no completion history — task.controller.js refuses the rest)
     (p.module === 'task' && p.action === 'delete') ||
+    // ...and remove their department's own Task Progress items. Process
+    // delete is a soft deactivate, so tasks already using an item keep it.
+    (p.module === 'process' && p.action === 'delete') ||
     (p.module === 'vendorWorkOrder' && ['create', 'update'].includes(p.action)) ||
     (['party', 'item'].includes(p.module) && p.action === 'read') ||
     (p.module === 'jobwork' && p.action === 'read') ||

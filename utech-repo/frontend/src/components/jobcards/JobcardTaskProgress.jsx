@@ -11,7 +11,7 @@ import EmptyState from '../ui/EmptyState';
 import { styles } from '../../lib/formStyles';
 import { date, datetime } from '../../lib/format';
 import { hasPermission } from '../../lib/permissions';
-import { stageLabel, stageNumber } from '../../lib/workflowStages';
+import { stageLabel, stageNumber, WORKFLOW_STAGES } from '../../lib/workflowStages';
 import { roleLabel } from '../../lib/roleLabel';
 import { useAuth } from '../../store/auth';
 import toast from 'react-hot-toast';
@@ -49,6 +49,8 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, projectTasks }) 
     setSelection({});
     setExistingEdits({});
     setAddingTo(null);
+    setItemEdit(null);
+    setItemConfirm(null);
     setDepartmentId(editing ? editing.departmentId : (locked ? user.departmentId : ''));
     setAssigneeIds(editing ? (editing.assignees || []).map((a) => a.userId) : []);
     setPriority(editing?.priority || 'MEDIUM');
@@ -127,6 +129,125 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, projectTasks }) 
       return copy;
     });
   }
+  // Edit / remove the department's own items right here. The 17 workflow
+  // stages keep their names (stage numbers and department ownership hang off
+  // them); groups the department made itself can be renamed or removed.
+  const canEditItems = hasPermission(user, 'process.update');
+  const canDeleteItems = hasPermission(user, 'process.delete');
+  const [itemEdit, setItemEdit] = useState(null); // { kind: 'item'|'group', key, value }
+  const [itemConfirm, setItemConfirm] = useState(null); // { kind, key, label }
+  const [itemBusy, setItemBusy] = useState(false);
+  const [itemErr, setItemErr] = useState(null);
+  const isCustomGroup = (stage) => !!stage && !WORKFLOW_STAGES.includes(stage);
+  const sameTarget = (a, kind, key) => a && a.kind === kind && a.key === key;
+
+  function openEdit(kind, key, value) { setItemConfirm(null); setItemErr(null); setItemEdit({ kind, key, value }); }
+  function openConfirm(kind, key, label) { setItemEdit(null); setItemErr(null); setItemConfirm({ kind, key, label }); }
+
+  async function saveItemEdit() {
+    const value = itemEdit.value.trim();
+    if (value.length < 2) { setItemErr('Name is too short'); return; }
+    setItemBusy(true);
+    setItemErr(null);
+    try {
+      if (itemEdit.kind === 'item') {
+        const r = await api.put(`/processes/${itemEdit.key}`, { name: value });
+        setProcesses((list) => list.map((x) => (x.id === itemEdit.key ? { ...x, name: r.data.name } : x)));
+      } else {
+        const inGroup = processes.filter((x) => (x.stage || '') === itemEdit.key);
+        for (const x of inGroup) await api.put(`/processes/${x.id}`, { stage: value });
+        setProcesses((list) => list.map((x) => ((x.stage || '') === itemEdit.key ? { ...x, stage: value } : x)));
+      }
+      toast.success('Renamed');
+      setItemEdit(null);
+    } catch (e2) {
+      setItemErr(e2.response?.data?.message || 'Could not rename');
+    } finally {
+      setItemBusy(false);
+    }
+  }
+
+  async function confirmItemDelete() {
+    setItemBusy(true);
+    setItemErr(null);
+    try {
+      const ids = itemConfirm.kind === 'item'
+        ? [itemConfirm.key]
+        : processes.filter((x) => (x.stage || '') === itemConfirm.key).map((x) => x.id);
+      for (const id of ids) await api.delete(`/processes/${id}`);
+      setProcesses((list) => list.filter((x) => !ids.includes(x.id)));
+      setSelection((sel) => Object.fromEntries(Object.entries(sel).filter(([k]) => !ids.includes(Number(k)))));
+      toast.success(`${itemConfirm.label} removed from the list`);
+      setItemConfirm(null);
+    } catch (e2) {
+      setItemErr(e2.response?.data?.message || 'Could not remove');
+    } finally {
+      setItemBusy(false);
+    }
+  }
+
+  const onEditKey = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveItemEdit(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setItemEdit(null); }
+  };
+
+  const toolBtn = 'p-1.5 rounded-md text-slate-400 hover:bg-slate-100 disabled:opacity-40';
+  const itemTools = (kind, key, name, label) => (
+    <span className="flex shrink-0 items-center">
+      {canEditItems && (
+        <button type="button" className={`${toolBtn} hover:text-brand-600`} aria-label={`Rename ${name}`} title="Rename" onClick={() => openEdit(kind, key, name)}>
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+      {canDeleteItems && (
+        <button type="button" className={`${toolBtn} hover:text-danger-600`} aria-label={`Remove ${name}`} title="Remove from list" onClick={() => openConfirm(kind, key, label)}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </span>
+  );
+
+  // inline rename field or remove confirmation, when one is open for this target
+  const inlinePanel = (kind, key, extraNote) => {
+    if (sameTarget(itemEdit, kind, key)) {
+      return (
+        <div className="space-y-1.5 bg-amber-50/60 px-3 py-2">
+          <div className="flex gap-2">
+            <input
+              className={styles.input} autoFocus aria-label="New name"
+              value={itemEdit.value} onChange={(e) => setItemEdit((x) => ({ ...x, value: e.target.value }))} onKeyDown={onEditKey}
+            />
+            <button type="button" className={`${styles.primaryBtn} shrink-0`} onClick={saveItemEdit} disabled={itemBusy}>
+              {itemBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+            </button>
+            <button type="button" className={`${styles.secondaryBtn} shrink-0`} onClick={() => setItemEdit(null)} disabled={itemBusy}>Cancel</button>
+          </div>
+          {itemErr && <div role="alert" className="text-xs text-danger-600">{itemErr}</div>}
+        </div>
+      );
+    }
+    if (sameTarget(itemConfirm, kind, key)) {
+      return (
+        <div className="space-y-1.5 bg-danger-50/60 px-3 py-2">
+          <div className="text-sm text-slate-700">
+            Remove <span className="font-medium">{itemConfirm.label}</span> from your department's list?
+            <span className="block text-xs text-slate-500">
+              {extraNote || 'It stops appearing here for new projects.'} Tasks already using it keep their name and history.
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" className={`${styles.primaryBtn} !bg-danger-600 hover:!bg-danger-700`} onClick={confirmItemDelete} disabled={itemBusy}>
+              {itemBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Remove'}
+            </button>
+            <button type="button" className={styles.secondaryBtn} onClick={() => setItemConfirm(null)} disabled={itemBusy}>Cancel</button>
+          </div>
+          {itemErr && <div role="alert" className="text-xs text-danger-600">{itemErr}</div>}
+        </div>
+      );
+    }
+    return null;
+  };
+
   const tickedCount = Object.keys(selection).length;
   const editedCount = Object.keys(existingEdits).length;
 
@@ -321,8 +442,14 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, projectTasks }) 
               )}
               {stageGroups.map((g) => (
                 <div key={g.stage || 'other'} className="border-b border-slate-100 last:border-b-0">
-                  <div className="bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{stageLabel(g.stage)}</div>
+                  <div className="flex items-center justify-between bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    <span className="py-0.5">{stageLabel(g.stage)}</span>
+                    {isCustomGroup(g.stage) && itemTools('group', g.stage, g.stage, `the "${g.stage}" group and its ${g.items.length} item${g.items.length > 1 ? 's' : ''}`)}
+                  </div>
+                  {inlinePanel('group', g.stage || '', 'The whole group stops appearing here for new projects.')}
                   {g.items.map((p) => {
+                    const panel = inlinePanel('item', p.id);
+                    if (panel) return <div key={p.id}>{panel}</div>;
                     const existing = taskByProcess[p.id];
                     if (existing) {
                       const closedTask = ['COMPLETED', 'SUBMITTED', 'REJECTED'].includes(existing.status);
@@ -333,6 +460,7 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, projectTasks }) 
                             <CheckSquare className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
                             <span className="flex-1 min-w-0 text-slate-700">{p.name}</span>
                             <span className="text-[11px] text-slate-400 shrink-0">on project · {existing.status.replace(/_/g, ' ').toLowerCase()}</span>
+                            {itemTools('item', p.id, p.name, `"${p.name}"`)}
                           </div>
                           <div className="mt-2 pl-6">
                             {operatorChips(operatorsOf(existing), (uid) => toggleExisting(existing, uid), closedTask)}
@@ -344,14 +472,17 @@ function TaskForm({ open, onClose, onSaved, jobcardId, editing, projectTasks }) 
                     const on = p.id in selection;
                     return (
                       <div key={p.id} className={`px-3 py-2.5 ${on ? 'bg-brand-50/40' : ''}`}>
-                        <label className="flex cursor-pointer items-center gap-2.5 text-sm">
-                          <input
-                            type="checkbox" className="h-4 w-4 shrink-0 accent-brand-600"
-                            checked={on} onChange={() => tickItem(p.id)}
-                          />
-                          <span className="flex-1 min-w-0 text-slate-700">{p.name}</span>
-                          {on && !selection[p.id].length && <span className="text-[11px] text-amber-600 shrink-0">pick an operator</span>}
-                        </label>
+                        <div className="flex items-center gap-2">
+                          <label className="flex flex-1 min-w-0 cursor-pointer items-center gap-2.5 text-sm">
+                            <input
+                              type="checkbox" className="h-4 w-4 shrink-0 accent-brand-600"
+                              checked={on} onChange={() => tickItem(p.id)}
+                            />
+                            <span className="flex-1 min-w-0 text-slate-700">{p.name}</span>
+                            {on && !selection[p.id].length && <span className="text-[11px] text-amber-600 shrink-0">pick an operator</span>}
+                          </label>
+                          {itemTools('item', p.id, p.name, `"${p.name}"`)}
+                        </div>
                         {on && (
                           <div className="mt-2 pl-6">
                             {operatorChips(selection[p.id], (uid) => setSelection((sel) => ({ ...sel, [p.id]: flip(sel[p.id], uid) })))}
