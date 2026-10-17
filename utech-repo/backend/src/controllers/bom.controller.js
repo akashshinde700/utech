@@ -61,7 +61,7 @@ async function create(req, res) {
       include: BOM_INCLUDE,
     });
     
-    await audit(req, 'create', 'Bom', created.id, { code: created.code });
+    await audit(req, 'create', 'Bom', created.id, { code: created.code }, tx);
     return created;
   });
   
@@ -84,7 +84,7 @@ async function update(req, res) {
       include: BOM_INCLUDE,
     });
     
-    await audit(req, 'update', 'Bom', id, { code: updated.code });
+    await audit(req, 'update', 'Bom', id, { code: updated.code }, tx);
     return updated;
   });
   res.json(bom);

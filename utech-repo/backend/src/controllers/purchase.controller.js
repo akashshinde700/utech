@@ -12,6 +12,18 @@ const INCLUDE = {
   grns: true,
 };
 
+// GET /:id additionally returns the received lines of every GRN booked against
+// the PO — the purchase-return form needs real grnLineIds to anchor a return
+// (a PO that has not been received cannot be returned against).
+const DETAIL_INCLUDE = {
+  ...INCLUDE,
+  grns: {
+    include: {
+      lines: { include: { item: { select: { id: true, code: true, name: true } } } },
+    },
+  },
+};
+
 // A purchase order can only be changed while it is still a proposal, and only
 // while nothing has been received against it — otherwise GRN lines would end up
 // pointing at PO lines that no longer exist.
@@ -72,7 +84,7 @@ async function list(req, res) {
 }
 
 async function get(req, res) {
-  const po = await loadOr404(parseInt(req.params.id, 10), INCLUDE);
+  const po = await loadOr404(parseInt(req.params.id, 10), DETAIL_INCLUDE);
   res.json(po);
 }
 

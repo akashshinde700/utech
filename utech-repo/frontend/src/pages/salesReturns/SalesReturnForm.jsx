@@ -24,7 +24,6 @@ export default function SalesReturnForm() {
   const [loading, setLoading] = useState(false);
   const [invoices, setInvoices] = useState([]);
   const [items, setItems] = useState([]);
-  const [allItems, setAllItems] = useState([]);
   const [errors, setErrors] = useState({});
   const [lineErrors, setLineErrors] = useState([]);
   const [confirmAction, setConfirmAction] = useState(null); // 'approve' | 'process'
@@ -40,11 +39,6 @@ export default function SalesReturnForm() {
   async function loadInvoices() {
     const { data: response } = await api.get('/invoices', { params: { pageSize: 1000, status: 'ISSUED,PAID,PARTIALLY_PAID' } });
     setInvoices(response.items || []);
-  }
-
-  async function loadAllItems() {
-    const { data: response } = await api.get('/items', { params: { pageSize: 1000 } });
-    setAllItems(response.items || []);
   }
 
   async function loadReturn() {
@@ -77,7 +71,7 @@ export default function SalesReturnForm() {
     setLineErrors([]);
   }
 
-  useEffect(() => { loadInvoices(); loadAllItems(); if (id) loadReturn(); }, [id]);
+  useEffect(() => { loadInvoices(); if (id) loadReturn(); }, [id]);
   useEffect(() => { if (formData.invoiceId && !id) loadInvoiceLines(formData.invoiceId); }, [formData.invoiceId, id]);
 
   function setField(k, v) {
@@ -108,26 +102,31 @@ export default function SalesReturnForm() {
     });
   }
 
-  function removeItem(index) {
-    setItems(items.filter((_, i) => i !== index));
-    setLineErrors((prev) => prev.filter((_, i) => i !== index));
-  }
-
   async function handleSubmit(e) {
     e.preventDefault();
     const { errors: errs, ok } = validateAll(formData, schema);
-    const lErrs = items.map((i) => ({
-      qty: positiveNumber(i.qty, 'Qty'),
-      rate: positiveNumber(i.rate, 'Rate'),
-    }));
+    // Only lines with a quantity take part in the return — an invoice can have
+    // many lines and the user is usually returning one or two of them. Qty 0
+    // (the default when an invoice is picked) simply means "not in this return".
+    const isSelected = (i) => Number(i.qty) > 0;
+    const selected = items.filter(isSelected);
+    const lErrs = items.map((i) => {
+      const raw = String(i.qty ?? '').trim();
+      const qty = raw === '' || Number(i.qty) === 0 ? null
+        : (!Number.isFinite(Number(i.qty)) || Number(i.qty) < 0 ? 'Qty must be 0 or more' : null);
+      return {
+        qty,
+        rate: isSelected(i) ? positiveNumber(i.rate, 'Rate') : null,
+      };
+    });
     if (!ok || lErrs.some((le) => le.qty || le.rate)) {
       setErrors(errs);
       setLineErrors(lErrs);
       toast.error('Please fix the highlighted fields');
       return;
     }
-    if (items.length === 0 || items.every(i => !i.itemId)) {
-      toast.error('Please add at least one item');
+    if (selected.length === 0) {
+      toast.error('Enter a quantity for at least one line');
       return;
     }
     setLoading(true);
@@ -135,12 +134,13 @@ export default function SalesReturnForm() {
       const payload = {
         ...formData,
         invoiceId: parseInt(formData.invoiceId),
-        // the API reads `lines`, and every line must carry the invoiceLineId it
-        // is returning against (the server rejects lines that don't belong to
-        // the invoice) plus the description/GST rate it needs to recompute tax.
-        // Sending a trimmed `items` array made every create fail server-side.
-        lines: items.map(i => ({
-          invoiceLineId: i.invoiceLineId,
+        // the API reads `lines`, and only the lines the user gave a quantity
+        // are sent. Each must carry the invoiceLineId it is returning against
+        // (the server rejects lines that don't belong to the invoice) plus the
+        // description/GST rate it needs to recompute tax; amounts are computed
+        // server-side.
+        lines: selected.map(i => ({
+          invoiceLineId: parseInt(i.invoiceLineId),
           itemId: i.itemId != null && i.itemId !== '' ? parseInt(i.itemId) : null,
           description: i.description || '',
           hsnCode: i.hsnCode || null,
@@ -260,6 +260,11 @@ export default function SalesReturnForm() {
                 <div className="col-span-2 text-xs font-medium text-slate-500">Amount</div>
                 <div className="col-span-2 text-xs font-medium text-slate-500">Reason</div>
               </div>
+              {items.length > 0 && (
+                <div className="mb-2 text-xs text-slate-500">
+                  Set a line's quantity to 0 to leave it out of this return.
+                </div>
+              )}
               {items.map((item, idx) => (
                 <div key={idx} className="mb-2 grid grid-cols-12 items-start gap-2">
                   <div className="col-span-4">

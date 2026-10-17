@@ -129,7 +129,7 @@ async function createBatch(req, res) {
       include: PRODUCTION_INCLUDE,
     });
     
-    await audit(req, 'create', 'ProductionBatch', created.id, { number: created.number });
+    await audit(req, 'create', 'ProductionBatch', created.id, { number: created.number }, tx);
     return created;
   });
   
@@ -166,7 +166,7 @@ async function updateBatch(req, res) {
       include: PRODUCTION_INCLUDE,
     });
     
-    await audit(req, 'update', 'ProductionBatch', id, { number: updated.number });
+    await audit(req, 'update', 'ProductionBatch', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(batch);
@@ -190,7 +190,7 @@ async function startBatch(req, res) {
       include: PRODUCTION_INCLUDE,
     });
     
-    await audit(req, 'start', 'ProductionBatch', id, { number: updated.number });
+    await audit(req, 'start', 'ProductionBatch', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(batch);
@@ -241,7 +241,7 @@ async function completeBatch(req, res) {
       include: PRODUCTION_INCLUDE,
     });
     
-    await audit(req, 'complete', 'ProductionBatch', id, { number: updated.number, qtyProduced, qtyRejected });
+    await audit(req, 'complete', 'ProductionBatch', id, { number: updated.number, qtyProduced, qtyRejected }, tx);
     return updated;
   });
   res.json(batch);
@@ -283,7 +283,7 @@ async function updateMaterialConsumption(req, res) {
       data: { qtyConsumed },
     });
 
-    await audit(req, 'updateMaterial', 'ProductionBatch', id, { number: existing.number, materialId, qtyConsumed });
+    await audit(req, 'updateMaterial', 'ProductionBatch', id, { number: existing.number, materialId, qtyConsumed }, tx);
     return updated;
   });
   res.json(batch);

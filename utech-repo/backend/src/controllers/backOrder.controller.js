@@ -88,7 +88,7 @@ async function create(req, res) {
       include: BACK_ORDER_INCLUDE,
     });
     
-    await audit(req, 'create', 'BackOrder', created.id, { number: created.number });
+    await audit(req, 'create', 'BackOrder', created.id, { number: created.number }, tx);
     return created;
   });
   
@@ -125,7 +125,7 @@ async function update(req, res) {
       include: BACK_ORDER_INCLUDE,
     });
 
-    await audit(req, 'update', 'BackOrder', id, { number: updated.number });
+    await audit(req, 'update', 'BackOrder', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(backOrder);
@@ -178,7 +178,7 @@ async function fulfill(req, res) {
       include: BACK_ORDER_INCLUDE,
     });
     
-    await audit(req, 'fulfill', 'BackOrder', id, { number: updated.number, lineId, qty });
+    await audit(req, 'fulfill', 'BackOrder', id, { number: updated.number, lineId, qty }, tx);
     return updated;
   });
   res.json(backOrder);

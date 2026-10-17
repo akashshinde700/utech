@@ -88,7 +88,7 @@ async function create(req, res) {
 
     if (isCustomerOwned) {
       await tx.customerMaterialLot.update({ where: { id: lot.id }, data: { status: 'AT_VENDOR' } });
-      await audit(req, 'create', 'JobworkChallan', created.id, { number, customerMaterialLotId: lot.id });
+      await audit(req, 'create', 'JobworkChallan', created.id, { number, customerMaterialLotId: lot.id }, tx);
     }
 
     return created;
@@ -211,7 +211,7 @@ async function receive(req, res) {
         data: { status: allResolved ? 'IN_PROCESS' : 'AT_VENDOR' },
       });
     }
-    await audit(req, 'receive', 'JobworkChallan', id, { status: newStatus });
+    await audit(req, 'receive', 'JobworkChallan', id, { status: newStatus }, tx);
     return updated;
   });
   res.json(jw);
@@ -251,7 +251,7 @@ async function remove(req, res) {
     }
 
     const updated = await tx.jobworkChallan.update({ where: { id }, data: { status: 'CANCELLED' } });
-    await audit(req, 'cancel', 'JobworkChallan', id);
+    await audit(req, 'cancel', 'JobworkChallan', id, null, tx);
     return updated;
   });
   res.json({ ok: true, jobwork: jw });

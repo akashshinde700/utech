@@ -9,7 +9,7 @@ import SearchableSelect from '../../components/ui/SearchableSelect';
 import EmptyState from '../../components/ui/EmptyState';
 import { styles } from '../../lib/formStyles';
 import { required, positiveNumber, gstRate, validateAll } from '../../lib/validation';
-import { inr } from '../../lib/format';
+import { inr, todayLocal } from '../../lib/format';
 import toast from 'react-hot-toast';
 
 const newLine = () => ({ itemId: '', description: '', qty: 1, rate: 0, gstRate: 18 });
@@ -32,7 +32,7 @@ export default function PurchaseOrderForm() {
   const [errors, setErrors] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [form, setForm] = useState({
-    date: new Date().toISOString().slice(0, 10),
+    date: todayLocal(),
     expectedDate: '', partyId: '', notes: '',
     lines: [newLine()],
   });

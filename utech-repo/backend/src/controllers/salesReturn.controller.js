@@ -6,6 +6,7 @@ const { nextNumber } = require('../utils/numbering');
 const { calcLineAmount, calcTaxes, round2 } = require('../utils/gst');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
+const { assertLines } = require('../utils/lines');
 
 const SALES_RETURN_INCLUDE = {
   party: true,
@@ -96,6 +97,7 @@ async function assertReturnableLines(prismaLike, lines, invoice, excludeReturnId
 
 async function create(req, res) {
   const { lines, isIntraState, discount = 0, ...rest } = req.body;
+  assertLines(lines, { requireKey: 'invoiceLineId', requireKeyLabel: 'invoiceLineId (the invoice line this return is against)' });
 
   // Verify invoice exists
   const invoice = await prisma.invoice.findUnique({
@@ -145,7 +147,7 @@ async function create(req, res) {
       include: SALES_RETURN_INCLUDE,
     });
     
-    await audit(req, 'create', 'SalesReturn', created.id, { number: created.number });
+    await audit(req, 'create', 'SalesReturn', created.id, { number: created.number }, tx);
     return created;
   });
   
@@ -171,7 +173,11 @@ async function update(req, res) {
   }
   if (editable.date) editable.date = new Date(editable.date);
 
-  if (lines) {
+  if (lines !== undefined) {
+    // readable 400s for a malformed payload (new in this branch) before the
+    // stricter invoice-anchoring and over-return cap checks
+    assertLines(lines, { requireKey: 'invoiceLineId', requireKeyLabel: 'invoiceLineId (the invoice line this return is against)' });
+
     // AUD-202: line replacement on edit obeys the same anchoring and
     // over-return rules as create — the return being edited no longer counts
     // against its own cap.
@@ -196,18 +202,18 @@ async function update(req, res) {
   }
 
   const salesReturn = await prisma.$transaction(async (tx) => {
-    if (lines) {
+    if (lines !== undefined) {
       await tx.salesReturnLine.deleteMany({ where: { salesReturnId: id } });
     }
     const updated = await tx.salesReturn.update({
       where: { id },
-      data: lines
+      data: lines !== undefined
         ? { ...editable, lines: { create: buildLines(lines) } }
         : editable,
       include: SALES_RETURN_INCLUDE,
     });
     
-    await audit(req, 'update', 'SalesReturn', id, { number: updated.number });
+    await audit(req, 'update', 'SalesReturn', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(salesReturn);
@@ -232,7 +238,7 @@ async function approve(req, res) {
       include: SALES_RETURN_INCLUDE,
     });
     
-    await audit(req, 'approve', 'SalesReturn', id, { number: updated.number });
+    await audit(req, 'approve', 'SalesReturn', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(salesReturn);
@@ -282,7 +288,7 @@ async function process(req, res) {
       include: SALES_RETURN_INCLUDE,
     });
     
-    await audit(req, 'process', 'SalesReturn', id, { number: updated.number });
+    await audit(req, 'process', 'SalesReturn', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(salesReturn);

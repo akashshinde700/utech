@@ -246,7 +246,7 @@ async function send(req, res) {
     const when = sentDate || new Date();
     let challan = null;
     if (materialLines && materialLines.length) {
-      const challanNumber = await nextNumber('jobworkChallan', 'jobwork');
+      const challanNumber = await nextNumber('jobworkChallan', 'jobwork', 'number', tx);
       challan = await tx.jobworkChallan.create({
         data: {
           number: challanNumber,
@@ -382,7 +382,7 @@ async function raisePurchaseOrder(req, res) {
       };
     });
 
-    const number = await nextNumber('purchaseOrder', 'PO');
+    const number = await nextNumber('purchaseOrder', 'PO', 'number', tx);
     const po = await tx.purchaseOrder.create({
       data: {
         number,

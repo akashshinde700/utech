@@ -8,7 +8,7 @@ import FormSection from '../../components/ui/FormSection';
 import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
 import { required } from '../../lib/validation';
-import { inr } from '../../lib/format';
+import { inr, todayLocal, toLocalInput } from '../../lib/format';
 import toast from 'react-hot-toast';
 
 const newLine = () => ({
@@ -23,7 +23,7 @@ const newLine = () => ({
   notes: '',
 });
 
-const toDateInput = (v) => (v ? new Date(v).toISOString().slice(0, 10) : '');
+const toDateInput = (v) => (v ? toLocalInput(v) : '');
 const nullIfBlank = (v) => {
   const s = (v == null ? '' : String(v)).trim();
   return s === '' ? null : s;
@@ -61,7 +61,7 @@ export default function VendorWorkOrderForm() {
   const [errors, setErrors] = useState({});
   const [form, setForm] = useState({
     partyId: '',
-    date: new Date().toISOString().slice(0, 10),
+    date: todayLocal(),
     expectedReturnDate: '',
     scopeDescription: '',
     instructions: '',

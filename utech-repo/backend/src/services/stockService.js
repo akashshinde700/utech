@@ -53,7 +53,7 @@ async function moveCompanyStock({
   });
 
   if (!skipAudit && auditAction && auditEntity) {
-    await audit(req, auditAction, auditEntity, refId, { itemId, qtyIn, qtyOut, balance });
+    await audit(req, auditAction, auditEntity, refId, { itemId, qtyIn, qtyOut, balance }, tx);
   }
 
   return ledger;

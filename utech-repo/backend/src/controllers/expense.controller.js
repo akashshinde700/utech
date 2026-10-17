@@ -4,6 +4,7 @@ const HttpError = require('../utils/httpError');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
+const { parseDate } = require('../utils/dates');
 
 async function list(req, res) {
   const { skip, take, page, pageSize, sortBy, sortDir, search } = parseListQuery(req.query, [
@@ -47,10 +48,12 @@ async function create(req, res) {
     if (req.body[key] !== undefined) data[key] = req.body[key];
   }
   const number = await nextNumber('expense', 'EXP');
+  const date = parseDate(data.date, 'expense date');
+  if (!date) throw new HttpError(400, 'Expense date is required');
   const e = await prisma.expense.create({
     data: {
       ...data,
-      date: new Date(data.date),
+      date,
       number,
       createdById: req.user ? req.user.id : null,
     },
@@ -66,7 +69,7 @@ async function update(req, res) {
   for (const key of ['date', 'category', 'partyId', 'description', 'amount', 'taxAmount', 'paymentMode', 'reference', 'notes']) {
     if (req.body[key] !== undefined) data[key] = req.body[key];
   }
-  if (data.date) data.date = new Date(data.date);
+  if (data.date !== undefined) data.date = parseDate(data.date, 'expense date');
   const e = await prisma.expense.update({ where: { id }, data });
   audit(req, 'update', 'Expense', id);
   res.json(e);
