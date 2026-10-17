@@ -6,7 +6,7 @@ const { notifyUsers } = require('../utils/notify');
 
 const INCLUDE = {
   attachment: { select: { id: true, filename: true, category: true, refType: true, refId: true } },
-  department: { select: { id: true, name: true } },
+  department: { select: { id: true, name: true, code: true } },
   departmentSubCategory: { select: { id: true, name: true } },
   assignedBy: { select: { id: true, name: true } },
   assignedTo: { select: { id: true, name: true } },

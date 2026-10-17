@@ -248,6 +248,25 @@ async function complete(req, res) {
     throw new HttpError(400, `Jobcard is already ${jc.status}`);
   }
 
+  // a project is finished only once every department has finished the pages
+  // it was given — an open assignment anywhere on this project blocks it
+  const openAssignments = await prisma.assignment.findMany({
+    where: {
+      status: { notIn: ['COMPLETED', 'CANCELLED'] },
+      attachment: { refType: 'JOBCARD', refId: id },
+    },
+    select: { department: { select: { name: true } } },
+  });
+  if (openAssignments.length) {
+    const byDept = {};
+    for (const a of openAssignments) {
+      const name = a.department?.name || 'Unassigned department';
+      byDept[name] = (byDept[name] || 0) + 1;
+    }
+    const detail = Object.entries(byDept).map(([name, n]) => `${name} (${n})`).join(', ');
+    throw new HttpError(400, `${openAssignments.length} assignment(s) are still open — ${detail}. Every department must finish its pages before the project can be completed.`);
+  }
+
   const updated = await prisma.jobcard.update({
     where: { id },
     data: { status: 'COMPLETED', workStatus: 'COMPLETED' },

@@ -12,7 +12,7 @@ import { roleLabel } from '../../lib/roleLabel';
 // Chain: Department(s) -> Assigned User per department — a Project Engineer
 // can hand the same document/pages to several departments at once, each
 // getting its own Assignment record and its own assignee.
-export default function AssignModal({ attachment, pageNumbers, onClose, onSaved }) {
+export default function AssignModal({ attachment, pageNumbers, initialDepartmentId = null, onClose, onSaved }) {
   const [departments, setDepartments] = useState([]);
   const [selected, setSelected] = useState({}); // { [departmentId]: assignedToId ('' = not chosen yet) }
   const [eligibleUsersByDept, setEligibleUsersByDept] = useState({});
@@ -22,6 +22,11 @@ export default function AssignModal({ attachment, pageNumbers, onClose, onSaved 
   useEffect(() => {
     api.get('/departments', { params: { pageSize: 200 } }).then((r) => setDepartments(r.data.items));
   }, []);
+
+  // the viewer already asked which department these pages are for
+  useEffect(() => {
+    if (initialDepartmentId) toggleDept(initialDepartmentId);
+  }, [initialDepartmentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleDept(deptId) {
     setSelected((prev) => {

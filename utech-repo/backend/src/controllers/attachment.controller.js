@@ -232,7 +232,22 @@ async function deleteOne(req, res) {
   await assertAssignmentAccess(req, a.refType, a.refId);
   await assertTaskOwnership(req, a.refType, a.refId);
 
-  await prisma.attachment.delete({ where: { id } });
+  // Assignments point at this file. Open ones block the delete with a clear
+  // message (deleting would strand work someone is doing); finished and
+  // cancelled ones are history for a file that is going away, so they go with
+  // it — the audit log keeps the record. Without this the foreign key
+  // surfaced as a 500.
+  const assignments = await prisma.assignment.findMany({
+    where: { attachmentId: id }, select: { id: true, status: true },
+  });
+  const open = assignments.filter((x) => !['COMPLETED', 'CANCELLED'].includes(x.status));
+  if (open.length) {
+    throw new HttpError(400, `${open.length} assignment(s) on this file are still open — finish or cancel them before deleting it`);
+  }
+  await prisma.$transaction(async (tx) => {
+    if (assignments.length) await tx.assignment.deleteMany({ where: { attachmentId: id } });
+    await tx.attachment.delete({ where: { id } });
+  });
   try { fs.unlinkSync(path.join(baseDir, a.storedName)); } catch (_) { /* file may already be gone */ }
   audit(req, 'delete', `Attachment:${a.refType}`, a.refId, { filename: a.filename });
   res.json({ ok: true });

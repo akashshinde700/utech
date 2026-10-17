@@ -16,7 +16,7 @@ const iconBtn = 'w-8 h-8 rounded-lg inline-flex items-center justify-center text
 // render on demand (IntersectionObserver) so 100+ page docs stay light.
 export default function PdfViewerModal({
   attachmentId, filename, onClose, onDownload, onAssign, initialSelectMode = false, allowedPages = null,
-  takenPages = null,
+  takenPagesByDept = null, pageDeptLabels = null, departments = [],
 }) {
   // when set, this viewer only ever shows/navigates the given page numbers —
   // used when a Department/Operator opens a PDF that was only partially
@@ -26,7 +26,11 @@ export default function PdfViewerModal({
 
   // { [pageNumber]: label } — pages already handed out to someone, shown
   // locked in select mode so the same page can't be double-assigned by accident
-  const takenMap = takenPages || {};
+  // Pages are handed out per department: nothing is locked until a department
+  // is chosen, and then only what that department already holds.
+  const [assignDeptId, setAssignDeptId] = useState('');
+  const takenMap = (assignDeptId && takenPagesByDept && takenPagesByDept[assignDeptId]) || {};
+  const deptLabels = pageDeptLabels || {};
 
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
@@ -167,18 +171,19 @@ export default function PdfViewerModal({
   const takenCount = Object.keys(takenMap).length;
 
   function handleAssign() {
-    if (selectedPages.size) { onAssign([...selectedPages].sort((a, b) => a - b)); return; }
+    const dept = assignDeptId ? Number(assignDeptId) : null;
+    if (selectedPages.size) { onAssign([...selectedPages].sort((a, b) => a - b), dept); return; }
     // no explicit selection: restricted viewers can only ever hand off what
     // was given to them (their full allowed page set), never "whole document"
-    if (restricted) { onAssign(pageList); return; }
+    if (restricted) { onAssign(pageList, dept); return; }
     // if some pages are already taken, "no selection" means "everything still
     // free" rather than the whole document (which would re-assign taken pages)
     if (takenCount && numPages) {
       const free = Array.from({ length: numPages }, (_, i) => i + 1).filter((p) => !takenMap[p]);
-      onAssign(free);
+      onAssign(free, dept);
       return;
     }
-    onAssign(null);
+    onAssign(null, dept);
   }
 
   const touchDist = (t) => Math.hypot(
@@ -287,6 +292,27 @@ export default function PdfViewerModal({
       <div className="flex-1 flex min-h-0">
         {showThumbs && pdfDoc && numPages > 0 && (
           <div className="w-20 sm:w-28 lg:w-32 shrink-0 bg-slate-950/70 overflow-y-auto p-2 space-y-2 flex flex-col">
+            {selectMode && departments.length > 0 && (
+              <div className="sticky top-0 z-10 -mx-2 -mt-2 mb-1 bg-slate-950/95 px-2 pb-2 pt-2">
+                <label htmlFor="pdf-assign-dept" className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                  Assigning for
+                </label>
+                <select
+                  id="pdf-assign-dept"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-[11px] text-white"
+                  value={assignDeptId}
+                  onChange={(e) => { setAssignDeptId(e.target.value); setSelectedPages(new Set()); }}
+                >
+                  <option value="">Any department</option>
+                  {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+                <div className="mt-1 text-[9px] leading-tight text-slate-400">
+                  {assignDeptId
+                    ? 'Pages this department already has are locked; every other page is free.'
+                    : 'Pick a department to see what it already has. Every page can go to each department.'}
+                </div>
+              </div>
+            )}
             {(restricted ? pageList : Array.from({ length: numPages }, (_, i) => i + 1)).map((pn) => (
               <PdfThumbButton
                 key={pn} pdfDoc={pdfDoc} pageNum={pn}
@@ -294,6 +320,7 @@ export default function PdfViewerModal({
                 selectMode={selectMode}
                 selected={selectedPages.has(pn)}
                 takenLabel={selectMode ? takenMap[pn] : null}
+                deptLabel={selectMode ? deptLabels[pn] : null}
                 onClick={() => (selectMode ? togglePageSelect(pn) : setPageNum(pn))}
               />
             ))}
@@ -302,7 +329,7 @@ export default function PdfViewerModal({
                 {selectedPages.size
                   ? `Assign ${selectedPages.size} page${selectedPages.size > 1 ? 's' : ''}`
                   : restricted ? `Assign all ${pageList.length} assigned page${pageList.length > 1 ? 's' : ''}`
-                  : takenCount && numPages ? `Assign remaining ${numPages - takenCount} page${numPages - takenCount === 1 ? '' : 's'}`
+                  : takenCount && numPages ? `Assign the other ${numPages - takenCount} page${numPages - takenCount === 1 ? '' : 's'}`
                   : 'Assign whole document'}
               </button>
             )}
@@ -362,7 +389,7 @@ export default function PdfViewerModal({
   );
 }
 
-function PdfThumbButton({ pdfDoc, pageNum, active, onClick, selectMode, selected, takenLabel }) {
+function PdfThumbButton({ pdfDoc, pageNum, active, onClick, selectMode, selected, takenLabel, deptLabel }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const [visible, setVisible] = useState(false);
@@ -411,6 +438,12 @@ function PdfThumbButton({ pdfDoc, pageNum, active, onClick, selectMode, selected
         {takenLabel && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/10">
             <Lock className="w-4 h-4 text-amber-600" />
+          </div>
+        )}
+        {/* which departments already hold this page — information, not a block */}
+        {selectMode && !takenLabel && deptLabel && (
+          <div className="absolute bottom-0.5 left-0.5 right-0.5 truncate rounded bg-slate-900/70 px-1 text-[9px] leading-tight text-white" title={`Already with ${deptLabel}`}>
+            {deptLabel}
           </div>
         )}
       </div>

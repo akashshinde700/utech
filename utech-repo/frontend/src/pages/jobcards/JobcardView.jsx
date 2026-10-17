@@ -75,49 +75,87 @@ export default function JobcardView() {
   // are done / actively being worked on / just handed out / still free —
   // this is the "kitna baki, kitna hua" breakdown for PE/Dept Head/Plant
   // Head/Admin oversight, not just a plain assigned-vs-not count.
+  // Pages are handed out per department: the same page can go to Fabrication
+  // and to Quality independently, so "how much is left" is a per-department
+  // question. One row per department that has work on this document, plus the
+  // pages nobody has yet.
   function pageCoverage(attachmentId) {
     const total = numPagesByAttachment[attachmentId];
     const rows = assignmentsByAttachment[attachmentId] || [];
-    const completedSet = new Set();
-    const inProgressSet = new Set();
-    const assignedSet = new Set(); // handed out but not started (ASSIGNED/REOPENED)
+    const allPages = total ? Array.from({ length: total }, (_, i) => i + 1) : [];
+    const pagesOf = (r) => (r.pageNumbers?.length ? r.pageNumbers : allPages);
+
+    const byDept = new Map();
+    const anyDeptSet = new Set();
     for (const r of rows) {
-      const pages = r.pageNumbers?.length ? r.pageNumbers : (total ? Array.from({ length: total }, (_, i) => i + 1) : []);
-      const bucket = r.status === 'COMPLETED' ? completedSet : r.status === 'IN_PROGRESS' ? inProgressSet : assignedSet;
-      pages.forEach((p) => bucket.add(p));
+      if (r.status === 'CANCELLED') continue;
+      const key = r.department?.id ?? 0;
+      if (!byDept.has(key)) {
+        byDept.set(key, { id: key, name: r.department?.name || 'No department', completed: new Set(), inProgress: new Set(), assigned: new Set() });
+      }
+      const d = byDept.get(key);
+      const bucket = r.status === 'COMPLETED' ? d.completed : r.status === 'IN_PROGRESS' ? d.inProgress : d.assigned;
+      pagesOf(r).forEach((p) => { bucket.add(p); anyDeptSet.add(p); });
     }
-    // a page can appear in more than one bucket if it was re-delegated at
-    // different stages — completed wins, then in-progress, then assigned
-    for (const p of completedSet) { inProgressSet.delete(p); assignedSet.delete(p); }
-    for (const p of inProgressSet) assignedSet.delete(p);
-    const takenCount = completedSet.size + inProgressSet.size + assignedSet.size;
-    const remaining = total
-      ? Array.from({ length: total }, (_, i) => i + 1).filter((p) => !completedSet.has(p) && !inProgressSet.has(p) && !assignedSet.has(p))
-      : [];
-    return {
-      total, remaining,
-      completedCount: completedSet.size, inProgressCount: inProgressSet.size, assignedCount: assignedSet.size,
-      takenCount,
-    };
+    // one page can sit in two buckets after a re-delegation — completed wins,
+    // then in progress, then just handed out
+    const departments = [...byDept.values()].map((d) => {
+      for (const p of d.completed) { d.inProgress.delete(p); d.assigned.delete(p); }
+      for (const p of d.inProgress) d.assigned.delete(p);
+      const taken = d.completed.size + d.inProgress.size + d.assigned.size;
+      const remaining = allPages.filter((p) => !d.completed.has(p) && !d.inProgress.has(p) && !d.assigned.has(p));
+      return {
+        id: d.id, name: d.name, taken, remaining,
+        completedCount: d.completed.size, inProgressCount: d.inProgress.size, assignedCount: d.assigned.size,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+
+    return { total, departments, unassigned: allPages.filter((p) => !anyDeptSet.has(p)) };
   }
 
-  // { [pageNumber]: "Department (User)" } for every page already handed out —
-  // passed into the PDF viewer's select mode so those pages show locked and
-  // can't be assigned a second time by accident.
-  function takenPagesFor(attachmentId) {
+  // { [departmentId]: { [pageNumber]: "Department (User)" } } — the viewer
+  // locks only the pages the department being assigned already holds, so the
+  // same page can still go to a different department.
+  function takenPagesByDept(attachmentId) {
+    const total = numPagesByAttachment[attachmentId];
+    const rows = assignmentsByAttachment[attachmentId] || [];
+    const byDept = {};
+    for (const r of rows) {
+      if (r.status === 'CANCELLED') continue;
+      const key = r.department?.id ?? 0;
+      const label = `${r.department?.name || '—'} (${r.assignedTo?.name || '—'})`;
+      byDept[key] ||= {};
+      const pages = r.pageNumbers?.length ? r.pageNumbers : (total ? Array.from({ length: total }, (_, i) => i + 1) : []);
+      pages.forEach((p) => { byDept[key][p] = label; });
+    }
+    return byDept;
+  }
+
+  // { [pageNumber]: "FAB, QC" } — which departments already hold a page, shown
+  // on the thumbnail so the engineer can see it without it being a block.
+  function pageDeptLabels(attachmentId) {
     const total = numPagesByAttachment[attachmentId];
     const rows = assignmentsByAttachment[attachmentId] || [];
     const map = {};
     for (const r of rows) {
-      const label = `${r.department?.name || '—'} (${r.assignedTo?.name || '—'})`;
-      if (r.pageNumbers?.length) {
-        r.pageNumbers.forEach((p) => { map[p] = label; });
-      } else if (total) {
-        for (let p = 1; p <= total; p++) map[p] = label;
-      }
+      if (r.status === 'CANCELLED' || !r.department) continue;
+      const short = r.department.code || r.department.name;
+      const pages = r.pageNumbers?.length ? r.pageNumbers : (total ? Array.from({ length: total }, (_, i) => i + 1) : []);
+      pages.forEach((p) => {
+        map[p] ||= [];
+        if (!map[p].includes(short)) map[p].push(short);
+      });
     }
-    return map;
+    return Object.fromEntries(Object.entries(map).map(([p, list]) => [p, list.join(', ')]));
   }
+
+  const [departments, setDepartments] = useState([]);
+  useEffect(() => {
+    if (!pdfViewerAssignIntent || departments.length) return;
+    api.get('/departments', { params: { pageSize: 200 } })
+      .then((r) => setDepartments(r.data.items || []))
+      .catch(() => setDepartments([]));
+  }, [pdfViewerAssignIntent, departments.length]);
 
   async function load() {
     try {
@@ -272,16 +310,19 @@ export default function JobcardView() {
           filename={pdfViewer.filename}
           initialSelectMode={pdfViewerAssignIntent}
           allowedPages={scoped ? myPagesForAttachment(pdfViewer.id) : null}
-          takenPages={pdfViewerAssignIntent ? takenPagesFor(pdfViewer.id) : null}
+          takenPagesByDept={pdfViewerAssignIntent ? takenPagesByDept(pdfViewer.id) : null}
+          pageDeptLabels={pdfViewerAssignIntent ? pageDeptLabels(pdfViewer.id) : null}
+          departments={departments}
           onClose={() => { setPdfViewer(null); setPdfViewerAssignIntent(false); }}
           onDownload={() => downloadFile(pdfViewer)}
-          onAssign={(pageNumbers) => { setAssigning({ attachment: pdfViewer, pageNumbers }); setPdfViewer(null); setPdfViewerAssignIntent(false); }}
+          onAssign={(pageNumbers, departmentId) => { setAssigning({ attachment: pdfViewer, pageNumbers, departmentId }); setPdfViewer(null); setPdfViewerAssignIntent(false); }}
         />
       )}
       {assigning && (
         <AssignModal
           attachment={assigning.attachment}
           pageNumbers={assigning.pageNumbers}
+          initialDepartmentId={assigning.departmentId}
           onClose={() => setAssigning(null)}
           onSaved={loadAttachments}
         />
@@ -409,26 +450,42 @@ export default function JobcardView() {
                           </button>
 
                           {(() => {
-                            const { total, completedCount, inProgressCount, assignedCount, remaining } = pageCoverage(a.id);
+                            const { total, departments: deptRows, unassigned } = pageCoverage(a.id);
                             if (!total) return null;
                             const pct = (n) => `${Math.round((n / total) * 100)}%`;
                             return (
-                              <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-500">
-                                <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-100 mb-1">
-                                  {!!completedCount && <div className="bg-success-500" style={{ width: pct(completedCount) }} title={`${completedCount} completed`} />}
-                                  {!!inProgressCount && <div className="bg-brand-500" style={{ width: pct(inProgressCount) }} title={`${inProgressCount} in progress`} />}
-                                  {!!assignedCount && <div className="bg-amber-400" style={{ width: pct(assignedCount) }} title={`${assignedCount} not started`} />}
+                              <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-500 space-y-1.5">
+                                <div>
+                                  <span className="font-semibold text-slate-700">{total}</span> pages ·{' '}
+                                  <span className={`font-semibold ${unassigned.length ? 'text-slate-500' : 'text-success-600'}`}>{unassigned.length}</span> with no department
+                                  {!!unassigned.length && (
+                                    <div className="text-slate-400 truncate" title={`No department yet: ${unassigned.join(', ')}`}>
+                                      Free: {unassigned.join(', ')}
+                                    </div>
+                                  )}
                                 </div>
-                                <span className="font-semibold text-slate-700">{total}</span> pages ·{' '}
-                                <span className="font-semibold text-success-600">{completedCount}</span> done ·{' '}
-                                <span className="font-semibold text-brand-600">{inProgressCount}</span> in progress ·{' '}
-                                <span className="font-semibold text-amber-600">{assignedCount}</span> not started ·{' '}
-                                <span className={`font-semibold ${remaining.length ? 'text-slate-500' : 'text-slate-400'}`}>{remaining.length}</span> unassigned
-                                {!!remaining.length && (
-                                  <div className="text-slate-400 truncate" title={`Unassigned: ${remaining.join(', ')}`}>
-                                    Unassigned: {remaining.join(', ')}
+                                {deptRows.map((d) => (
+                                  <div key={d.id}>
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="font-medium text-slate-700 truncate">{d.name}</span>
+                                      <span className="shrink-0">{d.taken}/{total}</span>
+                                    </div>
+                                    <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-100 my-0.5">
+                                      {!!d.completedCount && <div className="bg-success-500" style={{ width: pct(d.completedCount) }} title={`${d.completedCount} completed`} />}
+                                      {!!d.inProgressCount && <div className="bg-brand-500" style={{ width: pct(d.inProgressCount) }} title={`${d.inProgressCount} in progress`} />}
+                                      {!!d.assignedCount && <div className="bg-amber-400" style={{ width: pct(d.assignedCount) }} title={`${d.assignedCount} not started`} />}
+                                    </div>
+                                    <span className="text-success-600 font-semibold">{d.completedCount}</span> done ·{' '}
+                                    <span className="text-brand-600 font-semibold">{d.inProgressCount}</span> running ·{' '}
+                                    <span className="text-amber-600 font-semibold">{d.assignedCount}</span> to start ·{' '}
+                                    <span className="font-semibold">{d.remaining.length}</span> left
+                                    {!!d.remaining.length && (
+                                      <div className="text-slate-400 truncate" title={`Not given to ${d.name}: ${d.remaining.join(', ')}`}>
+                                        Left: {d.remaining.join(', ')}
+                                      </div>
+                                    )}
                                   </div>
-                                )}
+                                ))}
                               </div>
                             );
                           })()}
