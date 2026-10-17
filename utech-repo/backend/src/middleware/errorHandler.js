@@ -1,6 +1,35 @@
 'use strict';
 const env = require('../config/env');
 
+// "lines.0.qty" -> "Line 1 quantity"; "partyId" -> "party id". Used to turn a
+// Zod path into something a person can act on, because a bare
+// { error: 'ValidationError' } toast tells the user nothing.
+const WORD_ALIASES = {
+  qty: 'quantity', qtySent: 'quantity sent', qtyOrdered: 'quantity ordered',
+  qtyProduced: 'quantity produced', qtyRejected: 'quantity rejected',
+  qtyConsumed: 'quantity consumed', qtyPlanned: 'quantity planned',
+  partyId: 'party', itemId: 'item', uomId: 'unit', gstRate: 'GST rate',
+  hsnCode: 'HSN code', dueDate: 'due date', startDate: 'start date',
+  endDate: 'end date', expectedDate: 'expected date', plannedStartAt: 'planned start',
+  invoiceLineId: 'invoice line', grnLineId: 'GRN line', jobcardId: 'jobcard',
+  processId: 'process', departmentId: 'department', assignedToId: 'assignee',
+};
+
+function prettifyPath(path = []) {
+  const words = [];
+  for (const segment of path) {
+    if (/^\d+$/.test(String(segment))) {
+      // "lines.0.qty" -> "line 1 quantity": the container word is redundant
+      // once the index is spelled out as "line N"
+      if (words.length && words[words.length - 1] !== 'line') words.pop();
+      words.push(`line ${Number(segment) + 1}`);
+      continue;
+    }
+    words.push(WORD_ALIASES[segment] || String(segment).replace(/([A-Z])/g, ' $1').toLowerCase());
+  }
+  return words.join(' ').trim();
+}
+
 // Centralized error handler. Translates known Prisma + Zod errors into clean JSON.
 module.exports = function errorHandler(err, _req, res, _next) {
   if (process.env.NODE_ENV !== 'test') console.error('[error]', err.message);
@@ -20,9 +49,19 @@ module.exports = function errorHandler(err, _req, res, _next) {
 
   // Zod
   if (err && err.name === 'ZodError') {
+    const details = err.errors.map((e) => ({
+      path: e.path.join('.'),
+      label: prettifyPath(e.path),
+      message: e.message,
+    }));
+    const summary = details
+      .slice(0, 3)
+      .map((d) => (d.label ? `${d.label}: ${d.message}` : d.message))
+      .join('; ');
     return res.status(400).json({
       error: 'ValidationError',
-      details: err.errors.map((e) => ({ path: e.path.join('.'), message: e.message })),
+      message: summary || 'Some of the submitted values are invalid.',
+      details,
     });
   }
 
