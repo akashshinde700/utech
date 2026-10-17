@@ -19,7 +19,11 @@ function payloadZone() {
   const src = fs.readFileSync(path.join(FRONTEND, 'src/pages/jobcards/JobcardForm.jsx'), 'utf8');
   // strip line comments so explanatory prose mentioning `operations` does not
   // trip the check — only executable property keys count
+  // normalise CRLF first: on a Windows checkout the trailing \r stops
+  // /\/\/.*$/ from matching, so the comments survived the strip and this
+  // guard tripped on its own explanatory prose
   const code = src
+    .replace(/\r/g, '')
     .split('\n')
     .map((line) => line.replace(/\/\/.*$/, ''))
     .join('\n');
