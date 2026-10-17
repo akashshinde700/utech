@@ -71,6 +71,48 @@ function buildLines(lines) {
   }));
 }
 
+// Shared by create AND update (AUD-202): every returned line must belong to
+// the anchored document (the GRN itself, or one of the PO's GRNs), and the
+// cumulative quantity returned (this return + every other non-cancelled
+// return, optionally excluding the row being edited) can never exceed what
+// was accepted in. The update path used to skip both checks, so a DRAFT
+// return could be edited past the accepted quantity or re-pointed at another
+// document's GRN line.
+async function assertReturnableLines(prismaLike, lines, { grn, po }, excludeReturnId = null) {
+  for (const l of lines) {
+    if (!l.grnLineId) {
+      throw new HttpError(400, 'Every purchase return line must reference a grnLineId');
+    }
+    const grnLine = await prismaLike.grnLine.findUnique({ where: { id: Number(l.grnLineId) } });
+    if (!grnLine) throw new HttpError(404, `GRN line ${l.grnLineId} not found`);
+    if (grn) {
+      if (grnLine.grnId !== grn.id) {
+        throw new HttpError(400, `Line ${l.grnLineId} does not belong to GRN ${grn.number}`);
+      }
+    } else {
+      // poId-anchored return: the GRN line must come from a GRN of this PO
+      const lineGrn = await prismaLike.gRN.findUnique({ where: { id: grnLine.grnId }, select: { poId: true, number: true } });
+      if (!lineGrn || lineGrn.poId !== po.id) {
+        throw new HttpError(400, `Line ${l.grnLineId} does not belong to a GRN of purchase order ${po.number}`);
+      }
+    }
+    const priorAgg = await prismaLike.purchaseReturnLine.aggregate({
+      where: {
+        grnLineId: grnLine.id,
+        purchaseReturn: {
+          status: { not: 'CANCELLED' },
+          ...(excludeReturnId ? { id: { not: excludeReturnId } } : {}),
+        },
+      },
+      _sum: { qty: true },
+    });
+    const priorReturned = Number(priorAgg._sum.qty || 0);
+    if (priorReturned + Number(l.qty) > Number(grnLine.qtyAccepted)) {
+      throw new HttpError(400, `Return quantity exceeds the accepted quantity for GRN line ${grnLine.id} (accepted ${Number(grnLine.qtyAccepted)}, already returned ${priorReturned})`);
+    }
+  }
+}
+
 async function create(req, res) {
   const { lines, isIntraState, ...rest } = req.body;
 
@@ -96,35 +138,7 @@ async function create(req, res) {
   // every returned line must belong to the anchored document, and the
   // cumulative quantity returned for that GRN line (this + prior returns,
   // ignoring cancelled drafts) can never exceed what was accepted in
-  for (const l of lines) {
-    if (!l.grnLineId) {
-      throw new HttpError(400, 'Every purchase return line must reference a grnLineId');
-    }
-    const grnLine = await prisma.grnLine.findUnique({ where: { id: Number(l.grnLineId) } });
-    if (!grnLine) throw new HttpError(404, `GRN line ${l.grnLineId} not found`);
-    if (grn) {
-      if (grnLine.grnId !== grn.id) {
-        throw new HttpError(400, `Line ${l.grnLineId} does not belong to GRN ${grn.number}`);
-      }
-    } else {
-      // poId-anchored return: the GRN line must come from a GRN of this PO
-      const lineGrn = await prisma.gRN.findUnique({ where: { id: grnLine.grnId }, select: { poId: true, number: true } });
-      if (!lineGrn || lineGrn.poId !== po.id) {
-        throw new HttpError(400, `Line ${l.grnLineId} does not belong to a GRN of purchase order ${po.number}`);
-      }
-    }
-    const priorAgg = await prisma.purchaseReturnLine.aggregate({
-      where: {
-        grnLineId: grnLine.id,
-        purchaseReturn: { status: { not: 'CANCELLED' } },
-      },
-      _sum: { qty: true },
-    });
-    const priorReturned = Number(priorAgg._sum.qty || 0);
-    if (priorReturned + Number(l.qty) > Number(grnLine.qtyAccepted)) {
-      throw new HttpError(400, `Return quantity exceeds the accepted quantity for GRN line ${grnLine.id} (accepted ${Number(grnLine.qtyAccepted)}, already returned ${priorReturned})`);
-    }
-  }
+  await assertReturnableLines(prisma, lines, { grn, po });
   
   const computedLines = buildLines(lines);
   const taxes = calcTaxes(lines, isIntraState);
@@ -184,6 +198,26 @@ async function update(req, res) {
   }
 
   if (lines) {
+    // AUD-202: line replacement on edit obeys the same anchoring and
+    // over-return rules as create — the return being edited no longer counts
+    // against its own cap.
+    let anchorGrn = null;
+    let anchorPo = null;
+    if (existing.grnId) {
+      anchorGrn = await prisma.gRN.findUnique({
+        where: { id: existing.grnId },
+        include: { party: true, lines: true },
+      });
+      if (!anchorGrn) throw new HttpError(404, 'GRN not found');
+    } else {
+      anchorPo = await prisma.purchaseOrder.findUnique({
+        where: { id: existing.poId },
+        include: { party: true, grns: { select: { id: true } } },
+      });
+      if (!anchorPo) throw new HttpError(404, 'Purchase Order not found');
+    }
+    await assertReturnableLines(prisma, lines, { grn: anchorGrn, po: anchorPo }, id);
+
     const taxes = calcTaxes(lines, isIntraState !== false);
     Object.assign(editable, {
       subtotal: taxes.subtotal,
@@ -249,8 +283,11 @@ async function process(req, res) {
       throw new HttpError(400, 'Cannot process purchase return in ' + existing.status + ' status');
     }
 
-    // Update stock ledger for returned items (stock OUT)
+    // Update stock ledger for returned items (stock OUT). A description-only
+    // line (no catalog item) never booked stock in on the GRN, so there is
+    // nothing to send back out (AUD-203).
     for (const line of existing.lines) {
+      if (line.itemId == null) continue;
       await stockService.moveCompanyStock({
         tx, itemId: line.itemId, date: new Date(),
         refType: 'PURCHASE_RETURN', refId: id, qtyOut: line.qty,

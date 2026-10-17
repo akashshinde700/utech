@@ -189,3 +189,24 @@ access-control-allow-credentials: true
   to generate a good one.
 - OTP codes are logged only when `NODE_ENV !== 'production'`, and `devCode` is only
   returned in the response in that same case.
+
+---
+
+# Pass 2 addendum — 2026-10-17 (`arena/5f43ac08-utech`)
+
+Scope of this pass: the five mandated functional checks (inventory, manufacturing
+flow, billing, shortcuts/forms, regression). Security surface was re-checked where
+the fixes touched it. **No new vulnerability was found; none of the seven fixes
+introduced one.**
+
+| Area | Re-verified this pass | Result |
+|---|---|---|
+| Authorization on changed routes | `jobcards` PUT, `sales-returns` PUT/POST-process, `purchase-returns` PUT/POST-process, `jobwork` POST-receive, `stock` summary all still behind `requireAuth` + `requirePermission` (authorization-matrix suite 548 tests re-ran green after every change) | ✅ |
+| Mass assignment | returns-update whitelists (`date/reason/notes` only) and the shared line guard (AUD-202) actually *narrow* the accepted body; jobcard update payload shrank (no `operations` key from the UI) | ✅ improved |
+| Money integrity | AUD-204 makes return refunds obey the same GST rule as invoices — reduces an over-refund path (₹18 per ₹1,000-discount return) reachable via API | ✅ improved |
+| Inventory integrity | AUD-206/203/202 close three inventory-consistency holes (phantom customer material, unprocessable returns, over-return via edit) — data-integrity, not confidentiality | ✅ improved |
+| Keyboard/input handling | AUD-207 change moves one listener to `window` capture; no new global handler count, cleanup asserted by test | ✅ |
+| Secrets / headers / uploads / XSS / CSRF / SSRF | untouched this pass; pass-1 findings (incl. open P3s AUD-109 JWT-in-localStorage, AUD-111 rate-limit scope, AUD-112 unauth `/uploads`) stand unchanged | ⚠️ same |
+
+Re-run status after all fixes: `tests/security/authorization-matrix.test.js`
+**548/548 PASS**, full backend 702/702, frontend 144/144.

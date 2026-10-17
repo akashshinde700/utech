@@ -164,7 +164,18 @@ async function receive(req, res) {
       // the challan and must be restored, just flagged as rejected
       if (qtyRejected > 0) {
         anyRejected = true;
-        if (!isCustomerOwned) {
+        if (isCustomerOwned) {
+          // AUD-206: a customer's rejected pieces are physically back in the
+          // shop as well. Not restoring them shrank the inward lot's remaining
+          // quantity by the rejected amount forever — the material could never
+          // be dispositioned back to the customer because the lot ledger no
+          // longer held it. Company-owned material already restored it.
+          await stockService.moveCustomerMaterial({
+            tx, lotId: challan.customerMaterialLotId, date: new Date(),
+            refType: 'JOBWORK_IN', refId: id, qtyIn: qtyRejected,
+            notes: `Jobwork ${challan.number} line ${line.id} rejected by vendor`,
+          });
+        } else {
           if (!line.itemId) throw new HttpError(400, `Line ${line.id} has no catalog item to receive stock against`);
           await stockService.moveCompanyStock({
             tx, itemId: line.itemId, date: new Date(),
