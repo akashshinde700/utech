@@ -74,7 +74,9 @@ const NAV_SECTIONS = [
     icon: Boxes,
     items: [
       { to: '/items', label: 'Items', icon: Package, perm: 'item.read' },
-      { to: '/boms', label: 'BOMs', icon: Package, perm: 'bom.read' },
+      // gated on item.read because that is what /api/boms actually checks; the
+      // seeded bom.* keys exist but no route reads them (see AUD-104)
+      { to: '/boms', label: 'BOMs', icon: Package, perm: 'item.read' },
       { to: '/purchase-orders', label: 'Purchase Orders', icon: ShoppingCart, perm: 'purchase.read' },
       { to: '/grns', label: 'GRN (Stock In)', icon: PackageCheck, perm: 'grn.read' },
       { to: '/purchase-returns', label: 'Purchase Returns', icon: ArrowLeftToLine, perm: 'purchase.read' },

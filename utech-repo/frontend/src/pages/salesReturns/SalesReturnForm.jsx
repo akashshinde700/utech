@@ -135,11 +135,19 @@ export default function SalesReturnForm() {
       const payload = {
         ...formData,
         invoiceId: parseInt(formData.invoiceId),
-        items: items.map(i => ({
-          itemId: parseInt(i.itemId),
+        // the API reads `lines`, and every line must carry the invoiceLineId it
+        // is returning against (the server rejects lines that don't belong to
+        // the invoice) plus the description/GST rate it needs to recompute tax.
+        // Sending a trimmed `items` array made every create fail server-side.
+        lines: items.map(i => ({
+          invoiceLineId: i.invoiceLineId,
+          itemId: i.itemId != null && i.itemId !== '' ? parseInt(i.itemId) : null,
+          description: i.description || '',
+          hsnCode: i.hsnCode || null,
           qty: parseFloat(i.qty),
           rate: parseFloat(i.rate),
-          amount: parseFloat(i.amount),
+          gstRate: i.gstRate != null && i.gstRate !== '' ? parseFloat(i.gstRate) : 0,
+          reason: i.reason || formData.reason || null,
         })),
       };
       if (isEdit) {

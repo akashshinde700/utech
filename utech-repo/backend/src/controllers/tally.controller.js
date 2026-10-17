@@ -99,7 +99,7 @@ function generateLedgerXml(party, config) {
     </LEDGER>`;
 }
 
-function generateStockItemXml(item, config) {
+function generateStockItemXml(item, _config) {
   return `
     <STOCKITEM>
       <NAME>${xmlEscape(item.code)}</NAME>
@@ -112,7 +112,7 @@ function generateStockItemXml(item, config) {
     </STOCKITEM>`;
 }
 
-function generateVoucherXml(invoice, config) {
+function generateVoucherXml(invoice, _config) {
   const lines = invoice.lines.map(line => `
         <ALLINVENTORYENTRIES>
           <STOCKITEMNAME>${xmlEscape(line.item?.code)}</STOCKITEMNAME>

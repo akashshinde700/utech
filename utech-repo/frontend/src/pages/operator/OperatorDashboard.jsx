@@ -11,12 +11,21 @@ export default function OperatorDashboard() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
     api.get('/jobcards', { params: { pageSize: 100 } })
-      .then((r) => setItems(r.data.items))
-      .finally(() => setLoading(false));
-  }, []);
+      .then((r) => { if (!cancelled) setItems(r.data.items || []); })
+      // a failed fetch used to fall through to the empty state, so an operator
+      // whose request errored was told they had no work assigned
+      .catch((e) => { if (!cancelled) setError(e?.response?.data?.message || 'Could not load your projects'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [reloadKey]);
 
   if (loading) {
     // skeleton mirrors the card grid so the layout doesn't jump when data lands
@@ -49,7 +58,14 @@ export default function OperatorDashboard() {
   return (
     <div className="animate-fade-in">
       <PageHeader title="My Projects" subtitle="Projects assigned to you" />
-      {items.length === 0 ? (
+      {error ? (
+        <EmptyState
+          icon={ClipboardList}
+          title="Could not load your projects"
+          description={error}
+          action={{ label: 'Try again', onClick: () => setReloadKey((k) => k + 1) }}
+        />
+      ) : items.length === 0 ? (
         <EmptyState
           icon={ClipboardList}
           title="No projects assigned to you yet"

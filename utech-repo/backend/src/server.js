@@ -60,7 +60,11 @@ app.use(helmet());
 app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev', {
+  // the automated suite issues hundreds of requests; request logging would bury
+  // the test output. Real environments are unaffected.
+  skip: () => env.NODE_ENV === 'test',
+}));
 
 // rate limit on auth
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 50 }));
