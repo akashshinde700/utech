@@ -12,7 +12,9 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
     "prisma:studio": "prisma studio",
-    "lint": "eslint src --ext .js"
+    "lint": "eslint src --ext .js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -39,7 +41,9 @@
   "devDependencies": {
     "eslint": "^9.15.0",
     "nodemon": "^3.1.7",
-    "prisma": "^5.22.0"
+    "prisma": "^5.22.0",
+    "supertest": "^7.3.1",
+    "vitest": "^2.1.9"
   },
   "engines": {
     "node": ">=18"

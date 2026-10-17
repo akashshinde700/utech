@@ -74,7 +74,19 @@ import { useAuth } from './store/auth';
 function isRestrictedUser(user) {
   return user?.role === 'OPERATOR' || user?.role === 'Project Engineer' || !!user?.scopeToDepartment;
 }
-const RESTRICTED_ALLOWED_PATHS = [/^\/$/, /^\/jobcards\/\d+$/, /^\/assignments$/];
+// Must stay in step with RESTRICTED_NAV_SECTIONS in AppLayout: every link
+// the restricted sidebar renders has to be openable, otherwise the menu item
+// looks dead - the user clicks it and silently lands back on the dashboard.
+// Each nav entry is additionally permission-gated and the API re-checks the
+// same permission, so widening this list grants no data access on its own.
+const RESTRICTED_ALLOWED_PATHS = [
+  /^\/$/,               // dashboard / My Projects
+  /^\/jobcards\/\d+$/,  // own project detail
+  /^\/assignments$/,    // My Drawing Assignments
+  /^\/my-tasks$/,       // My Tasks (task.progress)
+  /^\/tasks$/,          // Task Progress (task.create)
+  /^\/processes$/,      // Process Master (process.read)
+];
 
 function Protected({ children }) {
   const token = useAuth((s) => s.token);
