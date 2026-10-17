@@ -6,6 +6,7 @@ const { nextNumber } = require('../utils/numbering');
 const { calcLineAmount, calcTaxes, round2 } = require('../utils/gst');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
+const { assertLines } = require('../utils/lines');
 
 const PURCHASE_RETURN_INCLUDE = {
   party: true,
@@ -73,6 +74,7 @@ function buildLines(lines) {
 
 async function create(req, res) {
   const { lines, isIntraState, ...rest } = req.body;
+  assertLines(lines, { requireKey: 'grnLineId', requireKeyLabel: 'grnLineId (the GRN line this return is against)' });
 
   // a return must be anchored to a real document — an unanchored return for
   // any party would let stock walk out of the company with no paper trail
@@ -156,7 +158,7 @@ async function create(req, res) {
       include: PURCHASE_RETURN_INCLUDE,
     });
     
-    await audit(req, 'create', 'PurchaseReturn', created.id, { number: created.number });
+    await audit(req, 'create', 'PurchaseReturn', created.id, { number: created.number }, tx);
     return created;
   });
   
@@ -166,6 +168,9 @@ async function create(req, res) {
 async function update(req, res) {
   const id = parseInt(req.params.id, 10);
   const { lines, isIntraState, ...rest } = req.body;
+  if (lines !== undefined) {
+    assertLines(lines, { requireKey: 'grnLineId', requireKeyLabel: 'grnLineId (the GRN line this return is against)' });
+  }
 
   const existing = await prisma.purchaseReturn.findUnique({ where: { id } });
   if (!existing) throw new HttpError(404, 'Purchase return not found');
@@ -206,7 +211,7 @@ async function update(req, res) {
       include: PURCHASE_RETURN_INCLUDE,
     });
     
-    await audit(req, 'update', 'PurchaseReturn', id, { number: updated.number });
+    await audit(req, 'update', 'PurchaseReturn', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(purchaseReturn);
@@ -231,7 +236,7 @@ async function approve(req, res) {
       include: PURCHASE_RETURN_INCLUDE,
     });
     
-    await audit(req, 'approve', 'PurchaseReturn', id, { number: updated.number });
+    await audit(req, 'approve', 'PurchaseReturn', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(purchaseReturn);
@@ -277,7 +282,7 @@ async function process(req, res) {
       include: PURCHASE_RETURN_INCLUDE,
     });
     
-    await audit(req, 'process', 'PurchaseReturn', id, { number: updated.number });
+    await audit(req, 'process', 'PurchaseReturn', id, { number: updated.number }, tx);
     return updated;
   });
   res.json(purchaseReturn);

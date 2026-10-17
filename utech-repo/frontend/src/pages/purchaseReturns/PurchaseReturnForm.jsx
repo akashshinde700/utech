@@ -96,15 +96,25 @@ export default function PurchaseReturnForm() {
     if (!poId) return;
     const { data: response } = await api.get(`/purchase-orders/${poId}`);
     setFormData(prev => ({ ...prev, partyId: response.partyId }));
-    setItems(response.lines.map(l => ({
+    // A return has to be anchored to lines that were actually received, so
+    // build the rows from the PO's GRN lines rather than its ordered lines.
+    const received = (response.grns || []).flatMap((g) => (g.lines || []).map((l) => ({
+      grnLineId: l.id,
       itemId: l.itemId,
-      description: l.item?.name || 'Item',
+      description: l.item?.name || l.description || 'Item',
       qty: 0,
       rate: l.rate,
       gstRate: l.gstRate,
       amount: 0,
       reason: '',
+      grnNumber: g.number,
     })));
+    if (received.length === 0) {
+      setItems([]);
+      toast.error('Nothing has been received against this PO yet — create a GRN first');
+      return;
+    }
+    setItems(received);
   }
 
   useEffect(() => { loadGrns(); loadPos(); loadParties(); if (id) loadReturn(); }, [id]);
@@ -129,15 +139,25 @@ export default function PurchaseReturnForm() {
       partyId: (v) => required(v, 'Party'),
       date: (v) => required(v, 'Date'),
     });
+    // qty 0 = "not part of this return": a GRN usually has more lines than the
+    // user is sending back, so only positive quantities are validated
     items.forEach((item, idx) => {
-      const msg = positiveNumber(item.qty, 'Return qty');
-      if (msg) all[`line-${idx}-qty`] = msg;
+      const qty = Number(item.qty);
+      if (Number.isFinite(qty) && qty < 0) all[`line-${idx}-qty`] = 'Return qty must be 0 or more';
+      else if (qty > 0) {
+        const msg = positiveNumber(item.qty, 'Return qty');
+        if (msg) all[`line-${idx}-qty`] = msg;
+      }
     });
     return all;
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!items.some((i) => Number(i.qty) > 0)) {
+      toast.error('Enter a quantity for at least one line');
+      return;
+    }
     const all = validate();
     if (Object.keys(all).length) {
       setErrors(all);
@@ -152,7 +172,7 @@ export default function PurchaseReturnForm() {
         grnId: formData.grnId ? parseInt(formData.grnId) : null,
         poId: formData.poId ? parseInt(formData.poId) : null,
         partyId: parseInt(formData.partyId),
-        lines: items.map(i => ({
+        lines: items.filter(i => Number(i.qty) > 0).map(i => ({
           ...i,
           itemId: parseInt(i.itemId),
           qty: parseFloat(i.qty),
@@ -274,6 +294,9 @@ export default function PurchaseReturnForm() {
             />
           ) : (
             <div className="overflow-hidden rounded-lg border border-slate-200">
+              <div className="border-b border-slate-100 bg-slate-50/50 px-3 py-2 text-xs text-slate-500">
+                Set a line's quantity to 0 to leave it out of this return.
+              </div>
               <div className="hidden grid-cols-12 gap-2 border-b border-slate-100 bg-slate-50/50 px-2 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:grid">
                 <div className="col-span-4">Item</div>
                 <div className="col-span-2">Return qty</div>

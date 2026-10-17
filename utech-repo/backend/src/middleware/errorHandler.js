@@ -26,9 +26,23 @@ module.exports = function errorHandler(err, _req, res, _next) {
     });
   }
 
+  // A field the client sent with the wrong type/shape. Without this the user
+  // gets an opaque 500 instead of a fixable message.
+  if (err && err.name === 'PrismaClientValidationError') {
+    return res.status(400).json({
+      error: 'InvalidData',
+      message: 'Some of the submitted values have the wrong type or are missing.',
+    });
+  }
+
   // Prisma known errors
   if (err && err.code && typeof err.code === 'string' && err.code.startsWith('P')) {
-    if (err.code === 'P2002') {
+    // Drivers surface unique violations as P2002 (MySQL) or P2010 + 23505
+    // (PostgreSQL). Treat both as a duplicate so the UI can show a real message.
+    const uniqueViolation = err.code === 'P2002'
+      || (err.code === 'P2010' && (err.meta && err.meta.code === '23505'
+        || /duplicate key|unique constraint/i.test(String(err.message))));
+    if (uniqueViolation) {
       return res.status(409).json({
         error: 'DuplicateError',
         target: err.meta && err.meta.target,
@@ -37,6 +51,10 @@ module.exports = function errorHandler(err, _req, res, _next) {
     }
     if (err.code === 'P2025') {
       return res.status(404).json({ error: 'NotFound', message: err.meta && err.meta.cause });
+    }
+    // foreign-key / required-relation failures are user-correctable
+    if (err.code === 'P2003') {
+      return res.status(400).json({ error: 'InvalidReference', message: 'A linked record does not exist any more.' });
     }
   }
 

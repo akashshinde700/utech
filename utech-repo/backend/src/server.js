@@ -62,8 +62,22 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-// rate limit on auth
-app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 50 }));
+// Rate limit the credential endpoints only. Mounting this on the whole
+// /api/auth prefix also throttled GET /api/auth/me, which every page load
+// calls to hydrate the profile: a few reloads and the app started showing
+// 429s even though nobody was attempting a login.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) =>
+    res.status(429).json({
+      error: 'TooManyRequests',
+      message: 'Too many attempts. Please wait a few minutes and try again.',
+    }),
+});
+app.use(['/api/auth/login', '/api/auth/otp/request', '/api/auth/otp/verify'], authLimiter);
 
 // uploads (static)
 app.use('/uploads', express.static(path.resolve(env.UPLOAD_DIR)));

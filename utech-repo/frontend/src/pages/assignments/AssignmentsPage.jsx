@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { ClipboardList, Play, Send, RotateCcw, X, Upload, CheckCircle2, Eye, Info } from 'lucide-react';
+import { Play, Send, RotateCcw, Upload, CheckCircle2, Eye, Info, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
 import { useAuth } from '../../store/auth';
 import PageHeader from '../../components/ui/PageHeader';
 import DataTable from '../../components/ui/DataTable';
 import Badge from '../../components/ui/Badge';
 import PdfViewerModal from '../../components/pdf/PdfViewerModal';
+import Modal from '../../components/ui/Modal';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import { date as fmtDate, datetime as fmtDateTime } from '../../lib/format';
 import toast from 'react-hot-toast';
 
@@ -56,6 +58,13 @@ export default function AssignmentsPage() {
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // one dialog per action, each with its own in-flight flag so a double click
+  // can never fire the same transition twice
+  const [cancelling, setCancelling] = useState(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [startBusy, setStartBusy] = useState(false);
+  const [completeBusy, setCompleteBusy] = useState(false);
+  const [reopenBusy, setReopenBusy] = useState(false);
   const fileInputs = useRef({});
 
   useEffect(() => {
@@ -83,28 +92,23 @@ export default function AssignmentsPage() {
   }
   useEffect(() => { load(); }, [tab, departmentFilter]);
 
-  async function act(id, action, body) {
+  async function confirmCancel() {
+    if (!cancelling) return;
+    setCancelBusy(true);
     try {
-      await api.post(`/assignments/${id}/${action}`, body || {});
-      toast.success('Updated');
-      load();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Action failed');
-    }
-  }
-
-  async function cancel(id) {
-    if (!confirm('Cancel this assignment?')) return;
-    try {
-      await api.delete(`/assignments/${id}`);
-      toast.success('Cancelled');
+      await api.delete(`/assignments/${cancelling.id}`);
+      toast.success('Assignment cancelled');
+      setCancelling(null);
       load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to cancel');
+    } finally {
+      setCancelBusy(false);
     }
   }
 
   async function submitStart() {
+    setStartBusy(true);
     try {
       await api.post(`/assignments/${starting.id}/start`, { startNotes: starting.notes || '' });
       toast.success('Started');
@@ -112,10 +116,13 @@ export default function AssignmentsPage() {
       load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to start');
+    } finally {
+      setStartBusy(false);
     }
   }
 
   async function submitComplete() {
+    setCompleteBusy(true);
     try {
       const file = fileInputs.current[completing.id]?.files?.[0];
       if (file) {
@@ -129,12 +136,23 @@ export default function AssignmentsPage() {
       load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to complete');
+    } finally {
+      setCompleteBusy(false);
     }
   }
 
   async function submitReopen() {
-    await act(reopening.id, 'reopen', { reason: reopening.reason || '' });
-    setReopening(null);
+    setReopenBusy(true);
+    try {
+      await api.post(`/assignments/${reopening.id}/reopen`, { reason: reopening.reason || '' });
+      toast.success('Assignment reopened');
+      setReopening(null);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to reopen');
+    } finally {
+      setReopenBusy(false);
+    }
   }
 
   const toMeColumns = [
@@ -169,7 +187,7 @@ export default function AssignmentsPage() {
         <button className="btn-secondary !px-2 !py-1 text-xs" onClick={() => setDetailsFor(r)}><Info className="w-3.5 h-3.5" /> Details</button>
         <button className="btn-secondary !px-2 !py-1 text-xs" onClick={() => setViewing(r)}><Eye className="w-3.5 h-3.5" /> View</button>
         {r.status === 'COMPLETED' && <button className="btn-secondary !px-2 !py-1 text-xs" onClick={() => setReopening({ id: r.id, reason: '' })}><RotateCcw className="w-3.5 h-3.5" /> Reopen</button>}
-        {r.status === 'ASSIGNED' && <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => cancel(r.id)}>Cancel</button>}
+        {r.status === 'ASSIGNED' && <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => setCancelling(r)}>Cancel</button>}
       </div>
     ) },
   ];
@@ -223,118 +241,173 @@ export default function AssignmentsPage() {
         />
       )}
 
-      {detailsFor && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm grid place-items-center z-50 animate-fade-in">
-          <div className="card p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto animate-slide-up">
-            <div className="flex items-center justify-between mb-5">
-              <div className="text-lg font-bold text-slate-900 flex items-center gap-2"><Info className="w-5 h-5 text-brand-600" /> Assignment Details</div>
-              <button className="text-slate-400 hover:text-slate-600" onClick={() => setDetailsFor(null)}><X className="w-5 h-5" /></button>
+      <Modal
+        open={!!detailsFor}
+        onClose={() => setDetailsFor(null)}
+        title="Assignment Details"
+        size="lg"
+        footer={<button type="button" className="btn-secondary" onClick={() => setDetailsFor(null)}>Close</button>}
+      >
+        {detailsFor && (
+          <div className="space-y-3 text-sm">
+            <div><span className="text-slate-500">Document:</span> <span className="font-medium">{docLabel(detailsFor)}</span></div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div><span className="text-slate-500">Department:</span> <span className="font-medium">{detailsFor.department?.name || '—'}</span></div>
+              <div><span className="text-slate-500">Department Role:</span> <span className="font-medium">{detailsFor.departmentSubCategory?.name || '—'}</span></div>
+              <div><span className="text-slate-500">Assigned By:</span> <span className="font-medium">{detailsFor.assignedBy?.name || '—'}</span></div>
+              <div><span className="text-slate-500">Assigned To:</span> <span className="font-medium">{detailsFor.assignedTo?.name || '—'}</span></div>
+              <div><span className="text-slate-500">Priority:</span> <span className="font-medium">{detailsFor.priority}</span></div>
+              <div><span className="text-slate-500">Due:</span> <span className="font-medium">{fmtDate(detailsFor.dueDate)}</span></div>
             </div>
-            <div className="space-y-3 text-sm">
-              <div><span className="text-slate-500">Document:</span> <span className="font-medium">{docLabel(detailsFor)}</span></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><span className="text-slate-500">Department:</span> <span className="font-medium">{detailsFor.department?.name || '—'}</span></div>
-                <div><span className="text-slate-500">Department Role:</span> <span className="font-medium">{detailsFor.departmentSubCategory?.name || '—'}</span></div>
-                <div><span className="text-slate-500">Assigned By:</span> <span className="font-medium">{detailsFor.assignedBy?.name || '—'}</span></div>
-                <div><span className="text-slate-500">Assigned To:</span> <span className="font-medium">{detailsFor.assignedTo?.name || '—'}</span></div>
-                <div><span className="text-slate-500">Priority:</span> <span className="font-medium">{detailsFor.priority}</span></div>
-                <div><span className="text-slate-500">Due:</span> <span className="font-medium">{fmtDate(detailsFor.dueDate)}</span></div>
+            <div><span className="text-slate-500">Status:</span> <Badge status={STATUS_BADGE[detailsFor.status]}>{detailsFor.status.replace('_', ' ')}</Badge></div>
+            {detailsFor.instructions && (
+              <div className="border-t border-slate-100 pt-2">
+                <div className="mb-1 text-slate-500">Instructions</div>
+                <div className="whitespace-pre-wrap rounded-lg bg-slate-50 p-3">{detailsFor.instructions}</div>
               </div>
-              <div><span className="text-slate-500">Status:</span> <Badge status={STATUS_BADGE[detailsFor.status]}>{detailsFor.status.replace('_', ' ')}</Badge></div>
-              {detailsFor.instructions && (
-                <div className="pt-2 border-t border-slate-100">
-                  <div className="text-slate-500 mb-1">Instructions</div>
-                  <div className="bg-slate-50 rounded-lg p-3 whitespace-pre-wrap">{detailsFor.instructions}</div>
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs text-slate-500">
-                <div>Assigned: {fmtDateTime(detailsFor.assignedAt)}</div>
-                <div>Sent out (Started): {fmtDateTime(detailsFor.startedAt)}</div>
-                <div>Received back (Completed): {fmtDateTime(detailsFor.completedAt)}</div>
-                <div>Completed By: {detailsFor.completedBy?.name || '—'}</div>
+            )}
+            <div className="grid grid-cols-1 gap-3 border-t border-slate-100 pt-2 text-xs text-slate-500 sm:grid-cols-2">
+              <div>Assigned: {fmtDateTime(detailsFor.assignedAt)}</div>
+              <div>Sent out (Started): {fmtDateTime(detailsFor.startedAt)}</div>
+              <div>Received back (Completed): {fmtDateTime(detailsFor.completedAt)}</div>
+              <div>Completed By: {detailsFor.completedBy?.name || '—'}</div>
+            </div>
+            {detailsFor.startNotes && (
+              <div className="border-t border-slate-100 pt-2">
+                <div className="mb-1 font-medium text-slate-500">Sent To / Start Notes</div>
+                <div className="whitespace-pre-wrap rounded-lg border border-blue-100 bg-blue-50 p-3">{detailsFor.startNotes}</div>
               </div>
-              {detailsFor.startNotes && (
-                <div className="pt-2 border-t border-slate-100">
-                  <div className="text-slate-500 mb-1 font-medium">Sent To / Start Notes</div>
-                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 whitespace-pre-wrap">{detailsFor.startNotes}</div>
-                </div>
-              )}
-              {detailsFor.completionRemarks && (
-                <div className="pt-2 border-t border-slate-100">
-                  <div className="text-slate-500 mb-1 font-medium">Completion Remarks</div>
-                  <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 whitespace-pre-wrap">{detailsFor.completionRemarks}</div>
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button className="btn-secondary" onClick={() => setDetailsFor(null)}>Close</button>
-            </div>
+            )}
+            {detailsFor.completionRemarks && (
+              <div className="border-t border-slate-100 pt-2">
+                <div className="mb-1 font-medium text-slate-500">Completion Remarks</div>
+                <div className="whitespace-pre-wrap rounded-lg border border-emerald-100 bg-emerald-50 p-3">{detailsFor.completionRemarks}</div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
-      {starting && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm grid place-items-center z-50 animate-fade-in">
-          <div className="card p-6 w-full max-w-md max-h-[90vh] overflow-y-auto animate-slide-up">
-            <div className="flex items-center justify-between mb-5">
-              <div className="text-lg font-bold text-slate-900 flex items-center gap-2"><Play className="w-5 h-5 text-brand-600" /> Start Work</div>
-              <button className="text-slate-400 hover:text-slate-600" onClick={() => setStarting(null)}><X className="w-5 h-5" /></button>
-            </div>
-            <div className="space-y-4">
-              <div><label className="label">Sent To / Notes <span className="text-slate-400 font-normal">(optional)</span></label>
-                <textarea className="input" rows={3} placeholder="e.g. Sent to Shree Engineering Works, Pune via WhatsApp" value={starting.notes} onChange={(e) => setStarting({ ...starting, notes: e.target.value })} />
-                <div className="text-xs text-slate-400 mt-1">Useful if this is going out to an external vendor — note who it's sent to.</div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button className="btn-secondary" onClick={() => setStarting(null)}>Cancel</button>
-              <button className="btn-primary" onClick={submitStart}><Play className="w-4 h-4" /> Confirm Start</button>
+      <Modal
+        open={!!starting}
+        onClose={() => (startBusy ? null : setStarting(null))}
+        title="Start Work"
+        disableEscape={startBusy}
+        closeOnOverlay={!startBusy}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => setStarting(null)} disabled={startBusy}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={submitStart} disabled={startBusy}>
+              {startBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              {startBusy ? 'Starting…' : 'Confirm Start'}
+            </button>
+          </>
+        }
+      >
+        {starting && (
+          <div className="space-y-4">
+            <div>
+              <label className="label" htmlFor="assignment-start-notes">Sent To / Notes <span className="font-normal text-slate-400">(optional)</span></label>
+              <textarea
+                id="assignment-start-notes"
+                className="input"
+                rows={3}
+                placeholder="e.g. Sent to Shree Engineering Works, Pune via WhatsApp"
+                value={starting.notes}
+                onChange={(e) => setStarting({ ...starting, notes: e.target.value })}
+              />
+              <div className="mt-1 text-xs text-slate-400">Useful if this is going out to an external vendor — note who it's sent to.</div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
-      {completing && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm grid place-items-center z-50 animate-fade-in">
-          <div className="card p-6 w-full max-w-md max-h-[90vh] overflow-y-auto animate-slide-up">
-            <div className="flex items-center justify-between mb-5">
-              <div className="text-lg font-bold text-slate-900 flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-brand-600" /> Mark as Complete</div>
-              <button className="text-slate-400 hover:text-slate-600" onClick={() => setCompleting(null)}><X className="w-5 h-5" /></button>
+      <Modal
+        open={!!completing}
+        onClose={() => (completeBusy ? null : setCompleting(null))}
+        title="Mark as Complete"
+        description="Are you sure you want to mark this assigned PDF work as completed?"
+        disableEscape={completeBusy}
+        closeOnOverlay={!completeBusy}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => setCompleting(null)} disabled={completeBusy}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={submitComplete} disabled={completeBusy}>
+              {completeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {completeBusy ? 'Completing…' : 'Confirm Complete'}
+            </button>
+          </>
+        }
+      >
+        {completing && (
+          <div className="space-y-4">
+            <div>
+              <label className="label" htmlFor="assignment-complete-remarks">Completion Remarks</label>
+              <textarea
+                id="assignment-complete-remarks"
+                className="input"
+                rows={3}
+                value={completing.remarks}
+                onChange={(e) => setCompleting({ ...completing, remarks: e.target.value })}
+              />
             </div>
-            <p className="text-sm text-slate-600 mb-4">Are you sure you want to mark this assigned PDF work as completed?</p>
-            <div className="space-y-4">
-              <div><label className="label">Completion Remarks</label>
-                <textarea className="input" rows={3} value={completing.remarks} onChange={(e) => setCompleting({ ...completing, remarks: e.target.value })} /></div>
-              <div><label className="label">Output file (optional)</label>
-                <input type="file" ref={(el) => { fileInputs.current[completing.id] = el; }} className="input" />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button className="btn-secondary" onClick={() => setCompleting(null)}>Cancel</button>
-              <button className="btn-primary" onClick={submitComplete}><Send className="w-4 h-4" /> Confirm Complete</button>
+            <div>
+              <label className="label" htmlFor="assignment-complete-file">Output file (optional)</label>
+              <input
+                id="assignment-complete-file"
+                type="file"
+                ref={(el) => { fileInputs.current[completing.id] = el; }}
+                className="input"
+              />
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
-      {reopening && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm grid place-items-center z-50 animate-fade-in">
-          <div className="card p-6 w-full max-w-md max-h-[90vh] overflow-y-auto animate-slide-up">
-            <div className="flex items-center justify-between mb-5">
-              <div className="text-lg font-bold text-slate-900 flex items-center gap-2"><ClipboardList className="w-5 h-5 text-brand-600" /> Reopen Work</div>
-              <button className="text-slate-400 hover:text-slate-600" onClick={() => setReopening(null)}><X className="w-5 h-5" /></button>
-            </div>
-            <div className="space-y-4">
-              <div><label className="label">Reason</label>
-                <textarea className="input" rows={3} value={reopening.reason} onChange={(e) => setReopening({ ...reopening, reason: e.target.value })} /></div>
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button className="btn-secondary" onClick={() => setReopening(null)}>Cancel</button>
-              <button className="btn-primary" onClick={submitReopen}><Upload className="w-4 h-4" /> Reopen</button>
+      <Modal
+        open={!!reopening}
+        onClose={() => (reopenBusy ? null : setReopening(null))}
+        title="Reopen Work"
+        description="The assignee will be able to work on this document again."
+        disableEscape={reopenBusy}
+        closeOnOverlay={!reopenBusy}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => setReopening(null)} disabled={reopenBusy}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={submitReopen} disabled={reopenBusy}>
+              {reopenBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {reopenBusy ? 'Reopening…' : 'Reopen'}
+            </button>
+          </>
+        }
+      >
+        {reopening && (
+          <div className="space-y-4">
+            <div>
+              <label className="label" htmlFor="assignment-reopen-reason">Reason</label>
+              <textarea
+                id="assignment-reopen-reason"
+                className="input"
+                rows={3}
+                value={reopening.reason}
+                onChange={(e) => setReopening({ ...reopening, reason: e.target.value })}
+              />
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!cancelling}
+        onClose={() => (cancelBusy ? null : setCancelling(null))}
+        onConfirm={confirmCancel}
+        title="Cancel this assignment?"
+        message={cancelling ? `“${docLabel(cancelling)}” will be cancelled and returned to the pool. The assignee will no longer see it in their queue.` : ''}
+        confirmLabel="Cancel assignment"
+        cancelLabel="Keep it"
+        variant="destructive"
+        loading={cancelBusy}
+      />
     </div>
   );
 }

@@ -20,6 +20,7 @@ export default function InvoiceView() {
   const [pay, setPay] = useState(null); // payment dialog state
   const [payErrors, setPayErrors] = useState({});
   const [paySaving, setPaySaving] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   async function load() { const r = await api.get(`/invoices/${id}`); setInv(r.data); }
   useEffect(() => { load(); }, [id]);
@@ -60,16 +61,32 @@ export default function InvoiceView() {
     }
   }
 
-  function downloadPdf() {
-    const token = localStorage.getItem('utech.token');
-    const url = `/api/invoices/${id}/pdf`;
-    // simple inline trigger using fetch for auth header
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.blob())
-      .then((blob) => {
-        const u = URL.createObjectURL(blob);
-        window.open(u, '_blank');
-      });
+  async function downloadPdf() {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    // Open the tab synchronously (inside the click) so popup blockers allow it,
+    // then point it at the blob once the authenticated fetch resolves.
+    const tab = window.open('', '_blank');
+    try {
+      const token = localStorage.getItem('utech.token');
+      const r = await fetch(`/api/invoices/${id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) {
+        try { tab?.close(); } catch { /* ignore */ }
+        toast.error(r.status === 403 ? 'You do not have permission to view this invoice PDF' : 'Could not generate the invoice PDF');
+        return;
+      }
+      const blob = await r.blob();
+      const u = URL.createObjectURL(blob);
+      if (tab) tab.location.href = u;
+      else window.open(u, '_blank');
+      // the new tab owns the blob now; release our reference after a minute
+      setTimeout(() => URL.revokeObjectURL(u), 60000);
+    } catch {
+      try { tab?.close(); } catch { /* ignore */ }
+      toast.error('Could not generate the invoice PDF');
+    } finally {
+      setPdfBusy(false);
+    }
   }
 
   return (
@@ -79,7 +96,9 @@ export default function InvoiceView() {
         subtitle={`To ${inv.party?.name ?? '—'} • ${date(inv.date)}`}
         action={
           <div className="flex gap-2">
-            <button className="btn-secondary" onClick={downloadPdf}><FileDown className="w-4 h-4" /> PDF</button>
+            <button className="btn-secondary" onClick={downloadPdf} disabled={pdfBusy}>
+              {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} PDF
+            </button>
             <Link to={`/invoices/${id}/edit`} className="btn-secondary"><Pencil className="w-4 h-4" /> Edit</Link>
             <button className="btn-primary" onClick={() => { setPayErrors({}); setPay({ date: todayLocal(), amount: '', mode: 'BANK', reference: '', notes: '' }); }}><Wallet className="w-4 h-4" /> Record payment</button>
           </div>

@@ -25,6 +25,11 @@ function effectiveChecklist(jc) {
 }
 
 function computeProgress(jc) {
+  // A completed project is 100% by definition. Without this short-circuit a
+  // project completed while its Task Progress items were still open showed
+  // "0%" on the list/detail even though status was COMPLETED.
+  if (jc.status === 'COMPLETED') return 100;
+
   // Once the Department Head has created real Task Progress items for this
   // project, those are the unit of work and supersede the fixed checklist.
   // Cancelled tasks are excluded so dropping one doesn't drag progress down.

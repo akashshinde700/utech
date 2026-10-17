@@ -56,6 +56,8 @@ model User {
   taskAssignments             JobcardOperationAssignee[] @relation("TaskAssigneeUser")
   taskAssignmentsMade         JobcardOperationAssignee[] @relation("TaskAssigneeAssignedBy")
   permissionOverrides         UserPermission[]
+  salesReturnsApprovedByMe    SalesReturn[]              @relation("SalesReturnApprovedBy")
+  purchaseReturnsApprovedByMe PurchaseReturn[]          @relation("PurchaseReturnApprovedBy")
   processesCreated            Process[]
   notifications               Notification[]
   createdCustomerMaterialLots CustomerMaterialLot[]      @relation("CustomerMaterialLotCreatedBy")
@@ -1451,6 +1453,7 @@ model SalesReturn {
   reason       String?           @db.Text
   notes        String?           @db.Text
   approvedById Int?
+  approvedBy   User?             @relation("SalesReturnApprovedBy", fields: [approvedById], references: [id])
   approvedAt   DateTime?
   lines        SalesReturnLine[]
   createdAt    DateTime          @default(now())
@@ -1497,6 +1500,7 @@ model PurchaseReturn {
   reason       String?              @db.Text
   notes        String?              @db.Text
   approvedById Int?
+  approvedBy   User?                @relation("PurchaseReturnApprovedBy", fields: [approvedById], references: [id])
   approvedAt   DateTime?
   lines        PurchaseReturnLine[]
   createdAt    DateTime             @default(now())

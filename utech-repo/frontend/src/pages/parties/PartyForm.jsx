@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { User, MapPin, CreditCard, StickyNote, Save, Landmark, Loader2 } from 'lucide-react';
+import { User, MapPin, CreditCard, StickyNote, Save, Landmark, Loader2, FileSpreadsheet } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import FormField from '../../components/ui/FormField';
@@ -11,6 +11,7 @@ import { deriveFromGstin, suggestNickName } from '../../lib/gstin';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../store/auth';
 import { writablePartyTypes } from '../../lib/permissions';
+import { downloadFile } from '../../lib/download';
 
 const empty = {
   name: '', nickName: '', type: 'CUSTOMER', contactPerson: '', email: '', phone: '', altPhone: '',
@@ -66,6 +67,7 @@ export default function PartyForm() {
     type: typeOptions.includes(wantedType) ? wantedType : (typeOptions[0] || empty.type),
   }));
   const [saving, setSaving] = useState(false);
+  const [ledgerBusy, setLedgerBusy] = useState(false);
   const [errors, setErrors] = useState({});
   const [ifscBusy, setIfscBusy] = useState(false);
 
@@ -158,7 +160,33 @@ export default function PartyForm() {
 
   return (
     <div>
-      <PageHeader title={id ? 'Edit party' : 'New party'} subtitle="Customers and vendors used across sales & purchase documents" />
+      <PageHeader
+        title={id ? 'Edit party' : 'New party'}
+        subtitle="Customers and vendors used across sales & purchase documents"
+        actions={id ? (
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            disabled={ledgerBusy}
+            onClick={async () => {
+              setLedgerBusy(true);
+              try {
+                await downloadFile(`/reports/party-ledger/${id}.xlsx`, `party-ledger-${form.name || id}.xlsx`);
+              } catch (err) {
+                if (!err.response?.status) toast.error('Download failed — check your connection');
+                else if (err.response.status !== 401 && err.response.status !== 403) {
+                  toast.error(err.response?.data?.message || 'Could not download the party ledger');
+                }
+              } finally {
+                setLedgerBusy(false);
+              }
+            }}
+          >
+            {ledgerBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+            {ledgerBusy ? 'Preparing…' : 'Ledger (.xlsx)'}
+          </button>
+        ) : null}
+      />
 
       <form onSubmit={save} noValidate className="max-w-5xl space-y-5">
         <FormSection icon={User} title="Party Details" description="Legal name and primary contact for this party">
