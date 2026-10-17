@@ -49,7 +49,7 @@ export default function JobcardForm() {
     assignedOperatorId: '', projectEngineerId: '',
     projectNumber: '', assemblyNumber: '', drawingNumber: '',
     startDate: '', endDate: '', remarks: '',
-    lines: [], operations: [],
+    lines: [],
   });
 
   useEffect(() => {
@@ -78,7 +78,11 @@ export default function JobcardForm() {
         endDate: jc.endDate ? jc.endDate.slice(0, 10) : '',
         remarks: jc.remarks || '',
         lines: jc.lines.map((l) => ({ id: l.id, itemId: l.itemId, itemName: l.itemName || l.item?.name || '', qty: Number(l.qty), uomCode: l.uomCode || '', notes: l.notes || '' })),
-        operations: [],
+        // NOTE: `operations` is intentionally NOT part of this form's state or
+        // payload. JobcardOperation rows are the Task Progress items owned by
+        // /api/tasks — sending `operations: []` on save made the backend's
+        // replace-semantics delete every task (and its assignees/comments) on
+        // the jobcard (AUD-201).
       });
     });
     loadAttachments();
@@ -299,7 +303,8 @@ export default function JobcardForm() {
           const { _pendingFiles, ...rest } = l;
           return { ...rest, itemId: l.itemId ? Number(l.itemId) : null, qty: Number(l.qty) };
         }),
-        operations: [],
+        // no `operations` key: this form never edits them, and the backend
+        // treats a sent array as "replace all" — see AUD-201
       };
       let jobcardId = id;
       let respLines;

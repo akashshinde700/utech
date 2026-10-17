@@ -59,9 +59,16 @@ export default function SearchableSelect({
 
   useClickOutside(rootRef, () => setOpen(false), { active: open });
 
-  // Escape must close ONLY the popover (topmost layer wins). A capture-phase
-  // document listener runs before a surrounding Modal's own Escape handler and
-  // stops it from closing both at once.
+  // Escape must close ONLY the popover (topmost layer wins). The listener is
+  // registered on `window` in the capture phase — one node ABOVE the
+  // surrounding Modal's `document` capture listener — so stopPropagation()
+  // actually keeps the event from reaching the Modal at all.
+  //
+  // AUD-207: this used to listen on `document` like the Modal does. Two
+  // same-node listeners both run regardless of stopPropagation(), and the
+  // Modal's handler registered first (it mounts before the popover opens), so
+  // one Escape closed the dropdown AND the whole modal — throwing away the
+  // user's unsaved form input.
   useEffect(() => {
     if (!open) return undefined;
     const onKeyCapture = (e) => {
@@ -70,8 +77,8 @@ export default function SearchableSelect({
       e.stopPropagation();
       setOpen(false);
     };
-    document.addEventListener('keydown', onKeyCapture, true);
-    return () => document.removeEventListener('keydown', onKeyCapture, true);
+    window.addEventListener('keydown', onKeyCapture, true);
+    return () => window.removeEventListener('keydown', onKeyCapture, true);
   }, [open]);
 
   // close on scroll of any scrolling ancestor (capture catches all of them),

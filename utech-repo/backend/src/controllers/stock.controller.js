@@ -34,7 +34,7 @@ async function summary(_req, res) {
     prisma.customerMaterialLot.count({ where: { status: { in: ACTIVE_CUSTOMER_STATUSES } } }),
     prisma.jobworkLine.findMany({
       where: { challan: { status: { in: ['ISSUED', 'PARTIAL_RECEIVED'] } } },
-      select: { qtySent: true, qtyReceived: true, challan: { select: { materialOwnerType: true } } },
+      select: { qtySent: true, qtyReceived: true, qtyRejected: true, challan: { select: { materialOwnerType: true } } },
     }),
     prisma.productionBatch.count({ where: { status: 'IN_PROGRESS' } }),
     prisma.customerMaterialLot.count({ where: { status: 'IN_PROCESS' } }),
@@ -58,7 +58,10 @@ async function summary(_req, res) {
 
   const materialAtVendor = materialAtVendorLines.reduce(
     (acc, l) => {
-      const outstanding = Number(l.qtySent) - Number(l.qtyReceived);
+      // rejected material physically came back with the receipt (its stock was
+      // restored), so it is no longer at the vendor — counting it as
+      // outstanding overstated the at-vendor figure (AUD-205)
+      const outstanding = Number(l.qtySent) - Number(l.qtyReceived) - Number(l.qtyRejected || 0);
       if (l.challan.materialOwnerType === 'CUSTOMER') acc.customer += outstanding;
       else acc.company += outstanding;
       return acc;
