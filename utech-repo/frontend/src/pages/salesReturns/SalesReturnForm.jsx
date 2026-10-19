@@ -71,7 +71,7 @@ export default function SalesReturnForm() {
     setLineErrors([]);
   }
 
-  useEffect(() => { loadInvoices(); if (id) loadReturn(); }, [id]);
+  useEffect(() => { loadInvoices(); if (id) loadReturn(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (formData.invoiceId && !id) loadInvoiceLines(formData.invoiceId); }, [formData.invoiceId, id]);
 
   function setField(k, v) {
@@ -186,7 +186,12 @@ export default function SalesReturnForm() {
     }
   }
 
-  const total = items.reduce((sum, i) => sum + (i.amount || 0), 0);
+  const subtotal = items.reduce((sum, i) => sum + Number(i.amount || 0), 0);
+  const gstTotal = items.reduce(
+    (sum, i) => sum + (Number(i.amount || 0) * Number(i.gstRate ?? 18)) / 100,
+    0,
+  );
+  const total = Math.round((subtotal + gstTotal) * 100) / 100;
   // the backend only allows editing a sales return while it's still DRAFT —
   // once approved/processed, header + line fields are read-only
   const editable = !isEdit || data?.status === 'DRAFT';

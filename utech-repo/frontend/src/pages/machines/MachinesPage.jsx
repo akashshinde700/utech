@@ -29,7 +29,7 @@ export default function MachinesPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>

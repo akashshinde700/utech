@@ -97,6 +97,10 @@ export default function BomForm() {
       toast.error('Please fix the highlighted fields');
       return;
     }
+    if (items.length === 0) {
+      toast.error('Please add at least one component');
+      return;
+    }
     setSaving(true);
     try {
       const payload = {

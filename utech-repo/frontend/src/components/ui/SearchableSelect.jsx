@@ -35,6 +35,7 @@ export default function SearchableSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [fixedStyle, setFixedStyle] = useState(null);
   const rootRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
@@ -81,17 +82,50 @@ export default function SearchableSelect({
     return () => window.removeEventListener('keydown', onKeyCapture, true);
   }, [open]);
 
-  // close on scroll of any scrolling ancestor (capture catches all of them),
-  // but NOT on the listbox's own internal scrolling
+  // Reposition on scroll/resize when open; only close if the trigger scrolled out of view
+  // Only use fixed positioning when inside a horizontal-scroll table wrapper
+  // outside a dialog so the listbox is never clipped by overflow-x-auto
+  const updatePosition = useCallback(() => {
+    const el = rootRef.current;
+    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    const inScrollTable = el.closest?.('.overflow-x-auto') && !el.closest?.('[role="dialog"]');
+    if (!inScrollTable) {
+      setFixedStyle(null);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const vh = window.innerHeight || 900;
+      const spaceBelow = vh - rect.bottom;
+      const openUpward = spaceBelow < 260 && rect.top > spaceBelow;
+      setFixedStyle({
+        position: 'fixed',
+        ...(openUpward
+          ? { bottom: `${vh - rect.top + 4}px` }
+          : { top: `${rect.bottom + 4}px` }),
+        left: `${rect.left}px`,
+        width: `${Math.max(rect.width, 220)}px`,
+      });
+    } else {
+      setFixedStyle(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!open) return undefined;
+    updatePosition();
     const onScroll = (e) => {
       if (listRef.current && listRef.current.contains(e.target)) return;
-      setOpen(false);
+      if (rootRef.current && rootRef.current.contains(e.target)) return;
+      updatePosition();
     };
     window.addEventListener('scroll', onScroll, true);
-    return () => window.removeEventListener('scroll', onScroll, true);
-  }, [open]);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [open, updatePosition]);
 
   const openPopover = useCallback(() => {
     if (disabled || loading) return;
@@ -99,21 +133,31 @@ export default function SearchableSelect({
     // start keyboard navigation on the selected entry, else the first option
     const idx = Math.max(0, options.findIndex((o) => same(o.value, value)));
     setActiveIndex(options.length ? idx : 0);
+    updatePosition();
     setOpen(true);
-  }, [disabled, loading, options, value]);
+  }, [disabled, loading, options, value, updatePosition]);
 
   useEffect(() => {
     if (!open) return;
-    // focus the filter input on the next frame (popover just mounted)
-    const t = setTimeout(() => inputRef.current?.focus(), 0);
+    // focus the filter input on the next frame without scrolling ancestor containers
+    const t = setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
     return () => clearTimeout(t);
   }, [open]);
 
-  // keep the active option visible while arrowing through the list
+  // keep the active option visible inside the listbox without scrolling page/table ancestors
   useEffect(() => {
     if (!open) return;
+    const list = listRef.current;
     const el = optionRefs.current[activeIndex];
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    if (list && el && list.clientHeight > 0) {
+      const top = el.offsetTop;
+      const bottom = top + el.offsetHeight;
+      if (top < list.scrollTop) {
+        list.scrollTop = top;
+      } else if (bottom > list.scrollTop + list.clientHeight) {
+        list.scrollTop = bottom - list.clientHeight;
+      }
+    }
   }, [activeIndex, open]);
 
   const commit = (option) => {
@@ -196,7 +240,10 @@ export default function SearchableSelect({
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg animate-fade-in">
+        <div
+          style={fixedStyle || undefined}
+          className={`${fixedStyle ? 'z-[100]' : 'absolute z-50 mt-1 w-full'} rounded-lg border border-slate-200 bg-white shadow-lg animate-fade-in`}
+        >
           <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
             <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
             <input

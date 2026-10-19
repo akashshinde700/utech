@@ -174,7 +174,7 @@ export default function JobcardView() {
       // handled by the load() error state above
     }
   }
-  useEffect(() => { load(); loadAttachments(); }, [id]);
+  useEffect(() => { load(); loadAttachments(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // which pages of each PDF have already been assigned, and to which
   // department/user — shown under each card so the chain stays visible.

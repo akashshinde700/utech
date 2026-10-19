@@ -56,8 +56,21 @@ const app = express();
 app.set('trust proxy', 1);
 
 // security + parsing
-app.use(helmet());
-app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+app.use(helmet({
+  frameguard: env.NODE_ENV === 'production' ? { action: 'sameorigin' } : false,
+  contentSecurityPolicy: env.NODE_ENV === 'production'
+    ? undefined
+    : {
+        useDefaults: true,
+        directives: {
+          frameAncestors: ["'self'", 'https://*.e2b.app', 'https://*.arena.ai'],
+        },
+      },
+}));
+app.use(cors({
+  origin: env.NODE_ENV === 'production' ? env.CORS_ORIGIN : true,
+  credentials: true,
+}));
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev', {
@@ -72,7 +85,7 @@ app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev', {
 // 429s even though nobody was attempting a login.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 50,
+  max: env.NODE_ENV === 'production' ? 50 : 500,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req, res) =>
@@ -131,7 +144,12 @@ const publicDir = path.resolve(__dirname, '..', 'public');
 app.use(express.static(publicDir));
 app.get(/^(?!\/api|\/uploads|\/health).*/, (req, res, next) => {
   res.sendFile(path.join(publicDir, 'index.html'), (err) => {
-    if (err) next();
+    if (err) {
+      if (req.path === '/') {
+        return res.json({ ok: true, service: 'UTech ERP API', health: '/health' });
+      }
+      next();
+    }
   });
 });
 
@@ -141,8 +159,35 @@ app.use(errorHandler);
 
 const port = env.PORT || 4000;
 if (require.main === module) {
-  app.listen(port, () => {
-    console.log('UTech ERP API listening on http://localhost:' + port);
+  (async () => {
+    const prisma = require('./config/prisma');
+    if (prisma._isInMemory) {
+      const count = await prisma.user.count();
+      if (count === 0) {
+        const { seedDatabase } = require('../prisma/seed');
+        await seedDatabase(prisma);
+      }
+    }
+    const server = app.listen(port, '0.0.0.0', () => {
+      console.log('UTech ERP API listening on http://0.0.0.0:' + port);
+    });
+
+    const shutdown = (sig) => {
+      console.log(`Received ${sig}, shutting down gracefully...`);
+      server.close(async () => {
+        try {
+          await prisma.$disconnect();
+        } catch (_err) {
+          // ignore disconnect errors during shutdown
+        }
+        process.exit(0);
+      });
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+  })().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
   });
 }
 

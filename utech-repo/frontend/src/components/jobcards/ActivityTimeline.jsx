@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, Loader2 } from 'lucide-react';
+import { Activity, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import api from '../../lib/api';
 import { datetime } from '../../lib/format';
 import EmptyState from '../ui/EmptyState';
@@ -28,19 +28,50 @@ function describe(e) {
 export default function ActivityTimeline({ jobcardId, endpoint }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const url = endpoint || `/jobcards/${jobcardId}/activity`;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.get(url).then((r) => { if (!cancelled) setEvents(r.data); }).finally(() => { if (!cancelled) setLoading(false); });
+    setError(null);
+    api.get(url)
+      .then((r) => {
+        if (!cancelled) setEvents(Array.isArray(r.data) ? r.data : []);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err?.response?.data?.message || 'Could not load activity');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => { cancelled = true; };
-  }, [url]);
+  }, [url, reloadKey]);
 
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-xs text-slate-400 py-2">
         <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> Loading…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-danger-200 bg-danger-50/60 px-3 py-2.5 text-xs text-danger-700">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>{error}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setReloadKey((k) => k + 1)}
+          className="inline-flex items-center gap-1 font-semibold underline hover:no-underline"
+        >
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Retry
+        </button>
       </div>
     );
   }

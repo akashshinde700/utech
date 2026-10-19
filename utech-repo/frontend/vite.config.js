@@ -38,4 +38,22 @@ export default defineConfig({
     allowedHosts: true,
     proxy,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('pdfjs-dist')) return 'pdfjs';
+            if (id.includes('recharts') || id.includes('d3-') || id.includes('victory-vendor')) return 'charts';
+            if (id.includes('lucide-react')) return 'icons';
+            return 'vendor';
+          }
+          if (id.includes('/src/pages/')) {
+            const match = id.match(/\/src\/pages\/([^/]+)\//);
+            if (match) return `page-${match[1]}`;
+          }
+        },
+      },
+    },
+  },
 });

@@ -32,7 +32,7 @@ export default function SalesReturnsPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page, status]);
+  useEffect(() => { load(); }, [page, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pristine = !search && !status;
 

@@ -86,7 +86,7 @@ export default function BackOrderForm() {
     setLineErrors([]);
   }
 
-  useEffect(() => { loadInvoices(); loadParties(); loadAllItems(); if (id) loadBackOrder(); }, [id]);
+  useEffect(() => { loadInvoices(); loadParties(); loadAllItems(); if (id) loadBackOrder(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (formData.invoiceId && !id) loadInvoiceLines(formData.invoiceId); }, [formData.invoiceId, id]);
 
   function setField(k, v) {
@@ -154,6 +154,10 @@ export default function BackOrderForm() {
       setErrors(errs);
       setLineErrors(lErrs);
       toast.error('Please fix the highlighted fields');
+      return;
+    }
+    if (!isEdit && items.length === 0) {
+      toast.error('Please add at least one item');
       return;
     }
     setLoading(true);

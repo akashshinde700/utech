@@ -43,7 +43,7 @@ export default function JobworkPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function openReceive(row) {
     const { data } = await api.get(`/jobwork/${row.id}`);

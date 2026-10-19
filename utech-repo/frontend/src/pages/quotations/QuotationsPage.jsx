@@ -47,7 +47,7 @@ export default function QuotationsPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page, status, qType]);
+  useEffect(() => { load(); }, [page, status, qType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pristine = !search && !status;
 

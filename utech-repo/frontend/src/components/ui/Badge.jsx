@@ -1,7 +1,5 @@
 import { STATUS_COLORS } from '../../lib/format';
 
-const STATUS_ICONS = {};
-
 // Fallback tone for statuses that have no explicit mapping — keeps the badge
 // readable instead of invisible. Checked after STATUS_COLORS so any key added
 // to format.js always wins.

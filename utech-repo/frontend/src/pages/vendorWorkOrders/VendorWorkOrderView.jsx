@@ -30,7 +30,7 @@ export default function VendorWorkOrderView() {
       setLoadError(err.response?.status === 403 ? 'forbidden' : 'not-found');
     }
   }
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loadError) return (
     <div className="card p-10 text-center max-w-md mx-auto mt-10">

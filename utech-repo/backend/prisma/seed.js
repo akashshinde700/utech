@@ -1,11 +1,10 @@
 'use strict';
 
-const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 // same GST math the invoice controller uses, so seed totals are computed
 // exactly the way live invoices are (no hand-written header totals)
-const { calcLineAmount, calcTaxes, round2 } = require('../src/utils/gst');
-const prisma = new PrismaClient();
+const { calcLineAmount, calcTaxes, round2, roundInvoiceTotal } = require('../src/utils/gst');
+const defaultPrisma = require('../src/config/prisma');
 
 const MODULES = [
   'user', 'role', 'customerParty', 'vendorParty', 'item', 'machine', 'process',
@@ -16,7 +15,7 @@ const MODULES = [
 ];
 const ACTIONS = ['create', 'read', 'update', 'delete'];
 
-async function main() {
+async function main(prisma = defaultPrisma) {
   console.log('Seeding permissions...');
   for (const m of MODULES) {
     for (const a of ACTIONS) {
@@ -451,8 +450,8 @@ async function main() {
     if (!party) continue;
     const { partyCode, lines, payments, status, ...invoicePayload } = inv;
 
-    const taxes = calcTaxes(lines);
-    const total = round2(taxes.total - Number(inv.discount || 0));
+    const taxes = calcTaxes(lines, true, inv.discount || 0);
+    const { total } = roundInvoiceTotal(taxes.total);
     // status consistent with the payment rows we are about to create
     const specPaid = round2((payments || []).reduce((s, p) => s + Number(p.amount), 0));
     const specStatus = specPaid > 0 ? (specPaid >= total ? 'PAID' : 'PARTIALLY_PAID') : status;
@@ -465,7 +464,7 @@ async function main() {
       create: {
         ...invoicePayload, status: specStatus, partyId: party.id,
         subtotal: taxes.subtotal, cgst: taxes.cgst, sgst: taxes.sgst, igst: taxes.igst,
-        discount: inv.discount || 0, total,
+        discount: taxes.discount, total,
       },
     });
 
@@ -508,8 +507,8 @@ async function main() {
       prisma.invoiceLine.findMany({ where: { invoiceId: invoice.id } }),
       prisma.invoicePayment.aggregate({ where: { invoiceId: invoice.id }, _sum: { amount: true } }),
     ]);
-    const dbTaxes = calcTaxes(dbLines, !(Number(invoice.igst) > 0));
-    const dbTotal = round2(dbTaxes.total - Number(invoice.discount || 0));
+    const dbTaxes = calcTaxes(dbLines, !(Number(invoice.igst) > 0), invoice.discount || 0);
+    const { total: dbTotal } = roundInvoiceTotal(dbTaxes.total);
     const paid = round2(paidAgg._sum.amount || 0);
     await prisma.invoice.update({
       where: { id: invoice.id },
@@ -539,6 +538,10 @@ async function main() {
   console.log('Done. Login with admin@utech.local / Admin@123');
 }
 
-main()
-  .catch((e) => { console.error(e); process.exit(1); })
-  .finally(async () => { await prisma.$disconnect(); });
+if (require.main === module) {
+  main()
+    .catch((e) => { console.error(e); process.exit(1); })
+    .finally(async () => { await defaultPrisma.$disconnect(); });
+}
+
+module.exports = { seedDatabase: main };

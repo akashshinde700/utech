@@ -22,15 +22,16 @@ async function invoices(req, res) {
 
   const rows = await prisma.invoice.findMany({
     where,
-    include: { party: true, lines: true },
+    include: { party: true },
     orderBy: { date: 'desc' },
+    take: 5000,
   });
 
   const data = rows.map((r) => ({
     Number: r.number,
     Date: dayjs(r.date).format('DD-MM-YYYY'),
-    Party: r.party.name,
-    GSTIN: r.party.gstin || '',
+    Party: r.party ? r.party.name : '',
+    GSTIN: r.party ? (r.party.gstin || '') : '',
     Status: r.status,
     Subtotal: Number(r.subtotal),
     CGST: Number(r.cgst),
@@ -153,12 +154,12 @@ async function customerStock(req, res) {
   if (req.query.status) where.status = req.query.status;
   if (req.query.customerId) where.customerId = parseInt(req.query.customerId, 10);
   const rows = await prisma.customerMaterialLot.findMany({
-    where, include: { customer: true, item: true }, orderBy: { receivedDate: 'desc' },
+    where, include: { customer: true, item: true }, orderBy: { receivedDate: 'desc' }, take: 5000,
   });
   const data = rows.map((r) => ({
     'Inward No': r.inwardNumber,
     Date: dayjs(r.receivedDate).format('DD-MM-YYYY'),
-    Customer: r.customer.name,
+    Customer: r.customer ? r.customer.name : '',
     Material: r.materialDescription,
     Item: r.item ? r.item.name : '',
     'Heat No': r.heatNumber || '',
@@ -190,11 +191,11 @@ async function vendorStock(req, res) {
   });
   const data = lines
     .map((l) => ({
-      Vendor: l.challan.party.name,
-      Challan: l.challan.number,
-      Date: dayjs(l.challan.date).format('DD-MM-YYYY'),
-      Owner: l.challan.materialOwnerType,
-      'Customer Lot': l.challan.customerMaterialLot ? l.challan.customerMaterialLot.inwardNumber : '',
+      Vendor: l.challan?.party?.name || '',
+      Challan: l.challan?.number || '',
+      Date: dayjs(l.challan?.date).format('DD-MM-YYYY'),
+      Owner: l.challan?.materialOwnerType || '',
+      'Customer Lot': l.challan?.customerMaterialLot ? l.challan.customerMaterialLot.inwardNumber : '',
       Material: l.item ? l.item.name : (l.description || ''),
       Sent: Number(l.qtySent),
       Received: Number(l.qtyReceived),
