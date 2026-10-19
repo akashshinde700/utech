@@ -185,6 +185,15 @@ export default function UsersPage() {
       toast.error('Please fix the highlighted fields');
       return;
     }
+
+    // Check if the selected role requires a department
+    const selectedRole = roles.find((r) => String(r.id) === String(editing?.roleId));
+    const roleRequiresDepartment = selectedRole?.requiresDepartment === true;
+    if (roleRequiresDepartment && (!editing.departmentId || editing.departmentId === '')) {
+      setErrors((errs) => ({ ...errs, departmentId: 'Department is required for this role' }));
+      toast.error('Please select a department for this role');
+      return;
+    }
     setSaving(true);
     try {
       const payload = { ...editing };
