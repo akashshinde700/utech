@@ -27,7 +27,7 @@ export default function WorkUpdatesPanel({ jobcardId, editable }) {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [jobcardId]);
+  useEffect(() => { load(); }, [jobcardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submit(e) {
     e.preventDefault();
@@ -65,7 +65,7 @@ export default function WorkUpdatesPanel({ jobcardId, editable }) {
               value={body}
               onChange={(e) => setBody(e.target.value)}
             />
-            <button className={`${styles.primaryBtn} !px-3 shrink-0`} disabled={busy || !body.trim()} aria-label="Add update">
+            <button type="submit" className={`${styles.primaryBtn} !px-3 shrink-0`} disabled={busy || !body.trim()} aria-label="Add update">
               {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Send className="w-4 h-4" aria-hidden="true" />}
             </button>
           </div>

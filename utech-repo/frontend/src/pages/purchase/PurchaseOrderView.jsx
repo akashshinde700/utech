@@ -1,22 +1,91 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ShoppingCart, ListPlus, FileText, Plus } from 'lucide-react';
+import { ShoppingCart, ListPlus, FileText, Plus, Check, X } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import Badge from '../../components/ui/Badge';
 import FormSection from '../../components/ui/FormSection';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import Modal from '../../components/ui/Modal';
+import FormField from '../../components/ui/FormField';
+import { styles } from '../../lib/formStyles';
+import { hasPermission } from '../../lib/permissions';
+import { useAuth } from '../../store/auth';
 import { inr, date } from '../../lib/format';
+import toast from 'react-hot-toast';
 
 export default function PurchaseOrderView() {
   const { id } = useParams();
+  const user = useAuth((s) => s.user);
+  const canDecide = hasPermission(user, 'purchase.update');
   const [po, setPo] = useState(null);
-  useEffect(() => { api.get(`/purchase-orders/${id}`).then((r) => setPo(r.data)); }, [id]);
+  const [decision, setDecision] = useState(null); // 'approve' | 'reject'
+  const [rejectReason, setRejectReason] = useState('');
+  const [deciding, setDeciding] = useState(false);
+
+  const load = useCallback(() => {
+    api.get(`/purchase-orders/${id}`).then((r) => setPo(r.data));
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
   if (!po) return <div className="text-sm text-slate-500">Loading…</div>;
+
+  const canApproveOrReject = canDecide && ['DRAFT', 'PENDING_APPROVAL'].includes(po.status);
+  const canCreateGrn = ['APPROVED', 'PARTIALLY_RECEIVED'].includes(po.status);
+
+  async function handleApprove() {
+    setDeciding(true);
+    try {
+      await api.post(`/purchase-orders/${id}/approve`);
+      toast.success('Purchase order approved');
+      setDecision(null);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to approve PO');
+    } finally {
+      setDeciding(false);
+    }
+  }
+
+  async function handleReject() {
+    setDeciding(true);
+    try {
+      await api.post(`/purchase-orders/${id}/reject`, { reason: rejectReason.trim() });
+      toast.success('Purchase order rejected');
+      setDecision(null);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to reject PO');
+    } finally {
+      setDeciding(false);
+    }
+  }
 
   return (
     <div className="max-w-5xl space-y-5">
-      <PageHeader title={`PO ${po.number}`} subtitle={`${po.party?.name ?? '—'} • ${date(po.date)}`}
-        action={<Link to={`/grns/new?poId=${po.id}`} className="btn-primary"><Plus className="h-4 w-4" /> Create GRN</Link>} />
+      <PageHeader
+        title={`PO ${po.number}`}
+        subtitle={`${po.party?.name ?? '—'} • ${date(po.date)}`}
+        action={
+          <div className="flex items-center gap-2">
+            {canApproveOrReject && (
+              <>
+                <button type="button" className="btn-primary" onClick={() => setDecision('approve')}>
+                  <Check className="h-4 w-4" /> Approve
+                </button>
+                <button type="button" className="btn-danger" onClick={() => { setRejectReason(''); setDecision('reject'); }}>
+                  <X className="h-4 w-4" /> Reject
+                </button>
+              </>
+            )}
+            {canCreateGrn && (
+              <Link to={`/grns/new?poId=${po.id}`} className="btn-primary">
+                <Plus className="h-4 w-4" /> Create GRN
+              </Link>
+            )}
+          </div>
+        }
+      />
 
       <FormSection icon={ShoppingCart} title="PO Details" description={`Raised on ${date(po.date)} — current status shown below`}>
         <div className="flex items-start justify-between gap-4">
@@ -70,6 +139,48 @@ export default function PurchaseOrderView() {
           </ul>
         </FormSection>
       )}
+
+      <ConfirmDialog
+        open={decision === 'approve'}
+        onClose={() => setDecision(null)}
+        onConfirm={handleApprove}
+        title="Approve this purchase order?"
+        message={`${po.number || 'This PO'} will move to APPROVED and become open for goods receipts.`}
+        confirmLabel="Approve"
+        loading={deciding}
+      />
+
+      <Modal
+        open={decision === 'reject'}
+        onClose={() => setDecision(null)}
+        title="Reject this purchase order?"
+        description="The vendor request is cancelled — record why so the trail stays clear."
+        size="md"
+        footer={
+          <>
+            <button type="button" className={styles.secondaryBtn} onClick={() => setDecision(null)} disabled={deciding}>Cancel</button>
+            <button
+              type="button"
+              className={styles.dangerBtn}
+              disabled={deciding || !rejectReason.trim()}
+              onClick={handleReject}
+            >
+              Reject
+            </button>
+          </>
+        }
+      >
+        <FormField id="reject-reason" label="Rejection reason" required htmlFor="reject-reason">
+          <textarea
+            id="reject-reason"
+            className={styles.textarea}
+            placeholder="e.g. Wrong specification — needs re-quote"
+            value={rejectReason}
+            autoFocus
+            onChange={(e) => setRejectReason(e.target.value)}
+          />
+        </FormField>
+      </Modal>
     </div>
   );
 }

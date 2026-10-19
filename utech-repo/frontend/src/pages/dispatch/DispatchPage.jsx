@@ -29,7 +29,7 @@ export default function DispatchPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function setStatus(id, status) {
     try {

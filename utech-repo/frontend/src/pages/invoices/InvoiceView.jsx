@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { FileDown, ListPlus, Loader2, Pencil, ReceiptText, Wallet } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
@@ -15,7 +15,6 @@ import toast from 'react-hot-toast';
 
 export default function InvoiceView() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const [inv, setInv] = useState(null);
   const [pay, setPay] = useState(null); // payment dialog state
   const [payErrors, setPayErrors] = useState({});
@@ -23,7 +22,7 @@ export default function InvoiceView() {
   const [pdfBusy, setPdfBusy] = useState(false);
 
   async function load() { const r = await api.get(`/invoices/${id}`); setInv(r.data); }
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!inv) return <div className="text-sm text-slate-500">Loading…</div>;
 

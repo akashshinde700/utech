@@ -160,7 +160,7 @@ export default function InvoiceForm() {
       toast.error('Please fix the highlighted fields');
       return;
     }
-    if (form.lines.length === 0 || form.lines.every((l) => !l.itemId)) {
+    if (form.lines.length === 0) {
       toast.error('Please add at least one line item');
       return;
     }

@@ -71,7 +71,7 @@ export default function PdfViewerModal({
       .catch(() => { if (!cancelled) setError('Could not load this PDF — it may be corrupted.'); })
       .finally(() => { if (!cancelled) setLoadingDoc(false); });
     return () => { cancelled = true; };
-  }, [attachmentId]);
+  }, [attachmentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderPage = useCallback(async (n, sc, fit) => {
     if (!pdfDoc) return;

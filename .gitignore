@@ -12,6 +12,8 @@ utech-repo/**/uploads/
 dist/
 build/
 .next/
+**/test-results/
+**/playwright-report/
 
 # --- env files ---
 .env

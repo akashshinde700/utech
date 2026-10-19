@@ -86,7 +86,7 @@ export default function JobcardForm() {
       });
     });
     loadAttachments();
-  }, [id]);
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const partyOptions = useMemo(
     () => parties.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),

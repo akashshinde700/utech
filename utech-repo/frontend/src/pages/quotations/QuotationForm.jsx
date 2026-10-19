@@ -82,7 +82,7 @@ export default function QuotationForm() {
     setLines(response.lines || []);
   }
 
-  useEffect(() => { loadTemplates(); if (id) loadQuotation(); }, [id]);
+  useEffect(() => { loadTemplates(); if (id) loadQuotation(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   // the party list follows the quotation's kind (known only after load when editing)
   useEffect(() => { loadParties(); }, [qType]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -239,6 +239,10 @@ export default function QuotationForm() {
       setErrors(errs);
       setLineErrors(lErrs);
       toast.error('Please fix the highlighted fields');
+      return;
+    }
+    if (lines.length === 0) {
+      toast.error('Please add at least one line item');
       return;
     }
     setLoading(true);

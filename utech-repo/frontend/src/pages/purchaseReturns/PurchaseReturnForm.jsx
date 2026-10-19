@@ -117,7 +117,7 @@ export default function PurchaseReturnForm() {
     setItems(received);
   }
 
-  useEffect(() => { loadGrns(); loadPos(); loadParties(); if (id) loadReturn(); }, [id]);
+  useEffect(() => { loadGrns(); loadPos(); loadParties(); if (id) loadReturn(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (formData.grnId && !id) loadGrnLines(formData.grnId); }, [formData.grnId, id]);
   useEffect(() => { if (formData.poId && !id) loadPoLines(formData.poId); }, [formData.poId, id]);
 

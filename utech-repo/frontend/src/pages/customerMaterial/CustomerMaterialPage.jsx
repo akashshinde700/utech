@@ -32,7 +32,7 @@ export default function CustomerMaterialPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page, activeOnly]);
+  useEffect(() => { load(); }, [page, activeOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>

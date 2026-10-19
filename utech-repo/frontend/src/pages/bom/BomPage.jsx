@@ -27,7 +27,7 @@ export default function BomPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>

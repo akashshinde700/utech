@@ -49,7 +49,7 @@ export default function StockManagementPage() {
     setLedger(r.data);
   }
   useEffect(() => { loadSummary(); api.get('/items', { params: { pageSize: 300 } }).then((r) => setItems(r.data.items)); }, []);
-  useEffect(() => { loadLedger(); }, [ownerFilter]);
+  useEffect(() => { loadLedger(); }, [ownerFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const nf = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
   const cardValues = summary ? {

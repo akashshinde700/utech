@@ -52,7 +52,7 @@ export default function ExpensesPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [page, filter.category, filter.from, filter.to]);
+  useEffect(() => { load(); }, [page, filter.category, filter.from, filter.to]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { api.get('/parties', { params: { pageSize: 100 } }).then((r) => setParties(r.data.items)); }, []);
 
   const partyOptions = useMemo(

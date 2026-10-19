@@ -34,7 +34,7 @@ export default function PdfThumbnail({ attachmentId, className, onLoaded }) {
       })
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [attachmentId]);
+  }, [attachmentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (failed) {
     return (

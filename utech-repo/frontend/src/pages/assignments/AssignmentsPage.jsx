@@ -90,7 +90,7 @@ export default function AssignmentsPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, [tab, departmentFilter]);
+  useEffect(() => { load(); }, [tab, departmentFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function confirmCancel() {
     if (!cancelling) return;
