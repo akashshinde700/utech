@@ -51,8 +51,9 @@ const createJobcardSchema = z.object(baseJobcard);
 const updateJobcardSchema = partialNoDefaults(z.object({
   ...baseJobcard,
   status: z.enum(['DRAFT', 'IN_PROGRESS', 'ON_HOLD', 'REVERTED', 'COMPLETED', 'CANCELLED']).optional(),
-  qtyProduced: z.number().nonnegative().optional(),
-  qtyRejected: z.number().nonnegative().optional(),
+  // JC-02 / MFG-04: produced and rejected quantities are derived from the
+  // project's completed production batches (services/productionOutput.js),
+  // so they are deliberately not accepted here — Zod strips them.
 }));
 
 const revertSchema = z.object({ reason: z.string().min(2) });

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, ShieldCheck, Trash2, ClipboardCheck, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, ShieldCheck, Trash2, ClipboardCheck, Loader2, Printer } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import DataTable from '../../components/ui/DataTable';
@@ -33,6 +34,7 @@ const empty = {
 };
 
 export default function QualityPage() {
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [data, setData] = useState({ items: [], pagination: null });
   const [editing, setEditing] = useState(null);
@@ -166,6 +168,16 @@ export default function QualityPage() {
           { key: 'certificateNo', title: 'Cert No' },
           { key: 'inspectorName', title: 'Inspector' },
           { key: '__act', title: '', render: (r) => (
+            <>
+            <button
+              type="button"
+              aria-label={`Certificate for ${r.number}`}
+              title="Inspection certificate"
+              className={`${styles.ghostBtn} !px-2 !py-1`}
+              onClick={() => navigate(`/quality/${r.id}/certificate`)}
+            >
+              <Printer className="w-3.5 h-3.5" />
+            </button>
             <button
               type="button"
               aria-label={`Delete ${r.number}`}
@@ -174,6 +186,7 @@ export default function QualityPage() {
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
+            </>
           ) },
         ]}
       />

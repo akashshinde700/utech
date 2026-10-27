@@ -65,6 +65,7 @@ import DepartmentsPage from './pages/departments/DepartmentsPage.jsx';
 import AssignmentsPage from './pages/assignments/AssignmentsPage.jsx';
 import DepartmentSubCategoryPage from './pages/departments/DepartmentSubCategoryPage.jsx';
 import { useAuth } from './store/auth';
+import QualityCertificate from './pages/quality/QualityCertificate.jsx';
 
 // operators, project engineers, and department-scoped roles (Department
 // Head and anyone under them — any role with scopeToDepartment set) only
@@ -203,6 +204,7 @@ export default function App() {
         <Route path="grns/:id" element={<GRNView />} />
 
         <Route path="quality" element={<QualityPage />} />
+        <Route path="quality/:id/certificate" element={<QualityCertificate />} />
 
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:id" element={<ProjectView />} />

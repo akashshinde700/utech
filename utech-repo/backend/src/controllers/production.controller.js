@@ -5,6 +5,7 @@ const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
+const productionOutput = require('../services/productionOutput');
 const { dateRangeFilter } = require('../utils/dates');
 
 const PRODUCTION_INCLUDE = {
@@ -223,6 +224,11 @@ async function completeBatch(req, res) {
       notes: `Production batch ${existing.number}`, skipAudit: true,
     });
 
+    // MFG-05: rejected pieces are written off to the scrap register
+    await productionOutput.postScrapWriteOff(tx, stockService, {
+      batch: existing, qtyRejected, date: new Date(),
+    });
+
     // Deduct material consumption from stock
     for (const material of existing.materialConsumptions) {
       // Actual usage is authoritative, including an explicit zero. Planned
@@ -238,6 +244,8 @@ async function completeBatch(req, res) {
 
     const updated = await tx.productionBatch.findUnique({ where: { id }, include: PRODUCTION_INCLUDE });
     
+    // MFG-04: the job card's produced/rejected totals come from its batches
+    await productionOutput.syncJobcardOutput(tx, existing.jobcardId);
     await audit(req, 'complete', 'ProductionBatch', id, { number: updated.number, qtyProduced, qtyRejected }, tx);
     return updated;
   });

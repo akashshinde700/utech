@@ -39,8 +39,15 @@ describe('AUD-212 — update schemas never re-inject defaults', () => {
   });
 
   it('still validates the fields that ARE sent', () => {
-    expect(updateJobcardSchema.safeParse({ qtyProduced: -1 }).success).toBe(false);
+    expect(updateJobcardSchema.safeParse({ qtyOrdered: -1 }).success).toBe(false);
     expect(updateJobcardSchema.parse({ remarks: 'hi' })).toEqual({ remarks: 'hi' });
+  });
+
+  // MFG-04/JC-02: produced + rejected are derived from the completed
+  // production batches, so an edit may no longer set them by hand
+  it('drops produced/rejected quantities from a job-card edit', () => {
+    expect(updateJobcardSchema.parse({ remarks: 'hi', qtyProduced: 99, qtyRejected: 5 }))
+      .toEqual({ remarks: 'hi' });
   });
 
   it('create payloads keep their defaults', () => {

@@ -202,6 +202,15 @@ it('prevents new or reopened drawing assignments after job-card completion', asy
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   expect((await auth(request(app).post(`/api/jobcards/${id}/complete`))).status).toBe(400);
   await db.assignment.update({ where: { id: created.body.id }, data: { status: 'COMPLETED' } });
+  // MFG-04 + QC-02: completion now also needs recorded production output and a
+  // passed quality check. This test is about assignments, so satisfy both
+  // directly instead of running a whole production batch through the API.
+  expect((await auth(request(app).post(`/api/jobcards/${id}/complete`))).status).toBe(400);
+  await db.jobcard.update({ where: { id }, data: { qtyProduced: 5 } });
+  expect((await auth(request(app).post(`/api/jobcards/${id}/complete`))).status).toBe(400);
+  await db.qualityCheck.create({ data: {
+    number: `QC-COMPLETE-${id}`, date: new Date(), refType: 'JOBCARD', refId: id, result: 'PASS',
+  } });
   expect((await auth(request(app).post(`/api/jobcards/${id}/complete`))).status).toBe(200);
   expect((await auth(request(app).post(`/api/assignments/${created.body.id}/reopen`)).send({ reason: 'Needs work' })).status).toBe(400);
   expect((await auth(request(app).post('/api/assignments')).send({ attachmentId: attachment.id, assignedToId: admin.id, pageNumbers: [2] })).status).toBe(400);

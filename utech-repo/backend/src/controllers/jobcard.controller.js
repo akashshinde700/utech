@@ -11,6 +11,7 @@ const { effectiveChecklist, computeProgress, validateChecklistPayload } = requir
 const env = require('../config/env');
 const { hasAssignmentAccess, assertJobcardAccess, jobcardIdsAssignedTo } = require('../utils/jobcardAccess');
 const { lockJobcard } = require('../utils/transactionLocks');
+const productionOutput = require('../services/productionOutput');
 
 const uploadBaseDir = path.resolve(env.UPLOAD_DIR);
 
@@ -389,6 +390,14 @@ async function complete(req, res) {
       const detail = Object.entries(byDept).map(([name, n]) => `${name} (${n})`).join(', ');
       throw new HttpError(400, `${openAssignments.length} assignment(s) are still open — ${detail}. Every department must finish its pages before the project can be completed.`);
     }
+    // MFG-04: a project is finished only once something was actually produced.
+    // The figure comes from its completed production batches, never typed in.
+    if (!(Number(current.qtyProduced || 0) > 0)) {
+      throw new HttpError(400, 'No production recorded yet — complete at least one production batch for this project before closing it');
+    }
+    // QC-02: ...and once every quality check on it has passed
+    await productionOutput.assertQualityPassed(tx, id);
+
     return tx.jobcard.update({ where: { id }, data: { status: 'COMPLETED', workStatus: 'COMPLETED' }, include: INCLUDE });
   }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'complete', 'Jobcard', id);
