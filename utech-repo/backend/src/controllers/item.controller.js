@@ -1,7 +1,7 @@
 'use strict';
 const prisma = require('../config/prisma');
 const HttpError = require('../utils/httpError');
-const { weightFromSize, kindFor } = require('../utils/materialWeight');
+const { weightForItem, shapeFromSize } = require('../utils/materialWeight');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextCode } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
@@ -58,11 +58,26 @@ async function get(req, res) {
 // never disagree: a client may send a weight, it is recomputed anyway.
 // Unknown size or a family with no agreed formula (pipe, flange) -> null.
 function withDerivedWeight(data, existing = {}) {
-  const size = data.size !== undefined ? data.size : existing.size;
-  const name = data.name !== undefined ? data.name : existing.name;
-  const kind = kindFor({ size, name });
-  const weight = kind ? weightFromSize(size, kind) : null;
+  const pick = (k) => (data[k] !== undefined ? data[k] : existing[k]);
+  const weight = weightForItem({ size: pick('size'), name: pick('name'), metal: pick('metal') });
   return { ...data, weightKg: weight ? weight.kg : null };
+}
+
+// What the item form shows while someone is typing: the shape the size was
+// read as, and the weight the metal calculator gives it. Parsing stays on the
+// server so the form and the saved row can never disagree.
+async function weightPreview(req, res) {
+  const { size, name, metal } = req.body;
+  const parsed = shapeFromSize(size, name || '');
+  const weight = weightForItem({ size, name: name || '', metal });
+  res.json({
+    shape: parsed ? parsed.shape : null,
+    note: parsed ? parsed.note : null,
+    weightKg: weight ? weight.kg : null,
+    reason: weight ? null
+      : !parsed ? 'size-unreadable'
+        : !metal ? 'metal-missing' : 'not-calculable',
+  });
 }
 
 async function create(req, res) {
@@ -101,7 +116,7 @@ async function update(req, res) {
   // seeds currentStock) — changing it later would desync the ledger, so it is
   // never editable through a plain item edit.
   const { openingStock, ...rest } = req.body;
-  const existing = await prisma.item.findUnique({ where: { id }, select: { size: true, name: true } });
+  const existing = await prisma.item.findUnique({ where: { id }, select: { size: true, name: true, metal: true } });
   if (!existing) throw new HttpError(404, 'Item not found');
   const data = withDerivedWeight(rest, existing);
   const item = await prisma.item.update({ where: { id }, data });
@@ -133,4 +148,4 @@ async function lookupUomAndCategory(_req, res) {
   res.json({ uoms, categories });
 }
 
-module.exports = { list, get, create, update, remove, stockHistory, lookupUomAndCategory };
+module.exports = { list, get, create, update, remove, stockHistory, lookupUomAndCategory, weightPreview};

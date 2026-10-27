@@ -10,6 +10,8 @@ router.use(requireAuth);
 
 router.get('/lookups', requirePermission('item.read'), ah(ctrl.lookupUomAndCategory));
 router.get('/', requirePermission('item.read'), ah(ctrl.list));
+// live weight for the item form — reads nothing, writes nothing
+router.post('/weight-preview', requirePermission('item.read'), ah(ctrl.weightPreview));
 router.get('/:id', requirePermission('item.read'), ah(ctrl.get));
 router.get('/:id/stock', requirePermission('item.read'), ah(ctrl.stockHistory));
 router.post('/', requirePermission('item.create'), validate(createItemSchema), ah(ctrl.create));

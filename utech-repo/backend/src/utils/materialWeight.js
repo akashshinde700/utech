@@ -1,97 +1,122 @@
 'use strict';
 
 /**
- * MATERIAL WEIGHT FROM SIZE — the shop's own formulas (supplied 27 Oct 2026):
+ * MATERIAL WEIGHT FOR AN ITEM
  *
- *   Plate : Width × Length × Thickness × 0.0000085
- *   Round : Ø × Ø × Length × 0.0000065        (hex bar is measured the same way)
+ * The maths lives in ONE place: services/metalCalculator.js (volume × the
+ * metal's own density). This file only reads the stock register's free-text
+ * size — "OD 60 X 5 mtr.", "1500 x 3000 x 12 th", "OD 60.3 X ID 54 X 6 MTR",
+ * "8' x 4' x 3 MM" — and turns it into the shape + dimensions that engine
+ * expects, so an item and the calculator page can never disagree.
  *
- * Every dimension is in millimetres and the result is kilograms. The factors
- * are the plant's, not a textbook's — keep them here, in one place, so a change
- * is a one-line change. Pipe and flange have no agreed formula yet, so their
- * weight is deliberately left unknown rather than guessed.
+ * An item therefore needs its metal to have a weight: density is what turns a
+ * volume into kilograms. Without it the weight stays unknown rather than being
+ * guessed from an average steel.
  */
 
-const FACTORS = { plate: 0.0000085, round: 0.0000065 };
+const { calculate, metalByName } = require('../services/metalCalculator');
 
-// "OD 60 X 5 mtr." / "8' x 4' x 3 MM" / "1500 x 3000 x 12 th" — the register
-// mixes millimetres, metres and feet, so a unit that travels with a number wins
-// over the default.
-const MM_PER = { mm: 1, m: 1000, mtr: 1000, meter: 1000, metre: 1000, ft: 304.8, feet: 304.8, foot: 304.8, "'": 304.8, '"': 25.4, in: 25.4, inch: 25.4 };
+// the register writes millimetres, metres and feet in the same column
+const MM_PER = {
+  mm: 1, m: 1000, mtr: 1000, mtrs: 1000, meter: 1000, metre: 1000, meters: 1000, metres: 1000,
+  ft: 304.8, feet: 304.8, foot: 304.8, "'": 304.8,
+  '"': 25.4, in: 25.4, inch: 25.4, inches: 25.4,
+};
+
+// (60.3 - 54) / 2 is 3.1499999999999986 in binary floating point; a wall
+// thickness is a measurement, so keep it to a sane number of decimals
+const mm4 = (n) => Math.round(n * 10000) / 10000;
 
 function parseDimensions(size) {
   if (!size) return [];
-  const text = String(size).toLowerCase();
   const out = [];
-  // a number, then anything up to the next number: the unit, if one was written
   const re = /([0-9]+(?:\.[0-9]+)?)\s*([a-z'"]*)/g;
   let m;
-  while ((m = re.exec(text)) !== null) {
+  while ((m = re.exec(String(size).toLowerCase())) !== null) {
     const value = Number(m[1]);
-    if (!Number.isFinite(value)) continue;
+    if (!Number.isFinite(value) || value <= 0) continue;
     const unit = (m[2] || '').replace(/[^a-z'"]/g, '');
-    out.push({ value, unit });
+    out.push({ value, mm: value * (MM_PER[unit] || 1) });
   }
   return out;
 }
 
-// Dimensions are millimetres unless the number carried its own unit. A trailing
-// unit on the LAST number (e.g. "OD 60 X 5 mtr.") applies only to that number.
-function toMm(dim, fallbackUnit) {
-  const unit = dim.unit || fallbackUnit || 'mm';
-  const factor = MM_PER[unit];
-  return factor ? dim.value * factor : dim.value;
+/**
+ * Which calculator shape this item is, and the dimensions to feed it.
+ * @returns {{ shape: string, values: object, note: string } | null}
+ */
+function shapeFromSize(size, name = '') {
+  const text = `${name} ${size || ''}`.toLowerCase();
+  const d = parseDimensions(size);
+  if (!d.length) return null;
+
+  const hasBore = /\bid\b|inner|bore/.test(text);
+  const isPipe = /pipe|tube/.test(text);
+  const isFlange = /flange/.test(text);
+  const isHex = /hex/.test(text);
+  const isPlate = /plate|sheet|\bth\b|thk/.test(text);
+
+  // pipe: OD, ID and a length -> the engine wants wall thickness
+  if ((isPipe || (hasBore && !isFlange)) && d.length >= 3) {
+    const [od, id, len] = [d[0].mm, d[1].mm, d[2].mm];
+    if (od <= id) return null;
+    const wall = mm4((od - id) / 2);
+    return { shape: 'pipe', values: { od, t: wall, L: len }, note: `wall ${wall} mm from OD ${od} − ID ${id}` };
+  }
+
+  // a flange is a disc: solid (OD × thickness) or with a bore (OD × ID × thickness)
+  if (isFlange) {
+    if (hasBore && d.length >= 3) {
+      const [od, id, th] = [d[0].mm, d[1].mm, d[2].mm];
+      if (od <= id) return null;
+      return { shape: 'pipe', values: { od, t: mm4((od - id) / 2), L: th }, note: `disc OD ${od} with ${id} bore, ${th} thick` };
+    }
+    if (d.length >= 2) {
+      return { shape: 'roundbar', values: { d: d[0].mm, L: d[1].mm }, note: `solid disc OD ${d[0].mm}, ${d[1].mm} thick` };
+    }
+    return null;
+  }
+
+  if (isHex && d.length >= 2) {
+    // the register's hex size is across flats, which is what the engine wants
+    return { shape: 'hexagon', values: { af: d[0].mm, L: d[d.length - 1].mm }, note: 'across flats' };
+  }
+
+  if (isPlate && d.length >= 3) {
+    return { shape: 'sheet', values: { w: d[0].mm, b: d[1].mm, t: d[2].mm }, note: '' };
+  }
+
+  // round bar: a diameter and a length
+  if (/round|\bod\b|\bø|dia/.test(text) && d.length >= 2) {
+    return { shape: 'roundbar', values: { d: d[0].mm, L: d[d.length - 1].mm }, note: '' };
+  }
+
+  return null;
 }
 
 /**
- * @returns {{ kg: number, formula: string, dimensionsMm: number[] } | null}
- *          null when the size cannot be read with the agreed formulas.
+ * Weight of ONE piece, in kg, using the metal calculator.
+ * @returns {{ kg: number, shape: string, metal: string, note: string } | null}
  */
-function weightFromSize(size, kind) {
-  const dims = parseDimensions(size);
-  if (!dims.length) return null;
-
-  if (kind === 'plate') {
-    if (dims.length < 3) return null;
-    const [w, l, t] = dims.slice(0, 3).map((d) => toMm(d));
-    if (![w, l, t].every((n) => n > 0)) return null;
-    return {
-      kg: round3(w * l * t * FACTORS.plate),
-      formula: `${w} × ${l} × ${t} × ${FACTORS.plate}`,
-      dimensionsMm: [w, l, t],
-    };
+function weightForItem({ size, name, metal } = {}) {
+  if (!metal || !metalByName(metal)) return null;
+  const parsed = shapeFromSize(size, name);
+  if (!parsed) return null;
+  try {
+    const r = calculate({
+      shape: parsed.shape,
+      metal,
+      unit: 'mm',
+      weightUnit: 'kg',
+      pieces: 1,
+      values: parsed.values,
+    });
+    return { kg: r.pieceWeightKg, shape: parsed.shape, metal, note: parsed.note };
+  } catch {
+    // an unreadable size is not an error the caller has to handle — it simply
+    // has no weight yet
+    return null;
   }
-
-  if (kind === 'round') {
-    // "OD 60 X 5 mtr." and "Hex 38 X 8 mtr." are both diameter-then-length.
-    // A size that also states an inner diameter (a pipe) is not a round bar.
-    if (dims.length < 2) return null;
-    const d = toMm(dims[0]);
-    const l = toMm(dims[dims.length - 1]);
-    if (!(d > 0 && l > 0)) return null;
-    return {
-      kg: round3(d * d * l * FACTORS.round),
-      formula: `${d} × ${d} × ${l} × ${FACTORS.round}`,
-      dimensionsMm: [d, l],
-    };
-  }
-
-  return null;
 }
 
-// Which formula a given item is measured by. Anything else (pipe, flange,
-// bought-out parts) has no agreed formula and stays unknown.
-function kindFor({ size, name, categoryName } = {}) {
-  const text = `${name || ''} ${categoryName || ''} ${size || ''}`.toLowerCase();
-  // pipe and flange have no agreed formula — never fall through to 'plate'
-  if (/\bid\b|inner|pipe|tube|flange/.test(text)) return null;
-  if (/plate|sheet|\bth\b|thk|thickness/.test(text)) return 'plate';
-  if (/round|\bod\b|hex|bar|\bø/.test(text)) return 'round';
-  return null;
-}
-
-function round3(n) {
-  return Math.round(n * 1000) / 1000;
-}
-
-module.exports = { FACTORS, parseDimensions, weightFromSize, kindFor };
+module.exports = { parseDimensions, shapeFromSize, weightForItem };

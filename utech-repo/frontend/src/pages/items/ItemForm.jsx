@@ -9,11 +9,11 @@ import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
 import { gstRate, hsn, positiveNumber, required, validateAll } from '../../lib/validation';
 import toast from 'react-hot-toast';
-import { kindFor, weightFromSize } from '../../lib/materialWeight';
+
 
 const empty = {
   name: '', description: '', type: 'RAW_MATERIAL', size: '', hsnCode: '', projectNumber: '', projectId: '',
-  purchaseRate: '', ratePerKg: '', saleRate: '', gstRate: 18,
+  purchaseRate: '', ratePerKg: '', saleRate: '', gstRate: 18, metal: '',
   openingStock: 0, minStock: 0,
   uomId: '', categoryId: '',
 };
@@ -21,7 +21,7 @@ const empty = {
 const FIELD_IDS = {
   name: 'item-name', description: 'item-description', type: 'item-type', size: 'item-size', hsnCode: 'item-hsn',
   projectNumber: 'item-project', projectId: 'item-project-link', uomId: 'item-uom', categoryId: 'item-category',
-  purchaseRate: 'item-purchase-rate', ratePerKg: 'item-rate-per-kg', saleRate: 'item-sale-rate', gstRate: 'item-gst-rate',
+  purchaseRate: 'item-purchase-rate', ratePerKg: 'item-rate-per-kg', saleRate: 'item-sale-rate', gstRate: 'item-gst-rate', metal: 'item-metal',
   openingStock: 'item-opening-stock', minStock: 'item-min-stock',
 };
 
@@ -126,13 +126,28 @@ export default function ItemForm() {
   }
 
   const err = (k) => errors[k] ? `${styles.inputError}` : '';
-  // live weight from the size typed above, using the plant's formulas
-  const weight = (() => {
-    const kind = kindFor({ size: form.size, name: form.name });
-    return kind ? weightFromSize(form.size, kind) : null;
-  })();
-  const computedRate = weight && form.ratePerKg !== '' && form.ratePerKg != null && Number(form.ratePerKg) > 0
-    ? weight.kg * Number(form.ratePerKg)
+  // The weight comes from the metal calculator on the server: one engine for
+  // the calculator page and for every item, so they can never disagree.
+  const [metals, setMetals] = useState([]);
+  const [weight, setWeight] = useState(null);
+  useEffect(() => {
+    api.get('/metal-calculator/catalog')
+      .then((r) => setMetals(r.data.metals || []))
+      .catch(() => setMetals([]));
+  }, []);
+  useEffect(() => {
+    if (!form.size) { setWeight(null); return undefined; }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      api.post('/items/weight-preview', { size: form.size, name: form.name, metal: form.metal || null })
+        .then((r) => !cancelled && setWeight(r.data))
+        .catch(() => !cancelled && setWeight(null));
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [form.size, form.name, form.metal]);
+
+  const computedRate = weight?.weightKg && form.ratePerKg !== '' && form.ratePerKg != null && Number(form.ratePerKg) > 0
+    ? weight.weightKg * Number(form.ratePerKg)
     : null;
 
   const errCls = (k) => `${styles.input} ${err(k)}`;
@@ -205,11 +220,13 @@ export default function ItemForm() {
           {/* weight comes from the size with the plant's own formulas; rate per
               kg then gives the purchase rate — one tap, never silently */}
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
-            {weight ? (
+            {weight?.weightKg ? (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span className="text-slate-700">
-                  Weight <span className="font-semibold tabular-nums">{weight.kg} kg</span>
-                  <span className="ml-1 text-xs text-slate-400">({weight.formula})</span>
+                  Weight <span className="font-semibold tabular-nums">{weight.weightKg} kg</span>
+                  <span className="ml-1 text-xs text-slate-400">
+                    ({form.metal} · read as {weight.shape}{weight.note ? `, ${weight.note}` : ''})
+                  </span>
                 </span>
                 {computedRate != null && (
                   <>
@@ -228,13 +245,20 @@ export default function ItemForm() {
               </div>
             ) : (
               <span className="text-slate-500">
-                {form.size
-                  ? 'No weight formula for this material — only plate (W × L × T × 0.0000085) and round/hex (Ø × Ø × L × 0.0000065) are calculated.'
-                  : 'Enter a material size above to calculate the weight.'}
+                {!form.size ? 'Enter a material size above to calculate the weight.'
+                  : weight?.reason === 'metal-missing' ? 'Pick the metal below — density is what turns the size into a weight.'
+                    : weight?.reason === 'size-unreadable' ? 'This size could not be read as a round bar, hex, pipe, plate or flange.'
+                      : 'Weight cannot be calculated for this size yet.'}
               </span>
             )}
           </div>
           <div className={styles.formGrid3}>
+            <FormField id="item-metal" label="Metal" hint="Density for the weight — same catalogue as the Metal Calculator">
+              <select id="item-metal" className={errCls('metal')} value={form.metal || ''} onChange={(e) => set('metal', e.target.value)}>
+                <option value="">— not set —</option>
+                {metals.map((m) => <option key={m.name} value={m.name}>{m.name} ({m.density} g/cm³)</option>)}
+              </select>
+            </FormField>
             <FormField id="item-rate-per-kg" label="Rate per kg" hint="₹ — used with the weight above" error={errors.ratePerKg}>
               <input id="item-rate-per-kg" type="number" step="0.01" min="0" className={errCls('ratePerKg')} value={form.ratePerKg ?? ''} onChange={(e) => set('ratePerKg', e.target.value)} />
             </FormField>

@@ -1,5 +1,23 @@
 'use strict';
-const { weightFromSize, kindFor } = require('../src/utils/materialWeight');
+const { weightForItem } = require('../src/utils/materialWeight');
+
+// The register's grade column -> the metal calculator's catalogue, which is
+// where density comes from. A grade with no close match stays unmapped: the
+// item then carries no weight until someone picks its metal, which is better
+// than weighing it as some average steel.
+const GRADE_TO_METAL = {
+  MS: 'Steel',
+  '20MNCR5': 'Steel',
+  'CORTON-B': 'Steel',
+  SS304: 'SS 304/310',
+  SS310: 'SS 304/310',
+  SS321: 'SS 316/321',
+  SS410: 'SS 410/430',
+  SS416: 'SS 410/430',
+  SS446: 'SS 410/430',
+  BRASS: 'Brass',
+  RA330: 'SS 316/321', // RA330 is 7.94 g/cm3, the same as SS 316/321
+};
 
 /**
  * COMPANY MATERIAL INVENTORY — imported from the four stock sheets supplied in
@@ -275,9 +293,13 @@ function buildItems() {
         source: sheet.source,
         lineNo: row.no,
         size: row.size,
+        metal: GRADE_TO_METAL[gCode] || null,
         weightKg: (() => {
-          const kind = kindFor({ size: row.size, name: `${SHORT_NAMES[sheet.key]} ${row.size}` });
-          const w = kind ? weightFromSize(row.size, kind) : null;
+          const w = weightForItem({
+            size: row.size,
+            name: `${SHORT_NAMES[sheet.key]} ${row.size}`,
+            metal: GRADE_TO_METAL[gCode] || null,
+          });
           return w ? w.kg : null;
         })(),
         qty: Number(row.qty),
@@ -464,6 +486,7 @@ async function seedCompanyInventory(prisma, { now = () => new Date(), log = () =
       // adds information without changing any number.
       const fill = {};
       if (!existing.size && item.size) fill.size = item.size;
+      if (!existing.metal && item.metal) fill.metal = item.metal;
       // weight follows the size; filling a blank adds information only
       if (existing.weightKg == null && item.weightKg != null) fill.weightKg = item.weightKg;
       if (Object.keys(fill).length) {
@@ -483,6 +506,7 @@ async function seedCompanyInventory(prisma, { now = () => new Date(), log = () =
           description: item.description,
           type: 'RAW_MATERIAL',
           size: item.size,
+          metal: item.metal,
           weightKg: item.weightKg,
           hsnCode: item.hsnCode,
           purchaseRate: item.rate,

@@ -88,6 +88,7 @@ export default function ItemsPage() {
             { key: 'code', title: 'Code', width: 90 },
             { key: 'name', title: 'Name' },
             { key: 'size', title: 'Size', render: (r) => r.size || '—' },
+            { key: 'metal', title: 'Metal', render: (r) => r.metal || '—' },
             { key: 'weightKg', title: 'Weight', render: (r) => (r.weightKg != null ? `${quantity(r.weightKg)} kg` : '—') },
             { key: 'project', title: 'Project', render: (r) => r.project?.code || r.projectNumber || '—' },
             { key: 'type', title: 'Type' },
