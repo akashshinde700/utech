@@ -96,7 +96,14 @@ function buildLines(lines) {
 // Recompute every stored money field for a set of lines + discount + tax split.
 function computeInvoiceTotals(lines, isIntraState, discount) {
   const t = calcTaxes(lines, isIntraState, discount);
+  // The UI already refuses excess discount; API clients must not have it
+  // silently changed to the subtotal either.
+  if (Number(discount) > t.subtotal) throw new HttpError(400, 'Discount cannot exceed the subtotal');
   const { total, roundOff } = roundInvoiceTotal(t.total);
+  const maxMoney = 999999999999.99; // DECIMAL(14,2)
+  if ([t.subtotal, t.cgst, t.sgst, t.igst, t.total, total].some((n) => !Number.isFinite(n) || n > maxMoney)) {
+    throw new HttpError(400, 'Invoice amount exceeds the supported money limit');
+  }
   return {
     subtotal: t.subtotal,
     cgst: t.cgst,

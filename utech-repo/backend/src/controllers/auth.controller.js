@@ -83,7 +83,7 @@ async function changePassword(req, res) {
   res.json({ ok: true });
 }
 
-// --- OTP scaffold (no email sending wired by default — logs to console) ---
+// --- OTP scaffold (production delivery is not yet wired) ---
 
 function generateOtp() {
   // cryptographically random 6-digit code — Math.random() is predictable
@@ -107,12 +107,8 @@ async function requestOtp(req, res) {
     data: { email, code, purpose, expiresAt, userId: user ? user.id : null },
   });
 
-  // TODO: integrate nodemailer / SMS provider here.
-  // For now, log in dev only so QA can test — OTPs must never hit production logs.
-  if (env.NODE_ENV !== 'production') {
-    console.log(`[OTP] ${purpose} for ${email}: ${code}`);
-  }
-
+  // TODO: integrate an approved email/SMS provider. Development clients may
+  // use the explicit devCode response; never write one-time credentials to logs.
   res.json({ ok: true, devCode: env.NODE_ENV !== 'production' ? code : undefined });
 }
 

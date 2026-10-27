@@ -7,7 +7,9 @@ import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
 import FormField from '../../components/ui/FormField';
 import { styles } from '../../lib/formStyles';
-import { positiveNumber, validateAll } from '../../lib/validation';
+import { validateAll } from '../../lib/validation';
+import { numericPrecision, trackedQuantity } from '../../lib/quantityValidation';
+import CustomerMaterialAllocations from './CustomerMaterialAllocations';
 import { date, datetime } from '../../lib/format';
 import toast from 'react-hot-toast';
 
@@ -25,6 +27,7 @@ export default function CustomerMaterialView() {
   const [acting, setActing] = useState(null);
   const [actingBusy, setActingBusy] = useState(false);
   const [qty, setQty] = useState('');
+  const [weight, setWeight] = useState('');
   const [notes, setNotes] = useState('');
   const [errors, setErrors] = useState({});
 
@@ -33,19 +36,26 @@ export default function CustomerMaterialView() {
 
   function openAction(action) {
     setActing(action);
-    setQty(String(lot.availableQty));
+    setQty(String(lot.unallocatedQty));
+    setWeight('');
     setNotes('');
     setErrors({});
   }
 
   async function runAction() {
     if (!acting) return;
-    const { errors: nextErrors, ok } = validateAll({ qty }, {
+    const { errors: nextErrors, ok } = validateAll({ qty, weight }, {
       qty: (v) => {
-        const base = positiveNumber(v, 'Quantity');
+        const base = trackedQuantity(v, 'Quantity');
         if (base) return base;
-        if (Number(v) > Number(lot.availableQty)) return `Quantity cannot exceed available ${Number(lot.availableQty)}`;
+        if (Number(v) > Number(lot.unallocatedQty)) return `Quantity cannot exceed unallocated ${Number(lot.unallocatedQty)}`;
         return null;
+      },
+      weight: (v) => {
+        const s = String(v ?? '').trim();
+        if (!s) return null;
+        if (!Number.isFinite(Number(s)) || Number(s) < 0) return 'Weight must be 0 or more';
+        return numericPrecision(s, 'Weight', 3, '99999999999.999');
       },
     });
     if (!ok) {
@@ -55,13 +65,15 @@ export default function CustomerMaterialView() {
     }
     setActingBusy(true);
     try {
-      await api.post(`/customer-material/${id}/${acting.endpoint}`, { qty: Number(qty), notes: notes || null });
+      await api.post(`/customer-material/${id}/${acting.endpoint}`, {
+        qty: Number(qty), ...(String(weight).trim() !== '' ? { weight: Number(weight) } : {}), notes: notes || null,
+      });
       toast.success('Updated');
-      setActing(null); setQty(''); setNotes('');
+      setActing(null); setQty(''); setWeight(''); setNotes('');
       load();
     } catch (err) {
       console.error(err);
-      toast.error(err.response?.data?.message || 'Failed to record movement');
+      toast.error(err.response && err.response.status < 500 ? (err.response.data?.message || 'Failed to record movement') : 'Movement result is uncertain. Refresh and verify before retrying.');
     } finally {
       setActingBusy(false);
     }
@@ -99,8 +111,8 @@ export default function CustomerMaterialView() {
         <div className="grid grid-cols-3 gap-4">
           {[
             { label: 'Original Qty', value: Number(lot.qty) },
-            { label: 'Available', value: Number(lot.availableQty), color: 'text-success-600' },
-            { label: 'Weight', value: lot.weight != null ? Number(lot.weight) : '—' },
+            { label: 'On-hand Qty', value: Number(lot.availableQty), color: 'text-success-600' },
+            { label: 'Inward Weight', value: lot.weight != null ? Number(lot.weight) : '—' },
           ].map((s) => (
             <div key={s.label} className="bg-slate-50 rounded-xl p-4 border border-slate-100 text-center">
               <div className={`text-2xl font-bold tabular-nums ${s.color || 'text-slate-800'}`}>{s.value}</div>
@@ -108,6 +120,7 @@ export default function CustomerMaterialView() {
             </div>
           ))}
         </div>
+        <p className="text-xs text-slate-500">Inward weight is the original value. On-hand and unallocated balances are shown separately below.</p>
 
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div><div className="label mb-0.5">Heat Number</div><div className="text-slate-800">{lot.heatNumber || '—'}</div></div>
@@ -117,6 +130,8 @@ export default function CustomerMaterialView() {
           <div><div className="label mb-0.5">Job Card</div><div className="text-slate-800">{lot.jobcard?.number || '—'}</div></div>
           <div><div className="label mb-0.5">Catalog Item</div><div className="text-slate-800">{lot.item?.name || '—'}</div></div>
         </div>
+
+        <CustomerMaterialAllocations key={lot.id} lot={lot} onChange={load} />
 
         {canAct && (
           <div>
@@ -167,7 +182,7 @@ export default function CustomerMaterialView() {
           open
           onClose={() => setActing(null)}
           title={acting.label}
-          description={`Available quantity: ${Number(lot.availableQty)} ${lot.uomCode || ''}`.trim()}
+          description={`Unallocated quantity: ${Number(lot.unallocatedQty)} ${lot.uomCode || ''}. Enter measured outgoing weight to keep the weight balance known.`.trim()}
           size="md"
           footer={
             <>
@@ -185,13 +200,16 @@ export default function CustomerMaterialView() {
                 id="cm-action-qty"
                 type="number"
                 step="0.001"
-                max={lot.availableQty}
+                max={lot.unallocatedQty}
                 className={`${styles.input} tabular-nums ${errors.qty ? styles.inputError : ''}`}
                 aria-invalid={!!errors.qty}
                 aria-describedby={errors.qty ? 'cm-action-qty-error' : undefined}
                 value={qty}
                 onChange={(e) => { setQty(e.target.value); setErrors({}); }}
               />
+            </FormField>
+            <FormField id="cm-action-weight" label="Measured outgoing weight" hint="If omitted, on-hand weight becomes unknown. A measurement is required when weight is reserved." error={errors.weight}>
+              <input id="cm-action-weight" type="number" step="0.001" min="0" className={styles.input} value={weight} onChange={(e) => { setWeight(e.target.value); setErrors({}); }} />
             </FormField>
             <FormField id="cm-action-notes" label="Notes">
               <input id="cm-action-notes" className={styles.input} value={notes} onChange={(e) => setNotes(e.target.value)} />

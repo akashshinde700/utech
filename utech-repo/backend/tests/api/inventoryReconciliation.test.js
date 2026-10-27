@@ -38,6 +38,9 @@ function makeStatefulTx({ openingStock = {}, lotQtyIn = {} } = {}) {
   const lotLedger = new Map(Object.entries(lotQtyIn).map(([id, qty]) => [Number(id), [{ qtyIn: Number(qty), qtyOut: 0, customerMaterialLotId: Number(id) }]]));
 
   const tx = {
+    // The real database holds this row lock until the transaction commits.
+    // This sequential double has no competing writers.
+    async $queryRaw() { return []; },
     item: {
       async findUnique({ where }) {
         const it = items.get(where.id);
@@ -65,6 +68,10 @@ function makeStatefulTx({ openingStock = {}, lotQtyIn = {} } = {}) {
       async findUnique({ where }) {
         return lotLedger.has(where.id) ? { id: where.id, inwardNumber: `CML-${where.id}` } : null;
       },
+    },
+    // This historical quantity-reconciliation scenario has no reservations.
+    customerMaterialAllocation: {
+      async aggregate() { return { _sum: { qty: 0, weight: 0 } }; },
     },
     stockLedger: {
       async aggregate({ where }) {

@@ -25,6 +25,7 @@
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
+    "decimal.js": "^10.6.0",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "express": "^4.21.1",
@@ -42,8 +43,8 @@
     "nodemon": "^3.1.7",
     "prisma": "^5.22.0",
     "supertest": "^7.3.1",
-    "vitest": "^5.0.5",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   },
   "engines": {
     "node": ">=20.19"

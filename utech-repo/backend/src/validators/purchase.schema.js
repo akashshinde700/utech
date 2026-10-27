@@ -1,6 +1,8 @@
 'use strict';
 const { z } = require('zod');
 const { partialNoDefaults } = require('./partial');
+const { quantity } = require('./precision');
+const Decimal = require('decimal.js');
 
 // itemId is optional on both documents because an outsourced, vendor-made part
 // often has no Item master row — such a line carries a description instead.
@@ -13,7 +15,7 @@ const poLineSchema = withItemOrDescription(
   z.object({
     itemId: z.coerce.number().int().positive().nullable().optional(),
     description: z.string().trim().min(1).nullable().optional(),
-    qty: z.coerce.number().positive(),
+    qty: quantity(z.coerce.number().positive()),
     rate: z.coerce.number().nonnegative(),
     gstRate: z.coerce.number().min(0).max(100).optional(),
   })
@@ -48,13 +50,13 @@ const grnLineSchema = withItemOrDescription(
     description: z.string().trim().min(1).nullable().optional(),
     poLineId: z.coerce.number().int().positive().nullable().optional(),
     vendorWorkOrderLineId: z.coerce.number().int().positive().nullable().optional(),
-    qty: z.coerce.number().positive(),
-    qtyAccepted: z.coerce.number().nonnegative().optional(),
-    qtyRejected: z.coerce.number().nonnegative().optional(),
+    qty: quantity(z.coerce.number().positive()),
+    qtyAccepted: quantity(z.coerce.number().nonnegative()).optional(),
+    qtyRejected: quantity(z.coerce.number().nonnegative()).optional(),
     rate: z.coerce.number().nonnegative().nullable().optional(),
     notes: z.string().trim().nullable().optional(),
   })
-).refine((l) => Number(l.qtyAccepted ?? l.qty) + Number(l.qtyRejected ?? 0) <= Number(l.qty), {
+).refine((l) => new Decimal(l.qtyAccepted ?? l.qty).plus(l.qtyRejected ?? 0).lessThanOrEqualTo(l.qty), {
   message: 'Accepted + rejected quantity cannot exceed the received quantity',
 });
 

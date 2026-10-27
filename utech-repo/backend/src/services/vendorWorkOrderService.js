@@ -2,6 +2,8 @@
 const prisma = require('../config/prisma');
 const HttpError = require('../utils/httpError');
 const { notifyUsers } = require('../utils/notify');
+const Decimal = require('decimal.js');
+const { lockVendorWorkOrder } = require('../utils/transactionLocks');
 
 const REF_TYPE = 'VENDOR_WORK_ORDER';
 // statuses a work order can still move out of on its own
@@ -10,7 +12,8 @@ const OPEN_STATUSES = ['DRAFT', 'SENT', 'PARTIAL_RECEIVED'];
 const CLOSED_STATUSES = ['RECEIVED', 'SHORT_CLOSED', 'CANCELLED'];
 
 function outstanding(line) {
-  return Number(line.qtySent) - Number(line.qtyReceived) - Number(line.qtyRejected);
+  return new Decimal(String(line.qtySent ?? 0))
+    .minus(String(line.qtyReceived ?? 0)).minus(String(line.qtyRejected ?? 0)).toNumber();
 }
 
 // The single place that derives VendorWorkOrder.status from its line
@@ -51,21 +54,33 @@ async function recomputeStatus(tx, vendorWorkOrderId) {
 // reversed, which is what makes a cancelled GRN put the work order back to
 // where it was.
 async function applyGrnDelta({ tx, grn, sign }) {
-  let vendorWorkOrderId = null;
+  const vendorWorkOrderId = grn.vendorWorkOrderId;
+  if (!vendorWorkOrderId) return null;
+  // Match the lock used by direct work-order returns and state changes. GRN
+  // transactions run at ReadCommitted so line reads after the lock are fresh.
+  await lockVendorWorkOrder(tx, vendorWorkOrderId);
+  let applied = false;
   for (const l of grn.lines) {
     if (!l.vendorWorkOrderLineId) continue;
     const vwoLine = await tx.vendorWorkOrderLine.findUnique({ where: { id: l.vendorWorkOrderLineId } });
-    if (!vwoLine) continue;
+    if (!vwoLine || vwoLine.vendorWorkOrderId !== vendorWorkOrderId) {
+      throw new HttpError(400, 'GRN line does not belong to its vendor work order');
+    }
+    const received = new Decimal(String(vwoLine.qtyReceived ?? 0)).plus(new Decimal(String(l.qtyAccepted ?? 0)).times(sign));
+    const rejected = new Decimal(String(vwoLine.qtyRejected ?? 0)).plus(new Decimal(String(l.qtyRejected ?? 0)).times(sign));
+    if (sign > 0 && received.plus(rejected).greaterThan(String(vwoLine.qtySent))) {
+      throw new HttpError(400, `Received + rejected exceeds the quantity sent on work order line ${vwoLine.id}`);
+    }
+    if (received.lt(0) || rejected.lt(0)) {
+      throw new HttpError(400, `Work order line ${vwoLine.id} does not contain this receipt; reconcile the history before reversing it`);
+    }
     await tx.vendorWorkOrderLine.update({
       where: { id: vwoLine.id },
-      data: {
-        qtyReceived: Math.max(0, Number(vwoLine.qtyReceived) + sign * Number(l.qtyAccepted)),
-        qtyRejected: Math.max(0, Number(vwoLine.qtyRejected) + sign * Number(l.qtyRejected)),
-      },
+      data: { qtyReceived: received.toNumber(), qtyRejected: rejected.toNumber() },
     });
-    vendorWorkOrderId = vwoLine.vendorWorkOrderId;
+    applied = true;
   }
-  if (!vendorWorkOrderId) return null;
+  if (!applied) return null;
   return recomputeStatus(tx, vendorWorkOrderId);
 }
 

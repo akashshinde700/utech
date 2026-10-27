@@ -9,7 +9,8 @@ const { audit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const { effectiveChecklist, computeProgress, validateChecklistPayload } = require('../utils/jobcardProgress');
 const env = require('../config/env');
-const { hasAssignmentAccess, jobcardIdsAssignedTo } = require('../utils/jobcardAccess');
+const { hasAssignmentAccess, assertJobcardAccess, jobcardIdsAssignedTo } = require('../utils/jobcardAccess');
+const { lockJobcard } = require('../utils/transactionLocks');
 
 const uploadBaseDir = path.resolve(env.UPLOAD_DIR);
 
@@ -123,6 +124,21 @@ async function update(req, res) {
   const { lines, operations, ...rest } = req.body;
   let orphanedAttachments = [];
   const jc = await prisma.$transaction(async (tx) => {
+    await lockJobcard(tx, id);
+    const current = await tx.jobcard.findUnique({ where: { id } });
+    if (!current) throw new HttpError(404, 'Jobcard not found');
+    await assertJobcardAccess(req.user, current, tx);
+    const closes = ['CANCELLED', 'COMPLETED'].includes(rest.status);
+    if (closes && rest.status !== current.status) {
+      throw new HttpError(400, 'Use the dedicated complete or cancel action for this job card');
+    }
+    if (['COMPLETED', 'CANCELLED'].includes(current.status) && rest.status && rest.status !== current.status) {
+      throw new HttpError(400, 'Cannot change a closed job card status here; use revert for completed cards');
+    }
+    const changesCustomer = rest.partyId !== undefined && rest.partyId !== current.partyId;
+    if ((closes || changesCustomer) && await tx.customerMaterialAllocation.count({ where: { jobcardId: id, releasedAt: null } })) {
+      throw new HttpError(400, 'Release customer-material reservations before closing or changing this job card');
+    }
     if (lines) {
       // preserve line ids (instead of delete-all-recreate) so attachments
       // uploaded against a specific line stay attached across edits
@@ -132,6 +148,9 @@ async function update(req, res) {
       const toDelete = existingIds.filter((eid) => !incomingIds.includes(eid));
       if (toDelete.length) {
         orphanedAttachments = await tx.attachment.findMany({ where: { refType: 'JOBCARD', lineId: { in: toDelete } } });
+        if (orphanedAttachments.length && await tx.assignment.count({ where: { attachmentId: { in: orphanedAttachments.map((a) => a.id) } } })) {
+          throw new HttpError(400, 'Remove or resolve drawing assignments before removing a job-card line');
+        }
         await tx.attachment.deleteMany({ where: { refType: 'JOBCARD', lineId: { in: toDelete } } });
         await tx.jobcardLine.deleteMany({ where: { id: { in: toDelete } } });
       }
@@ -155,7 +174,7 @@ async function update(req, res) {
       },
       include: INCLUDE,
     });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   for (const a of orphanedAttachments) {
     try { fs.unlinkSync(path.join(uploadBaseDir, a.storedName)); } catch (_) { /* file may already be gone */ }
   }
@@ -169,8 +188,10 @@ async function revert(req, res) {
   const id = parseInt(req.params.id, 10);
   const { reason } = req.body;
   const jc = await prisma.$transaction(async (tx) => {
+    await lockJobcard(tx, id);
     const existing = await tx.jobcard.findUnique({ where: { id } });
     if (!existing) throw new HttpError(404, 'Jobcard not found');
+    await assertJobcardAccess(req.user, existing, tx);
     if (['CANCELLED', 'REVERTED'].includes(existing.status)) {
       throw new HttpError(400, `Cannot revert a jobcard that is ${existing.status}`);
     }
@@ -182,41 +203,48 @@ async function revert(req, res) {
       data: { status: 'REVERTED' },
       include: INCLUDE,
     });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'revert', 'Jobcard', id, { reason });
   res.json(jc);
 }
 
 async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
-  const jc = await prisma.jobcard.findUnique({ where: { id } });
-  if (!jc) throw new HttpError(404, 'Jobcard not found');
-
-  // first delete = cancel; deleting an already-cancelled project removes it for good
-  if (jc.status === 'CANCELLED') {
-    const attachments = await prisma.attachment.findMany({ where: { refType: 'JOBCARD', refId: id } });
-    const attachmentIds = attachments.map((a) => a.id);
-    await prisma.$transaction(async (tx) => {
-      // these are optional historical links — drop them rather than block deletion
+  let attachments = [];
+  const result = await prisma.$transaction(async (tx) => {
+    await lockJobcard(tx, id);
+    const jc = await tx.jobcard.findUnique({ where: { id } });
+    if (!jc) throw new HttpError(404, 'Jobcard not found');
+    await assertJobcardAccess(req.user, jc, tx);
+    if (await tx.customerMaterialAllocation.count({ where: { jobcardId: id, releasedAt: null } })) {
+      throw new HttpError(400, 'Release customer-material reservations before cancelling this job card');
+    }
+    if (await tx.assignment.count({ where: {
+      status: { notIn: ['COMPLETED', 'CANCELLED'] }, attachment: { refType: 'JOBCARD', refId: id },
+    } })) throw new HttpError(400, 'Finish or cancel open drawing assignments before cancelling this job card');
+    if (jc.status === 'CANCELLED') {
+      if (await tx.customerMaterialAllocation.count({ where: { jobcardId: id } })) {
+        throw new HttpError(400, 'Job card has allocation history and cannot be permanently deleted');
+      }
+      attachments = await tx.attachment.findMany({ where: { refType: 'JOBCARD', refId: id } });
+      const attachmentIds = attachments.map((a) => a.id);
       await tx.productionBatch.updateMany({ where: { jobcardId: id }, data: { jobcardId: null } });
       await tx.customerMaterialLot.updateMany({ where: { jobcardId: id }, data: { jobcardId: null } });
       if (attachmentIds.length) {
         await tx.assignment.deleteMany({ where: { attachmentId: { in: attachmentIds } } });
         await tx.attachment.deleteMany({ where: { id: { in: attachmentIds } } });
       }
-      // JobcardLine/JobcardOperation/JobcardRevert/JobcardNote cascade automatically
       await tx.jobcard.delete({ where: { id } });
-    });
-    for (const a of attachments) {
-      try { fs.unlinkSync(path.join(uploadBaseDir, a.storedName)); } catch (_) { /* file may already be gone */ }
+      return { deleted: true, number: jc.number };
     }
-    await audit(req, 'delete', 'Jobcard', id, { number: jc.number });
-    return res.json({ ok: true, deleted: true });
+    await tx.jobcard.update({ where: { id }, data: { status: 'CANCELLED' } });
+    return { deleted: false, number: jc.number };
+  }, { isolationLevel: 'ReadCommitted' });
+  for (const a of attachments) {
+    try { fs.unlinkSync(path.join(uploadBaseDir, a.storedName)); } catch (_) { /* file may already be gone */ }
   }
-
-  await prisma.jobcard.update({ where: { id }, data: { status: 'CANCELLED' } });
-  await audit(req, 'cancel', 'Jobcard', id, { number: jc.number });
-  res.json({ ok: true, deleted: false });
+  await audit(req, result.deleted ? 'delete' : 'cancel', 'Jobcard', id, { number: result.number });
+  res.json({ ok: true, deleted: result.deleted });
 }
 
 async function updateProgress(req, res) {
@@ -244,34 +272,34 @@ async function complete(req, res) {
   const jc = await prisma.jobcard.findUnique({ where: { id }, include: { assignedOperator: true } });
   if (!jc) throw new HttpError(404, 'Jobcard not found');
   await assertOwnership(req,jc);
-  if (['CANCELLED', 'COMPLETED'].includes(jc.status)) {
-    throw new HttpError(400, `Jobcard is already ${jc.status}`);
-  }
-
-  // a project is finished only once every department has finished the pages
-  // it was given — an open assignment anywhere on this project blocks it
-  const openAssignments = await prisma.assignment.findMany({
-    where: {
-      status: { notIn: ['COMPLETED', 'CANCELLED'] },
-      attachment: { refType: 'JOBCARD', refId: id },
-    },
-    select: { department: { select: { name: true } } },
-  });
-  if (openAssignments.length) {
-    const byDept = {};
-    for (const a of openAssignments) {
-      const name = a.department?.name || 'Unassigned department';
-      byDept[name] = (byDept[name] || 0) + 1;
+  const updated = await prisma.$transaction(async (tx) => {
+    await lockJobcard(tx, id);
+    const current = await tx.jobcard.findUnique({ where: { id } });
+    if (!current) throw new HttpError(404, 'Jobcard not found');
+    await assertJobcardAccess(req.user, current, tx);
+    if (['CANCELLED', 'COMPLETED'].includes(current.status)) throw new HttpError(400, `Jobcard is already ${current.status}`);
+    if (await tx.customerMaterialAllocation.count({ where: { jobcardId: id, releasedAt: null } })) {
+      throw new HttpError(400, 'Release customer-material reservations before completing this job card');
     }
-    const detail = Object.entries(byDept).map(([name, n]) => `${name} (${n})`).join(', ');
-    throw new HttpError(400, `${openAssignments.length} assignment(s) are still open — ${detail}. Every department must finish its pages before the project can be completed.`);
-  }
-
-  const updated = await prisma.jobcard.update({
-    where: { id },
-    data: { status: 'COMPLETED', workStatus: 'COMPLETED' },
-    include: INCLUDE,
-  });
+    // Open department assignments still block completion as before.
+    const openAssignments = await tx.assignment.findMany({
+      where: {
+        status: { notIn: ['COMPLETED', 'CANCELLED'] },
+        attachment: { refType: 'JOBCARD', refId: id },
+      },
+      select: { department: { select: { name: true } } },
+    });
+    if (openAssignments.length) {
+      const byDept = {};
+      for (const a of openAssignments) {
+        const name = a.department?.name || 'Unassigned department';
+        byDept[name] = (byDept[name] || 0) + 1;
+      }
+      const detail = Object.entries(byDept).map(([name, n]) => `${name} (${n})`).join(', ');
+      throw new HttpError(400, `${openAssignments.length} assignment(s) are still open — ${detail}. Every department must finish its pages before the project can be completed.`);
+    }
+    return tx.jobcard.update({ where: { id }, data: { status: 'COMPLETED', workStatus: 'COMPLETED' }, include: INCLUDE });
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'complete', 'Jobcard', id);
   await notifyUsers(['SUPERADMIN', 'MANAGER'], {
     type: 'JOBCARD_COMPLETED',

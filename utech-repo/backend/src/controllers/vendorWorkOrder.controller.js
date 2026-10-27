@@ -4,9 +4,11 @@ const HttpError = require('../utils/httpError');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { calcLineAmount, round2 } = require('../utils/gst');
+const Decimal = require('decimal.js');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
 const svc = require('../services/vendorWorkOrderService');
+const { lockChallan, lockVendorWorkOrder } = require('../utils/transactionLocks');
 
 const INCLUDE = {
   party: { select: { id: true, code: true, name: true, phone: true, city: true, gstin: true } },
@@ -218,12 +220,17 @@ async function update(req, res) {
   if ('expectedReturnDate' in body) data.expectedReturnDate = body.expectedReturnDate || null;
 
   const vwo = await prisma.$transaction(async (tx) => {
+    await lockVendorWorkOrder(tx, id);
+    const current = await tx.vendorWorkOrder.findUnique({ where: { id } });
+    if (!current) throw new HttpError(404, 'Vendor work order not found');
+    await assertVisible(current, req.user);
+    if (current.status !== 'DRAFT') throw new HttpError(400, `Cannot edit a work order in ${current.status} status`);
     if (body.lines) {
       await tx.vendorWorkOrderLine.deleteMany({ where: { vendorWorkOrderId: id } });
       data.lines = { create: buildLines(body.lines) };
     }
     return tx.vendorWorkOrder.update({ where: { id }, data, include: INCLUDE });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'update', 'VendorWorkOrder', id);
   res.json(vwo);
 }
@@ -240,7 +247,10 @@ async function send(req, res) {
   await assertVisible(before, req.user);
 
   const out = await prisma.$transaction(async (tx) => {
+    await lockVendorWorkOrder(tx, id);
     const vwo = await tx.vendorWorkOrder.findUnique({ where: { id }, include: { lines: true } });
+    if (!vwo) throw new HttpError(404, 'Vendor work order not found');
+    await assertVisible(vwo, req.user);
     if (vwo.status !== 'DRAFT') throw new HttpError(400, `Cannot send a work order in ${vwo.status} status`);
 
     const when = sentDate || new Date();
@@ -290,7 +300,7 @@ async function send(req, res) {
       },
       include: INCLUDE,
     });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
 
   await audit(req, 'send', 'VendorWorkOrder', id, {
     partyId: out.partyId, sentDate: out.sentDate, jobworkChallanId: out.jobworkChallanId,
@@ -310,10 +320,13 @@ async function receive(req, res) {
   await assertVisible(before, req.user);
 
   const out = await prisma.$transaction(async (tx) => {
+    await lockVendorWorkOrder(tx, id);
     const vwo = await tx.vendorWorkOrder.findUnique({
       where: { id },
       include: { lines: true, po: { select: { number: true } } },
     });
+    if (!vwo) throw new HttpError(404, 'Vendor work order not found');
+    await assertVisible(vwo, req.user);
     if (!['SENT', 'PARTIAL_RECEIVED'].includes(vwo.status)) {
       throw new HttpError(400, `Cannot record a return against a work order in ${vwo.status} status`);
     }
@@ -324,17 +337,17 @@ async function receive(req, res) {
     for (const upd of lines) {
       const line = vwo.lines.find((l) => l.id === upd.id);
       if (!line) throw new HttpError(400, `Line ${upd.id} does not belong to this work order`);
-      const qtyReceived = Number(line.qtyReceived) + Number(upd.qtyReceived || 0);
-      const qtyRejected = Number(line.qtyRejected) + Number(upd.qtyRejected || 0);
-      if (qtyReceived + qtyRejected > Number(line.qtySent)) {
+      const qtyReceived = new Decimal(String(line.qtyReceived ?? 0)).plus(upd.qtyReceived || 0);
+      const qtyRejected = new Decimal(String(line.qtyRejected ?? 0)).plus(upd.qtyRejected || 0);
+      if (qtyReceived.plus(qtyRejected).greaterThan(String(line.qtySent))) {
         throw new HttpError(400, `Received + rejected exceeds the ${Number(line.qtySent)} sent out on line "${line.description || line.itemId}"`);
       }
-      await tx.vendorWorkOrderLine.update({ where: { id: line.id }, data: { qtyReceived, qtyRejected } });
+      await tx.vendorWorkOrderLine.update({ where: { id: line.id }, data: { qtyReceived: qtyReceived.toNumber(), qtyRejected: qtyRejected.toNumber() } });
     }
 
     await svc.recomputeStatus(tx, id);
     return tx.vendorWorkOrder.findUnique({ where: { id }, include: INCLUDE });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
 
   await audit(req, 'receive', 'VendorWorkOrder', id, { status: out.status, remarks: remarks || null });
   await svc.notifyReturn(req, out, null);
@@ -352,7 +365,10 @@ async function raisePurchaseOrder(req, res) {
   await assertVisible(before, req.user);
 
   const out = await prisma.$transaction(async (tx) => {
+    await lockVendorWorkOrder(tx, id);
     const vwo = await tx.vendorWorkOrder.findUnique({ where: { id }, include: { lines: true } });
+    if (!vwo) throw new HttpError(404, 'Vendor work order not found');
+    await assertVisible(vwo, req.user);
     if (vwo.poId) throw new HttpError(400, 'A purchase order has already been raised for this work order');
     if (!svc.OPEN_STATUSES.includes(vwo.status)) {
       throw new HttpError(400, `Cannot raise a purchase order for a work order in ${vwo.status} status`);
@@ -414,7 +430,7 @@ async function raisePurchaseOrder(req, res) {
     }
     await tx.vendorWorkOrder.update({ where: { id }, data: { poId: po.id } });
     return tx.vendorWorkOrder.findUnique({ where: { id }, include: INCLUDE });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
 
   await audit(req, 'raise-po', 'VendorWorkOrder', id, { poId: out.poId, poNumber: out.po.number });
   res.json(out);
@@ -426,18 +442,24 @@ async function shortClose(req, res) {
   const id = parseInt(req.params.id, 10);
   const existing = await loadOr404(id);
   await assertVisible(existing, req.user);
-  if (!['SENT', 'PARTIAL_RECEIVED'].includes(existing.status)) {
-    throw new HttpError(400, `Cannot short close a work order in ${existing.status} status`);
-  }
-  const vwo = await prisma.vendorWorkOrder.update({
-    where: { id },
-    data: {
-      status: 'SHORT_CLOSED',
-      closureRemarks: req.body.reason,
-      actualReturnDate: existing.actualReturnDate || new Date(),
-    },
-    include: INCLUDE,
-  });
+  const vwo = await prisma.$transaction(async (tx) => {
+    await lockVendorWorkOrder(tx, id);
+    const current = await tx.vendorWorkOrder.findUnique({ where: { id } });
+    if (!current) throw new HttpError(404, 'Vendor work order not found');
+    await assertVisible(current, req.user);
+    if (!['SENT', 'PARTIAL_RECEIVED'].includes(current.status)) {
+      throw new HttpError(400, `Cannot short close a work order in ${current.status} status`);
+    }
+    return tx.vendorWorkOrder.update({
+      where: { id },
+      data: {
+        status: 'SHORT_CLOSED',
+        closureRemarks: req.body.reason,
+        actualReturnDate: current.actualReturnDate || new Date(),
+      },
+      include: INCLUDE,
+    });
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'short-close', 'VendorWorkOrder', id, { reason: req.body.reason });
   await svc.notifyClosed(req, vwo);
   res.json(vwo);
@@ -449,10 +471,13 @@ async function cancel(req, res) {
   await assertVisible(existing, req.user);
 
   const out = await prisma.$transaction(async (tx) => {
+    await lockVendorWorkOrder(tx, id);
     const vwo = await tx.vendorWorkOrder.findUnique({
       where: { id },
-      include: { lines: true, jobworkChallan: { include: { lines: true } }, po: { select: { number: true } } },
+      include: { lines: true, jobworkChallan: { select: { id: true } }, po: { select: { number: true } } },
     });
+    if (!vwo) throw new HttpError(404, 'Vendor work order not found');
+    await assertVisible(vwo, req.user);
     if (svc.CLOSED_STATUSES.includes(vwo.status)) {
       throw new HttpError(400, `Cannot cancel a work order in ${vwo.status} status`);
     }
@@ -463,17 +488,22 @@ async function cancel(req, res) {
       throw new HttpError(400, `Cancel purchase order ${vwo.po.number} first`);
     }
 
-    // material that went out under this order comes straight back into stock
-    if (vwo.jobworkChallan && !['CANCELLED', 'RECEIVED'].includes(vwo.jobworkChallan.status)) {
-      for (const l of vwo.jobworkChallan.lines) {
-        const open = Number(l.qtySent) - Number(l.qtyReceived) - Number(l.qtyRejected);
-        if (open <= 0 || !l.itemId) continue;
-        await stockService.moveCompanyStock({
-          tx, itemId: l.itemId, refType: 'JOBWORK_CANCEL', refId: vwo.jobworkChallan.id, qtyIn: open,
-          notes: `Vendor work order ${vwo.number} cancelled`, skipAudit: true,
-        });
+    // A jobwork receipt/cancellation may run through its own API at the same
+    // time. Lock and re-read the challan before restoring any outstanding stock.
+    if (vwo.jobworkChallan) {
+      await lockChallan(tx, vwo.jobworkChallan.id);
+      const challan = await tx.jobworkChallan.findUnique({ where: { id: vwo.jobworkChallan.id }, include: { lines: true } });
+      if (challan && !['CANCELLED', 'RECEIVED'].includes(challan.status)) {
+        for (const l of challan.lines) {
+          const open = stockService.roundQuantity(Number(l.qtySent) - Number(l.qtyReceived) - Number(l.qtyRejected));
+          if (open <= 0 || !l.itemId) continue;
+          await stockService.moveCompanyStock({
+            tx, itemId: l.itemId, refType: 'JOBWORK_CANCEL', refId: challan.id, qtyIn: open,
+            notes: `Vendor work order ${vwo.number} cancelled`, skipAudit: true,
+          });
+        }
+        await tx.jobworkChallan.update({ where: { id: challan.id }, data: { status: 'CANCELLED' } });
       }
-      await tx.jobworkChallan.update({ where: { id: vwo.jobworkChallan.id }, data: { status: 'CANCELLED' } });
     }
 
     return tx.vendorWorkOrder.update({
@@ -481,7 +511,7 @@ async function cancel(req, res) {
       data: { status: 'CANCELLED', closureRemarks: req.body.reason },
       include: INCLUDE,
     });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
 
   await audit(req, 'cancel', 'VendorWorkOrder', id, { reason: req.body.reason });
   await svc.notifyClosed(req, out);

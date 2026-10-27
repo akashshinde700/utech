@@ -1,20 +1,31 @@
-// Matches backend/src/utils/gst.js: line amounts are rounded to paise BEFORE
-// discount allocation and tax. Keep this separate so the on-screen preview can
-// be checked against the server for fractional quantities and mixed GST rates.
-const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+import Decimal from 'decimal.js';
+
+// Same decimal precision and ROUND_HALF_UP policy as backend/src/utils/gst.js.
+const Money = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
+// Inputs are strings while being edited; an empty numeric field previews as 0.
+const dec = (n) => new Money(n === '' || n == null ? 0 : n);
+const paise = (n) => dec(n).toDecimalPlaces(2);
+
+export function calculateInvoiceLineAmount(qty, rate) {
+  return dec(qty).times(dec(rate)).toDecimalPlaces(2).toNumber();
+}
 
 export function calculateInvoiceTotals(lines, isIntraState, discount = 0) {
-  const amounts = lines.map((line) => round2(Number(line.qty || 0) * Number(line.rate || 0)));
-  const subtotal = round2(amounts.reduce((sum, amount) => sum + amount, 0));
-  const appliedDiscount = Math.min(round2(Number(discount) || 0), subtotal);
-  const keep = subtotal > 0 ? (subtotal - appliedDiscount) / subtotal : 1;
-  const gst = round2(lines.reduce((sum, line, index) =>
-    sum + (amounts[index] * keep * Number(line.gstRate || 0)) / 100, 0));
-  const cgst = isIntraState ? round2(gst / 2) : 0;
-  const sgst = isIntraState ? round2(gst - cgst) : 0;
-  const igst = isIntraState ? 0 : gst;
-  const taxable = round2(subtotal - appliedDiscount);
-  const exact = round2(taxable + cgst + sgst + igst);
-  const total = Math.round(exact);
-  return { subtotal, discount: appliedDiscount, taxable, cgst, sgst, igst, roundOff: round2(total - exact), total };
+  const amounts = lines.map((line) => dec(line.qty).times(dec(line.rate)).toDecimalPlaces(2));
+  const subtotal = amounts.reduce((sum, amount) => sum.plus(amount), dec(0));
+  const appliedDiscount = Money.min(paise(discount || 0), subtotal);
+  const keep = subtotal.gt(0) ? subtotal.minus(appliedDiscount).div(subtotal) : dec(1);
+  const gst = amounts.reduce((sum, amount, index) =>
+    sum.plus(amount.times(keep).times(dec(lines[index].gstRate || 0)).div(100)), dec(0)).toDecimalPlaces(2);
+  const cgst = isIntraState ? gst.div(2).toDecimalPlaces(2) : dec(0);
+  const sgst = isIntraState ? gst.minus(cgst) : dec(0);
+  const igst = isIntraState ? dec(0) : gst;
+  const taxable = subtotal.minus(appliedDiscount);
+  const exact = taxable.plus(gst);
+  const total = exact.toDecimalPlaces(0);
+  return {
+    subtotal: subtotal.toNumber(), discount: appliedDiscount.toNumber(), taxable: taxable.toNumber(),
+    cgst: cgst.toNumber(), sgst: sgst.toNumber(), igst: igst.toNumber(),
+    roundOff: total.minus(exact).toDecimalPlaces(2).toNumber(), total: total.toNumber(),
+  };
 }

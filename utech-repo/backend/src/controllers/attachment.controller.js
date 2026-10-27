@@ -7,6 +7,8 @@ const prisma = require('../config/prisma');
 const env = require('../config/env');
 const HttpError = require('../utils/httpError');
 const { audit } = require('../utils/audit');
+const { assertJobcardAccess } = require('../utils/jobcardAccess');
+const { lockJobcard } = require('../utils/transactionLocks');
 
 const ALLOWED_REF_TYPES = new Set([
   'JOBCARD', 'INVOICE', 'DISPATCH', 'JOBWORK', 'GRN', 'QUALITY', 'PROJECT', 'ASSIGNMENT', 'TASK',
@@ -39,8 +41,8 @@ function assertRefPermission(req, refType, action) {
   }
 }
 
-// extension → allowed mimetypes: a file must pass BOTH checks, so a renamed
-// .exe or a text file posing as an image is rejected at the multer layer
+// Extension and client-declared MIME must agree. These checks do not inspect
+// file signatures or scan for malware; uploads still require operational scanning.
 const ALLOWED_FILE_TYPES = {
   '.pdf': ['application/pdf'],
   '.png': ['image/png'],
@@ -87,19 +89,13 @@ const upload = multer({
   },
 });
 
-// operators may only touch attachments on jobcards assigned to them — either
-// directly (assignedOperatorId) or, since work can also be handed to an
-// operator document-by-document, via the Assignment chain. Every other
-// refType/role is left exactly as open as it is today (out of scope here).
+// Drawing access follows the same assignment and department scope as the
+// job-card API, not just the role-level jobcard.read/update grant.
 async function assertJobcardOwnership(req, refType, jobcardId) {
-  if (refType !== 'JOBCARD' || !req.user || req.user.role !== 'OPERATOR') return;
-  const jc = await prisma.jobcard.findUnique({ where: { id: jobcardId }, select: { assignedOperatorId: true } });
+  if (refType !== 'JOBCARD') return;
+  const jc = await prisma.jobcard.findUnique({ where: { id: jobcardId }, select: { id: true, assignedOperatorId: true } });
   if (!jc) throw new HttpError(404, 'Jobcard not found');
-  if (jc.assignedOperatorId === req.user.id) return;
-  const count = await prisma.assignment.count({
-    where: { assignedToId: req.user.id, attachment: { refType: 'JOBCARD', refId: jobcardId } },
-  });
-  if (count === 0) throw new HttpError(403, 'This project is not assigned to you');
+  await assertJobcardAccess(req.user, jc);
 }
 
 // deliverables/reference files under refType=ASSIGNMENT are only visible to the
@@ -133,10 +129,10 @@ async function assertTaskOwnership(req, refType, operationId) {
 
 async function uploadFiles(req, res) {
   const { refType, refId } = req.params;
-  if (!ALLOWED_REF_TYPES.has(refType)) throw new HttpError(400, 'Invalid refType');
-  assertRefPermission(req, refType, 'update');
   const recordRefId = parseInt(refId, 10);
   try {
+    if (!ALLOWED_REF_TYPES.has(refType)) throw new HttpError(400, 'Invalid refType');
+    assertRefPermission(req, refType, 'update');
     await assertJobcardOwnership(req, refType, recordRefId);
     await assertAssignmentAccess(req, refType, recordRefId);
     await assertTaskOwnership(req, refType, recordRefId);
@@ -232,22 +228,20 @@ async function deleteOne(req, res) {
   await assertAssignmentAccess(req, a.refType, a.refId);
   await assertTaskOwnership(req, a.refType, a.refId);
 
-  // Assignments point at this file. Open ones block the delete with a clear
-  // message (deleting would strand work someone is doing); finished and
-  // cancelled ones are history for a file that is going away, so they go with
-  // it — the audit log keeps the record. Without this the foreign key
-  // surfaced as a 500.
-  const assignments = await prisma.assignment.findMany({
-    where: { attachmentId: id }, select: { id: true, status: true },
-  });
-  const open = assignments.filter((x) => !['COMPLETED', 'CANCELLED'].includes(x.status));
-  if (open.length) {
-    throw new HttpError(400, `${open.length} assignment(s) on this file are still open — finish or cancel them before deleting it`);
-  }
+  // Re-read assignments while holding the same parent lock used by creation
+  // and reopening; never delete work that appeared after a stale pre-check.
   await prisma.$transaction(async (tx) => {
-    if (assignments.length) await tx.assignment.deleteMany({ where: { attachmentId: id } });
+    if (a.refType === 'JOBCARD') await lockJobcard(tx, a.refId);
+    const current = await tx.attachment.findUnique({ where: { id } });
+    if (!current) throw new HttpError(404, 'Attachment not found');
+    const assignments = await tx.assignment.findMany({ where: { attachmentId: id }, select: { id: true, status: true } });
+    const open = assignments.filter((x) => !['COMPLETED', 'CANCELLED'].includes(x.status));
+    if (open.length) throw new HttpError(400, `${open.length} assignment(s) on this file are still open — finish or cancel them before deleting it`);
+    if (assignments.length) await tx.assignment.deleteMany({ where: { id: { in: assignments.map((row) => row.id) } } });
+    // If another non-jobcard assignment appeared, the FK prevents a silent
+    // broad deletion of that new work.
     await tx.attachment.delete({ where: { id } });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   try { fs.unlinkSync(path.join(baseDir, a.storedName)); } catch (_) { /* file may already be gone */ }
   audit(req, 'delete', `Attachment:${a.refType}`, a.refId, { filename: a.filename });
   res.json({ ok: true });

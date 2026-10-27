@@ -442,6 +442,10 @@ model StockLedger {
   qtyIn     Decimal  @default(0.000) @db.Decimal(14, 3)
   qtyOut    Decimal  @default(0.000) @db.Decimal(14, 3)
   balance   Decimal  @default(0.000) @db.Decimal(14, 3)
+  // Nullable means the movement's weight was not measured, never zero by inference.
+  weightIn      Decimal? @db.Decimal(14, 3)
+  weightOut     Decimal? @db.Decimal(14, 3)
+  weightBalance Decimal? @db.Decimal(14, 3)
   notes     String?
   createdAt DateTime @default(now())
 
@@ -469,7 +473,8 @@ model CustomerMaterialLot {
   heatNumber          String?
   lotNumber           String?
   qty                 Decimal                @db.Decimal(14, 3) // original inward qty (immutable); current/available qty is derived from stockLedger
-  weight              Decimal?               @db.Decimal(14, 3)
+  weight              Decimal?               @db.Decimal(14, 3) // original inward weight
+  currentWeight       Decimal?               @db.Decimal(14, 3) // measured on-hand weight; null = unknown
   uomCode             String?
   location            String?
   status              CustomerMaterialStatus @default(RECEIVED)
@@ -481,6 +486,7 @@ model CustomerMaterialLot {
 
   stockLedger     StockLedger[]
   jobworkChallans JobworkChallan[]
+  allocations     CustomerMaterialAllocation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -489,6 +495,26 @@ model CustomerMaterialLot {
   @@index([status])
   @@index([jobcardId])
   @@index([itemId])
+}
+
+// A reservation, not a stock movement: release before issuing/consuming it.
+// History remains attached to both lot and jobcard; no inferred legacy rows.
+model CustomerMaterialAllocation {
+  id         Int                 @id @default(autoincrement())
+  lotId      Int
+  lot        CustomerMaterialLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  jobcardId  Int
+  jobcard    Jobcard             @relation(fields: [jobcardId], references: [id], onDelete: Restrict)
+  qty        Decimal             @db.Decimal(14, 3)
+  weight     Decimal             @db.Decimal(14, 3)
+  createdById Int?
+  releasedById Int?
+  createdAt  DateTime            @default(now())
+  releasedAt DateTime?
+  releaseReason String?
+
+  @@index([lotId, releasedAt])
+  @@index([jobcardId, releasedAt])
 }
 
 // ============================================================
@@ -715,6 +741,7 @@ model Jobcard {
   notes                JobcardNote[]
   productionBatches    ProductionBatch[]
   customerMaterialLots CustomerMaterialLot[]
+  materialAllocations  CustomerMaterialAllocation[]
   vendorWorkOrders     VendorWorkOrder[]
 
   createdAt DateTime @default(now())

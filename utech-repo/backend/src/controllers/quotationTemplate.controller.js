@@ -11,17 +11,25 @@ const { audit } = require('../utils/audit');
 const baseDir = path.resolve(env.UPLOAD_DIR);
 if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
-const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const IMAGE_TYPES = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif',
+};
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, baseDir),
-  filename: (_req, file, cb) => cb(null, `${uuid()}${path.extname(file.originalname).toLowerCase()}`),
+  // Separate namespace from document attachments, including for unsaved
+  // quotation previews. Existing referenced images remain readable below.
+  filename: (_req, file, cb) => cb(null, `quotation-${uuid()}${path.extname(file.originalname).toLowerCase()}`),
 });
 
 const upload = multer({
   storage,
   limits: { fileSize: env.MAX_UPLOAD_MB * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => cb(null, ALLOWED_IMAGE_MIME.has(file.mimetype)),
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, IMAGE_TYPES[ext] === String(file.mimetype || '').toLowerCase());
+  },
 });
 
 async function list(_req, res) {
@@ -89,9 +97,29 @@ async function uploadImage(req, res) {
 }
 
 async function serveImage(req, res) {
-  const storedName = path.basename(req.params.storedName); // defend against path traversal
+  const storedName = path.basename(req.params.storedName);
+  const ext = path.extname(storedName).toLowerCase();
+  if (storedName !== req.params.storedName || !IMAGE_TYPES[ext]) throw new HttpError(404, 'Image not found');
+
+  // Attachments share the historical upload directory, but require their own
+  // document/ownership checks. Quotation read permission must never bypass them.
+  if (await prisma.attachment.findFirst({ where: { storedName }, select: { id: true } })) {
+    throw new HttpError(404, 'Image not found');
+  }
+  const newImage = /^quotation-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpe?g|webp|gif)$/i.test(storedName);
+  if (!newImage) {
+    // Legacy images had plain UUID names. Only files actually referenced by a
+    // quotation or template are eligible; do not expose arbitrary old uploads.
+    const where = { OR: [{ headerImageStoredName: storedName }, { footerImageStoredName: storedName }] };
+    const [quotation, template] = await Promise.all([
+      prisma.quotation.findFirst({ where, select: { id: true } }),
+      prisma.quotationTemplate.findFirst({ where, select: { id: true } }),
+    ]);
+    if (!quotation && !template) throw new HttpError(404, 'Image not found');
+  }
   const filePath = path.join(baseDir, storedName);
   if (!fs.existsSync(filePath)) throw new HttpError(404, 'Image not found');
+  res.type(IMAGE_TYPES[ext]);
   res.sendFile(filePath);
 }
 

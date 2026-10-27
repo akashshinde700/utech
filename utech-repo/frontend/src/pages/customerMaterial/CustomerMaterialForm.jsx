@@ -7,7 +7,8 @@ import FormSection from '../../components/ui/FormSection';
 import FormField from '../../components/ui/FormField';
 import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
-import { required, positiveNumber, validateAll } from '../../lib/validation';
+import { required, validateAll } from '../../lib/validation';
+import { trackedQuantity } from '../../lib/quantityValidation';
 import { todayLocal } from '../../lib/format';
 import toast from 'react-hot-toast';
 
@@ -52,11 +53,8 @@ export default function CustomerMaterialForm() {
 
   function blurField(key) {
     let msg = null;
-    if (key === 'qty') msg = positiveNumber(form.qty, 'Quantity');
-    else if (key === 'weight') {
-      const s = String(form.weight ?? '').trim();
-      if (s !== '' && (!Number.isFinite(Number(s)) || Number(s) <= 0)) msg = 'Weight must be a number greater than 0';
-    }
+    if (key === 'qty') msg = trackedQuantity(form.qty, 'Quantity');
+    else if (key === 'weight') msg = trackedQuantity(form.weight, 'Weight', { optional: true });
     if (msg) setErrors((errs) => ({ ...errs, [key]: msg }));
   }
 
@@ -66,13 +64,8 @@ export default function CustomerMaterialForm() {
       customerId: (v) => required(v, 'Customer'),
       receivedDate: (v) => required(v, 'Received date'),
       materialDescription: (v) => required(v, 'Material description'),
-      qty: (v) => positiveNumber(v, 'Quantity'),
-      weight: (v) => {
-        const s = String(v ?? '').trim();
-        if (s === '') return null;
-        if (!Number.isFinite(Number(s)) || Number(s) <= 0) return 'Weight must be a number greater than 0';
-        return null;
-      },
+      qty: (v) => trackedQuantity(v, 'Quantity'),
+      weight: (v) => trackedQuantity(v, 'Weight', { optional: true }),
     });
     if (!ok) {
       setErrors(nextErrors);
@@ -130,7 +123,7 @@ export default function CustomerMaterialForm() {
               />
             </FormField>
 
-            <FormField id="cm-jobcard" label="Job Card" hint="Optional — link this lot to a jobcard">
+            <FormField id="cm-jobcard" label="Job Card" hint="Optional legacy reference; reserve quantities for job cards after saving">
               <SearchableSelect
                 id="cm-jobcard"
                 value={form.jobcardId}
@@ -185,7 +178,7 @@ export default function CustomerMaterialForm() {
               <input id="cm-uom" className={styles.input} placeholder="KG / PCS / MTR" value={form.uomCode} onChange={(e) => setField('uomCode', e.target.value)} />
             </FormField>
 
-            <FormField id="cm-weight" label="Weight" error={errors.weight}>
+            <FormField id="cm-weight" label="Inward Weight" hint="Initial measured on-hand weight; later movements need their own measurements" error={errors.weight}>
               <input
                 id="cm-weight"
                 type="number"
