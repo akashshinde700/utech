@@ -64,6 +64,7 @@ import StockManagementPage from './pages/stock/StockManagementPage.jsx';
 import DepartmentsPage from './pages/departments/DepartmentsPage.jsx';
 import AssignmentsPage from './pages/assignments/AssignmentsPage.jsx';
 import DepartmentSubCategoryPage from './pages/departments/DepartmentSubCategoryPage.jsx';
+import MetalCalculatorPage from './pages/calculator/MetalCalculatorPage.jsx';
 import { useAuth } from './store/auth';
 import QualityCertificate from './pages/quality/QualityCertificate.jsx';
 
@@ -167,6 +168,8 @@ export default function App() {
         <Route path="machines" element={<MachinesPage />} />
         <Route path="machines/new" element={<MachineForm />} />
         <Route path="machines/:id" element={<MachineForm />} />
+
+        <Route path="metal-calculator" element={<MetalCalculatorPage />} />
 
         <Route path="quotations" element={<QuotationsPage />} />
         <Route path="quotations/new" element={<QuotationForm />} />

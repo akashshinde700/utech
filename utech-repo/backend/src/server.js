@@ -47,6 +47,7 @@ const assignmentRoutes = require('./routes/assignment.routes');
 const departmentSubCategoryRoutes = require('./routes/departmentSubCategory.routes');
 const vendorWorkOrderRoutes = require('./routes/vendorWorkOrder.routes');
 const taskRoutes = require('./routes/task.routes');
+const metalCalculatorRoutes = require('./routes/metalCalculator.routes');
 
 const app = express();
 
@@ -139,6 +140,7 @@ app.use('/api/assignments', assignmentRoutes);
 app.use('/api/department-subcategories', departmentSubCategoryRoutes);
 app.use('/api/vendor-work-orders', vendorWorkOrderRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/metal-calculator', metalCalculatorRoutes);
 
 // frontend (static build served by this same process in production)
 const publicDir = path.resolve(__dirname, '..', 'public');

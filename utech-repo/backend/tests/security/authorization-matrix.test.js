@@ -102,20 +102,25 @@ describe('auth-only endpoints (no requirePermission) are enumerated, not silentl
       .filter((r) => r.hasAuth && r.permissions.length === 0)
       .map((r) => `${r.method} ${r.path}`)
       .sort();
-    // These must be intentional: own-profile, own-notifications, and the
+    // These must be intentional: own-profile, own-notifications, the
     // attachment endpoints (which enforce module permissions per refType inside
-    // the controller instead). Anything new here needs a decision.
+    // the controller instead), and the read-only metal calculator (pure
+    // arithmetic over public reference tables — no tenant data, no writes).
+    // Anything new here needs a decision.
     expect(authOnly).toEqual([
       'DELETE /api/attachments/file/:id',
       'GET /api/attachments/:refType/:refId',
       'GET /api/attachments/file/:id',
       'GET /api/auth/me',
+      'GET /api/metal-calculator/catalog',
+      'GET /api/metal-calculator/profiles',
       'GET /api/notifications',
       'GET /api/notifications/unread-count',
       'GET /api/parties/lookup/gstin/:gstin',
       'GET /api/parties/lookup/ifsc/:code',
       'POST /api/attachments/:refType/:refId',
       'POST /api/auth/change-password',
+      'POST /api/metal-calculator/calculate',
       'POST /api/notifications/:id/read',
       'POST /api/notifications/read-all',
     ]);
