@@ -33,7 +33,9 @@ describe('/api/metal-calculator', () => {
     // MANAGER here has only jobcard.read — the calculator needs no key at all
     const res = await auth(request(app).get('/api/metal-calculator/catalog'));
     expect(res.status).toBe(200);
-    expect(res.body.metals).toHaveLength(22);
+    // the ported 22, plus any grade added for this plant (flagged, never
+    // altering the ported densities)
+    expect(res.body.metals.filter((m) => !m.addedForPlant)).toHaveLength(22);
     expect(res.body.shapes).toHaveLength(11);
     expect(res.body.units.metric).toEqual(['mm', 'cm', 'm']);
     expect(res.body.standardProfiles.profileCount).toBe(2925);

@@ -21,7 +21,9 @@ const steel = { metal: 'Steel' };
 
 describe('catalogue mirrors the APK', () => {
   it('ships the APK\'s 22 metals with their exact densities', () => {
-    expect(METALS).toHaveLength(22);
+    // metals added for this plant sit alongside them, flagged, and must never
+    // change the ported 22
+    expect(METALS.filter((m) => !m.addedForPlant)).toHaveLength(22);
     const byName = Object.fromEntries(METALS.map((m) => [m.name, m.density]));
     expect(byName.Steel).toBe(7.85);
     expect(byName.Aluminum).toBe(2.73);

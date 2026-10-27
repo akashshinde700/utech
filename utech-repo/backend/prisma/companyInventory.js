@@ -17,6 +17,7 @@ const GRADE_TO_METAL = {
   SS446: 'SS 410/430',
   BRASS: 'Brass',
   RA330: 'SS 316/321', // RA330 is 7.94 g/cm3, the same as SS 316/321
+  INCONEL: 'Inconel',
 };
 
 /**

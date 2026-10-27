@@ -71,7 +71,16 @@ const METALS = Object.freeze([
   { name: 'SS 410/430', density: 7.71, group: 'Stainless' },
   { name: 'Zirconium', density: 6.51, group: 'Other' },
   { name: 'Molybdenum', density: 10.28, group: 'Other' },
+
+  // --- beyond the APK ---------------------------------------------------
+  // Grades this plant actually stocks that the APK never shipped. Kept in
+  // their own group so the APK's 22 stay exactly as recovered, and marked
+  // `addedForPlant` so nobody mistakes them for the ported catalogue.
+  { name: 'Inconel', density: 8.44, group: 'Alloy', addedForPlant: true },
 ]);
+
+// the catalogue as recovered from the APK, for the provenance tests
+const APK_METAL_COUNT = 22;
 
 const field = (id, label, symbol, extra) => ({ id, label, symbol, ...(extra || {}) });
 
@@ -484,6 +493,7 @@ function calculate(input) {
 }
 
 module.exports = {
+  APK_METAL_COUNT,
   METALS,
   SHAPES,
   SHAPE_IDS,
