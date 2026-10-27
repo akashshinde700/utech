@@ -41,7 +41,7 @@ export default function ProcessPage() {
     setLoading(true);
     setError(null);
     try {
-      const r = await api.get('/processes', { params: { page, pageSize: 30, sortBy: 'displayOrder', sortDir: 'asc' } });
+      const r = await api.get('/processes', { params: { page, sortBy: 'displayOrder', sortDir: 'asc' } });
       setData(r.data);
     } catch (err) {
       console.error(err);

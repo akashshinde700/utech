@@ -14,13 +14,16 @@ import { styles } from '../../lib/formStyles';
 export default function Pagination({ pagination, onPage, pageSize, itemLabel = 'records' }) {
   if (!pagination) return null;
   const { page, totalPages, total } = pagination;
+  // the API returns pageSize with every list; fall back to it so the
+  // "Showing 1–10 of 34" range appears without every page passing the prop
+  const size = pageSize || pagination.pageSize;
   // an empty list reports 0 total pages — "Page 1 of 1" reads better than "of 0"
   const lastPage = Math.max(1, totalPages || 1);
   const count = Number(total) || 0;
 
   const range =
-    pageSize && count > 0
-      ? `Showing ${Math.min((page - 1) * pageSize + 1, count)}–${Math.min(page * pageSize, count)} of ${count}`
+    size && count > 0
+      ? `Showing ${Math.min((page - 1) * size + 1, count)}–${Math.min(page * size, count)} of ${count} ${itemLabel}`
       : `${count} ${itemLabel}`;
 
   const btn = `${styles.secondaryBtn} !h-8 !px-2.5 !text-xs`;

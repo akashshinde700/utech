@@ -10,20 +10,20 @@ const { partyTypesFor, quotationTypesFor } = require('../../src/utils/typedAcces
 describe('pagination.parseListQuery', () => {
   it('applies sane defaults', () => {
     const p = parseListQuery({});
-    expect(p).toMatchObject({ page: 1, pageSize: 20, skip: 0, take: 20, sortBy: 'createdAt', sortDir: 'desc' });
+    expect(p).toMatchObject({ page: 1, pageSize: 10, skip: 0, take: 10, sortBy: 'createdAt', sortDir: 'desc' });
   });
 
   it('ignores non-numeric page and pageSize instead of poisoning skip/take', () => {
     const p = parseListQuery({ page: 'abc', pageSize: 'xyz' });
     expect(Number.isNaN(p.skip)).toBe(false);
     expect(p.page).toBe(1);
-    expect(p.take).toBe(20);
+    expect(p.take).toBe(10);
   });
 
   it('clamps pageSize to 1..100 so a client cannot ask for the whole table', () => {
     expect(parseListQuery({ pageSize: '100000' }).take).toBe(100);
-    expect(parseListQuery({ pageSize: '0' }).take).toBe(20);
-    expect(parseListQuery({ pageSize: '-5' }).take).toBe(20);
+    expect(parseListQuery({ pageSize: '0' }).take).toBe(10);
+    expect(parseListQuery({ pageSize: '-5' }).take).toBe(10);
     expect(parseListQuery({ pageSize: '50' }).take).toBe(50);
   });
 
