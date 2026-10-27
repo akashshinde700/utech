@@ -86,17 +86,22 @@ describe('AUD-201 — editing a jobcard must not wipe its Task Progress items', 
     expect(getDb().calls('jobcardOperation.create')).toHaveLength(0);
   });
 
-  it('an explicit operations array is still a replace (documented API semantics)', async () => {
+  it('an explicit operations array replaces never-started tasks (AUD-214 semantics)', async () => {
+    // The contract is still "the array is the complete list", but it is now
+    // applied by id: rows with no history are removed one by one (so their ids
+    // can be reported) and the incoming rows are created explicitly. A task that
+    // already has progress/assignees/approvals is never deleted — that case is
+    // covered by tests/api/integrity2026-10-27.test.js.
     const res = await auth(request(app).put('/api/jobcards/9')).send({
       ...jobcardFormPayload,
       operations: [{ processId: 1, machineId: 2, sequence: 1, notes: 'set ops' }],
     });
-    expect(res.status).toBe(200);
-    // clients that DO manage the operation list keep their replace semantics —
-    // the new rows are a nested create inside jobcard.update
-    expect(getDb().calls('jobcardOperation.deleteMany')).toHaveLength(1);
-    const upd = getDb().calls('jobcard.update').at(-1)[0];
-    expect(upd.data.operations.create).toHaveLength(1);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(getDb().calls('jobcardOperation.deleteMany')).toHaveLength(0);
+    expect(getDb().calls('jobcardOperation.delete').map((c) => c[0].where.id)).toEqual([501, 502]);
+    const created = getDb().calls('jobcardOperation.create');
+    expect(created).toHaveLength(1);
+    expect(created[0][0].data).toMatchObject({ jobcardId: 9, processId: 1, machineId: 2, sequence: 1, notes: 'set ops' });
   });
 
   it('the line upsert path keeps line ids (no delete-all-recreate duplication)', async () => {

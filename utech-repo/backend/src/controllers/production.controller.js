@@ -5,6 +5,7 @@ const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
+const { dateRangeFilter } = require('../utils/dates');
 
 const PRODUCTION_INCLUDE = {
   shift: true,
@@ -61,11 +62,8 @@ async function listBatches(req, res) {
   if (req.query.jobcardId) where.jobcardId = parseInt(req.query.jobcardId, 10);
   if (req.query.itemId) where.itemId = parseInt(req.query.itemId, 10);
   if (req.query.machineId) where.machineId = parseInt(req.query.machineId, 10);
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   if (search) {
     where.OR = [
       { number: { contains: search } },

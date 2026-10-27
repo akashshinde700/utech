@@ -228,3 +228,78 @@ describe('transaction failure rollback on isolated in-memory storage', () => {
     expect(saved.lines.map((line) => [line.itemName, Number(line.qty)])).toEqual([['First', 1], ['Second', 2]]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// (c) "Agar job card ya invoice save fail ho jaye to stock / financial
+//      balances aadhe update na hon."
+//
+// The cases above already prove the financial side (invoice, lines, receivable,
+// payment, job-card lines). These three add the part that was still untested:
+// an injected failure in the MIDDLE of a stock-moving write must leave neither
+// Item.currentStock nor StockLedger half-written.
+// ---------------------------------------------------------------------------
+describe('injected failures never leave stock half-updated', () => {
+  async function makeItem(code, stock) {
+    return db.item.create({ data: { name: `Stock item ${code}`, code, currentStock: stock, uom: 'PCS' } });
+  }
+
+  const stockOf = async (id) => Number((await db.item.findUnique({ where: { id } })).currentStock);
+
+  it('a failed invoice save leaves company stock and its ledger untouched', async () => {
+    const item = await makeItem('TX-ITEM-1', 7);
+    const before = { stock: await stockOf(item.id), ledger: await db.stockLedger.count({ where: { itemId: item.id } }) };
+    const res = await withInjectedFailure(db.partyLedger, 'create', () => auth(request(app).post('/api/invoices')).send({
+      date: '2026-10-01', partyId: customer.id, isIntraState: true,
+      lines: [{ itemId: item.id, description: 'Billed but never saved', qty: 2, rate: 50, gstRate: 0 }],
+    }));
+    expect(res.status).toBe(500);
+    expect(await stockOf(item.id)).toBe(before.stock);
+    expect(await db.stockLedger.count({ where: { itemId: item.id } })).toBe(before.ledger);
+  });
+
+  it('a dispatch cancellation that fails while restoring stock restores nothing and keeps the challan status', async () => {
+    const item = await makeItem('TX-ITEM-2', 10);
+    // DRAFT dispatch already moved 4 out at creation (a draft reserves stock).
+    const created = await auth(request(app).post('/api/dispatch')).send({
+      date: '2026-10-01', partyId: customer.id, lines: [{ itemId: item.id, qty: 4 }],
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(await stockOf(item.id)).toBe(6);
+
+    // Fail on the ledger insert, i.e. AFTER moveCompanyStock already incremented
+    // the item back — a no-rollback implementation leaves 10 with no ledger row.
+    const res = await withInjectedFailure(db.stockLedger, 'create', () =>
+      auth(request(app).post(`/api/dispatch/${created.body.id}/status/CANCELLED`)).send({}));
+    expect(res.status).toBe(500);
+
+    expect(await stockOf(item.id)).toBe(6);
+    const challan = await db.dispatchChallan.findUnique({ where: { id: created.body.id } });
+    expect(challan.status).toBe('DRAFT');
+    expect(await db.stockLedger.count({ where: { itemId: item.id, refType: 'DISPATCH_CANCEL' } })).toBe(0);
+  });
+
+  it('a failed job-card save leaves the existing tasks untouched', async () => {
+    const created = await auth(request(app).post('/api/jobcards')).send({
+      date: '2026-10-01', partyId: customer.id,
+      operations: [{ title: 'Turning', processId: null, sequence: 0 }],
+      lines: [{ itemName: 'Part A', qty: 1 }],
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const jc = await db.jobcard.findUnique({ where: { id: created.body.id }, include: { operations: true, lines: true } });
+    const opsBefore = jc.operations.map((o) => [o.id, o.title, o.sequence]);
+    expect(opsBefore).toHaveLength(1);
+
+    const res = await withInjectedFailure(db.jobcardOperation, 'create', () =>
+      auth(request(app).put(`/api/jobcards/${created.body.id}`)).send({
+        operations: [
+          { id: opsBefore[0][0], title: 'Turning (renamed)', processId: null, sequence: 0 },
+          { title: 'Milling', processId: null, sequence: 1 },
+        ],
+      }));
+    expect(res.status).toBe(500);
+
+    const after = await db.jobcard.findUnique({ where: { id: created.body.id }, include: { operations: true, lines: true } });
+    expect(after.operations.map((o) => [o.id, o.title, o.sequence])).toEqual(opsBefore);
+    expect(after.lines.map((l) => l.itemName)).toEqual(jc.lines.map((l) => l.itemName));
+  });
+});

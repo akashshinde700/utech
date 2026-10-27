@@ -7,6 +7,46 @@ const { audit } = require('../utils/audit');
 
 const INCLUDE = { lines: true };
 
+// A quality check is a CERTIFICATE: it must point at a document that really
+// exists, and its certificate number must identify exactly one certificate.
+// Neither was enforced before — a check could reference JOBCARD #999999 (which
+// nobody can open) and two PASS certificates could carry the same number, which
+// is precisely what an auditor looks for.
+const REF_DELEGATES = {
+  GRN: 'gRN',
+  JOBCARD: 'jobcard',
+  DISPATCH: 'dispatchChallan',
+  TASK: 'jobcardOperation',
+};
+
+async function assertReferenceExists(db, refType, refId) {
+  const delegate = REF_DELEGATES[refType];
+  if (!delegate) throw new HttpError(400, `Unsupported reference type: ${refType}`);
+  const row = await db[delegate].findUnique({ where: { id: Number(refId) }, select: { id: true } });
+  if (!row) throw new HttpError(400, `No ${refType} with id ${refId} exists — record the quality check against a real document`);
+}
+
+// Case/whitespace-insensitive uniqueness. A database unique index would be
+// better, but existing installations may already hold duplicates that must be
+// reviewed rather than deleted by a migration; until then this is the guard.
+async function normaliseCertificateNo(db, value, excludeId = null) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const certificateNo = String(value).trim();
+  if (!certificateNo) return null;
+  const rows = await db.qualityCheck.findMany({
+    where: { certificateNo: { not: null } },
+    select: { id: true, number: true, certificateNo: true },
+  });
+  const clash = rows.find((r) => r.id !== excludeId
+    && r.certificateNo
+    && String(r.certificateNo).trim().toLowerCase() === certificateNo.toLowerCase());
+  if (clash) {
+    throw new HttpError(409, `Certificate number "${certificateNo}" is already used by quality check ${clash.number}`);
+  }
+  return certificateNo;
+}
+
 async function list(req, res) {
   const { skip, take, page, pageSize, sortBy, sortDir, search } = parseListQuery(req.query, [
     'date', 'createdAt', 'number',
@@ -34,10 +74,13 @@ async function create(req, res) {
   if (!rest.refId || !Number.isInteger(Number(rest.refId)) || Number(rest.refId) <= 0) {
     throw new HttpError(400, 'A valid Ref ID is required');
   }
+  await assertReferenceExists(prisma, rest.refType, rest.refId);
+  const certificateNo = await normaliseCertificateNo(prisma, rest.certificateNo);
   const number = await nextNumber('qualityCheck', 'qc');
   const qc = await prisma.qualityCheck.create({
     data: {
       ...rest,
+      certificateNo,
       date: new Date(rest.date),
       number,
       lines: { create: lines },
@@ -58,6 +101,9 @@ async function update(req, res) {
     if (rest[key] !== undefined) editable[key] = rest[key];
   }
   if (editable.date) editable.date = new Date(editable.date);
+  if (editable.certificateNo !== undefined) {
+    editable.certificateNo = await normaliseCertificateNo(prisma, editable.certificateNo, id);
+  }
   const qc = await prisma.$transaction(async (tx) => {
     if (lines) {
       await tx.qualityCheckLine.deleteMany({ where: { qcId: id } });

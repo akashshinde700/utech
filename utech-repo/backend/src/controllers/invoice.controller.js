@@ -7,6 +7,7 @@ const { nextNumber } = require('../utils/numbering');
 const { calcLineAmount, calcTaxes, round2, roundInvoiceTotal, stateCodeOf } = require('../utils/gst');
 const { streamInvoicePdf } = require('../services/invoice.pdf');
 const { audit } = require('../utils/audit');
+const { dateRangeFilter } = require('../utils/dates');
 
 const INVOICE_INCLUDE = {
   party: true,
@@ -53,11 +54,8 @@ async function list(req, res) {
   }
   const partyId = parseInt(req.query.partyId, 10);
   if (Number.isFinite(partyId)) where.partyId = partyId;
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   if (search) {
     where.OR = [
       { number: { contains: search } },

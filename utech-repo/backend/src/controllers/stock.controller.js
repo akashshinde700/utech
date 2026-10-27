@@ -4,6 +4,7 @@ const prisma = require('../config/prisma');
 const HttpError = require('../utils/httpError');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
+const { dateRangeFilter } = require('../utils/dates');
 
 const ACTIVE_CUSTOMER_STATUSES = ['RECEIVED', 'IN_PROCESS', 'AT_VENDOR'];
 
@@ -27,6 +28,7 @@ async function summary(_req, res) {
     todayCustomerInwardCount,
     todayDispatchCount,
     todayVendorDispatchCount,
+    customerReserved,
   ] = await Promise.all([
     prisma.item.count({ where: { isActive: true } }),
     prisma.item.aggregate({ where: { isActive: true }, _sum: { currentStock: true } }),
@@ -43,6 +45,12 @@ async function summary(_req, res) {
     prisma.customerMaterialLot.count({ where: { createdAt: { gte: startOfDay } } }),
     prisma.dispatchChallan.count({ where: { createdAt: { gte: startOfDay } } }),
     prisma.jobworkChallan.count({ where: { createdAt: { gte: startOfDay } } }),
+    // Customer material reserved by job cards (CustomerMaterialAllocation is a
+    // reservation, not a movement). Without this the dashboard/stock page
+    // reported "reserved 0" while job cards demonstrably held material.
+    prisma.customerMaterialAllocation.aggregate({
+      where: { releasedAt: null }, _sum: { qty: true, weight: true }, _count: true,
+    }),
   ]);
 
   // stock value = Σ currentStock × purchaseRate over active items (item master is
@@ -81,16 +89,23 @@ async function summary(_req, res) {
       activeLots: customerActiveLots,
       inProcess: customerInProcessLots,
       atVendor: materialAtVendor.customer,
+      // live reservation totals (released allocations excluded)
+      reservedQty: stockService.roundQuantity(customerReserved._sum.qty || 0),
+      reservedWeight: stockService.roundQuantity(customerReserved._sum.weight || 0),
+      reservations: customerReserved._count || 0,
     },
     materialAtVendor,
     materialInProcess: productionInProgress + customerInProcessLots,
     lowStockItems: lowStockItems.slice(0, 10),
     todayInward: todayGrnCount + todayCustomerInwardCount,
     todayOutward: todayDispatchCount + todayVendorDispatchCount,
-    // No allocation/reservation flow exists anywhere in the app today (no sales
-    // order holds, no stock commitments) — "available" is simply currentStock;
-    // "reserved" is a placeholder until a real reservation flow is designed.
-    reservedStock: 0,
+    // Company stock has no reservation/hold concept, but CUSTOMER material is
+    // reserved per job card (CustomerMaterialAllocation). Report the real total
+    // instead of the old hardcoded 0, which contradicted the Customer Inventory
+    // page whenever a job card held material.
+    reservedStock: stockService.roundQuantity(customerReserved._sum.qty || 0),
+    reservedWeight: stockService.roundQuantity(customerReserved._sum.weight || 0),
+    reservedOwnerType: 'CUSTOMER',
   });
 }
 
@@ -99,23 +114,11 @@ async function ledger(req, res) {
   if (req.query.ownerType) where.ownerType = req.query.ownerType;
   if (req.query.itemId) where.itemId = parseInt(req.query.itemId, 10);
   if (req.query.customerMaterialLotId) where.customerMaterialLotId = parseInt(req.query.customerMaterialLotId, 10);
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) {
-      const from = new Date(req.query.from);
-      if (!Number.isFinite(from.getTime())) throw new HttpError(400, 'Invalid start date');
-      where.date.gte = from;
-    }
-    if (req.query.to) {
-      const to = new Date(req.query.to);
-      if (!Number.isFinite(to.getTime())) throw new HttpError(400, 'Invalid end date');
-      // HTML date inputs specify a whole day; include the end date's times too.
-      if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.to)) {
-        to.setUTCDate(to.getUTCDate() + 1);
-        where.date.lt = to;
-      } else where.date.lte = to;
-    }
-  }
+  // HTML date inputs specify a whole day; utils/dates.dateRangeFilter includes
+  // the end date's later times (the same helper every other list/report uses,
+  // so the ledger and the stock report can never disagree by half a day).
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   const rows = await prisma.stockLedger.findMany({
     where,
     include: {

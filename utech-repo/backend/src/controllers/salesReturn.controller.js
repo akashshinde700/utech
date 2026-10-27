@@ -7,6 +7,7 @@ const { calcLineAmount, calcTaxes, round2 } = require('../utils/gst');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
 const { assertLines } = require('../utils/lines');
+const { dateRangeFilter } = require('../utils/dates');
 
 const SALES_RETURN_INCLUDE = {
   party: true,
@@ -31,11 +32,8 @@ async function list(req, res) {
   if (req.query.status) where.status = req.query.status;
   if (req.query.partyId) where.partyId = parseInt(req.query.partyId, 10);
   if (req.query.invoiceId) where.invoiceId = parseInt(req.query.invoiceId, 10);
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   if (search) {
     where.OR = [
       { number: { contains: search } },

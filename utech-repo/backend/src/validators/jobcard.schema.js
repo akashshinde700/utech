@@ -12,7 +12,13 @@ const lineSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+// A job-card operation is a Task Progress task. `id` lets an edit address the
+// EXISTING task so its assignment/progress/approval survive (AUD-214); omitting
+// it creates a new one. Task identity and lifecycle (`title`, `status`,
+// `progressPercent`, approvals) are deliberately NOT accepted here — they belong
+// to /api/tasks, so a job-card save can never fake progress.
 const operationSchema = z.object({
+  id: z.number().int().positive().optional(),
   processId: z.number().int().optional().nullable(),
   machineId: z.number().int().optional().nullable(),
   sequence: z.number().int().default(0),

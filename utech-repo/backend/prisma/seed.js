@@ -434,6 +434,24 @@ async function main(prisma = defaultPrisma) {
     });
   }
 
+  // Real company stock register (the four photographed sheets in
+  // company_inventory/). Idempotent and additive only: an item that already
+  // exists is never re-priced or re-stocked, so re-seeding cannot corrupt a
+  // balance that GRN/dispatch/production documents have since moved.
+  console.log('Seeding company material inventory (company_inventory/ sheets)...');
+  const companyInventory = require('./companyInventory');
+  const companyIdentity = companyInventory.assertSameCompany();
+  if (!companyIdentity.ok) {
+    const failed = companyIdentity.checks.filter((c) => !c.ok).map((c) => c.name).join('; ');
+    throw new Error(`Company inventory does not verify against ${companyIdentity.company.name}: ${failed}`);
+  }
+  const companyInventoryResult = await companyInventory.seedCompanyInventory(prisma, { log: console.log });
+  console.log(
+    `Company inventory verified: ${companyInventoryResult.verification.totals.lines} lines, ` +
+    `Σ rate ${companyInventoryResult.verification.totals.rateSum} = printed ` +
+    `${companyInventoryResult.verification.totals.printedTotal}.`
+  );
+
   console.log('Seeding sample invoices...');
   const parties = await prisma.party.findMany({ where: { code: { in: ['P-0001','P-0002','P-0005','P-0008','P-0010'] } } });
   const items = await prisma.item.findMany({ where: { code: { in: ['IT-0001','IT-0002','IT-0005','IT-0007','IT-0008','IT-0009'] } } });
