@@ -11,14 +11,14 @@ import { gstRate, hsn, positiveNumber, required, validateAll } from '../../lib/v
 import toast from 'react-hot-toast';
 
 const empty = {
-  name: '', description: '', type: 'RAW_MATERIAL', hsnCode: '', projectNumber: '', projectId: '',
+  name: '', description: '', type: 'RAW_MATERIAL', size: '', hsnCode: '', projectNumber: '', projectId: '',
   purchaseRate: '', saleRate: '', gstRate: 18,
   openingStock: 0, minStock: 0,
   uomId: '', categoryId: '',
 };
 
 const FIELD_IDS = {
-  name: 'item-name', description: 'item-description', type: 'item-type', hsnCode: 'item-hsn',
+  name: 'item-name', description: 'item-description', type: 'item-type', size: 'item-size', hsnCode: 'item-hsn',
   projectNumber: 'item-project', projectId: 'item-project-link', uomId: 'item-uom', categoryId: 'item-category',
   purchaseRate: 'item-purchase-rate', saleRate: 'item-sale-rate', gstRate: 'item-gst-rate',
   openingStock: 'item-opening-stock', minStock: 'item-min-stock',
@@ -148,6 +148,9 @@ export default function ItemForm() {
                 <option value="CONSUMABLE">Consumable</option>
                 <option value="SERVICE">Service</option>
               </select>
+            </FormField>
+            <FormField id="item-size" label="Material Size" hint="As written on the stock sheet / drawing, e.g. OD 60 X 5 mtr.">
+              <input id="item-size" className={errCls('size')} value={form.size || ''} onChange={(e) => set('size', e.target.value)} />
             </FormField>
             <FormField id="item-hsn" label="HSN Code" hint="4, 6 or 8 digits" error={errors.hsnCode}>
               <input id="item-hsn" className={errCls('hsnCode')} value={form.hsnCode || ''} onChange={(e) => set('hsnCode', e.target.value)} onBlur={() => blur('hsnCode')} aria-invalid={!!errors.hsnCode} />

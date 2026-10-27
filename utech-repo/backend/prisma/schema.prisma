@@ -57,7 +57,7 @@ model User {
   taskAssignmentsMade         JobcardOperationAssignee[] @relation("TaskAssigneeAssignedBy")
   permissionOverrides         UserPermission[]
   salesReturnsApprovedByMe    SalesReturn[]              @relation("SalesReturnApprovedBy")
-  purchaseReturnsApprovedByMe PurchaseReturn[]          @relation("PurchaseReturnApprovedBy")
+  purchaseReturnsApprovedByMe PurchaseReturn[]           @relation("PurchaseReturnApprovedBy")
   salesReturnsReceivedByMe    SalesReturn[]              @relation("SalesReturnReceivedBy")
   processesCreated            Process[]
   notifications               Notification[]
@@ -304,6 +304,10 @@ model Item {
   name          String
   description   String?       @db.Text
   type          ItemType      @default(RAW_MATERIAL)
+  // physical size as written on the material sheet / drawing, e.g.
+  // "OD 60 X 5 mtr." or "1500 x 3000 x 12 th" — free text on purpose, the
+  // register uses a different convention per material family
+  size          String?
   hsnCode       String?
   projectNumber String? // legacy free-text label — kept for items tagged before the real link existed
   // real link to a Project (replaces the free-text projectNumber above)
@@ -433,21 +437,21 @@ enum CustomerMaterialStatus {
 }
 
 model StockLedger {
-  id        Int      @id @default(autoincrement())
-  itemId    Int?
-  item      Item?    @relation(fields: [itemId], references: [id])
-  date      DateTime
-  refType   String // "GRN" | "GRN_CANCEL" | "DISPATCH" | "JOBWORK_OUT" | "JOBWORK_IN" | "JOBWORK_CANCEL" | "PRODUCTION" | "SALES_RETURN" | "PURCHASE_RETURN" | "CUSTOMER_INWARD" | "CUSTOMER_DISPATCH" | "ADJUSTMENT" | "OPENING"
-  refId     Int?
-  qtyIn     Decimal  @default(0.000) @db.Decimal(14, 3)
-  qtyOut    Decimal  @default(0.000) @db.Decimal(14, 3)
-  balance   Decimal  @default(0.000) @db.Decimal(14, 3)
+  id            Int      @id @default(autoincrement())
+  itemId        Int?
+  item          Item?    @relation(fields: [itemId], references: [id])
+  date          DateTime
+  refType       String // "GRN" | "GRN_CANCEL" | "DISPATCH" | "JOBWORK_OUT" | "JOBWORK_IN" | "JOBWORK_CANCEL" | "PRODUCTION" | "SALES_RETURN" | "PURCHASE_RETURN" | "CUSTOMER_INWARD" | "CUSTOMER_DISPATCH" | "ADJUSTMENT" | "OPENING"
+  refId         Int?
+  qtyIn         Decimal  @default(0.000) @db.Decimal(14, 3)
+  qtyOut        Decimal  @default(0.000) @db.Decimal(14, 3)
+  balance       Decimal  @default(0.000) @db.Decimal(14, 3)
   // Nullable means the movement's weight was not measured, never zero by inference.
   weightIn      Decimal? @db.Decimal(14, 3)
   weightOut     Decimal? @db.Decimal(14, 3)
   weightBalance Decimal? @db.Decimal(14, 3)
-  notes     String?
-  createdAt DateTime @default(now())
+  notes         String?
+  createdAt     DateTime @default(now())
 
   ownerType             OwnerType            @default(COMPANY)
   customerMaterialLotId Int?
@@ -500,17 +504,17 @@ model CustomerMaterialLot {
 // A reservation, not a stock movement: release before issuing/consuming it.
 // History remains attached to both lot and jobcard; no inferred legacy rows.
 model CustomerMaterialAllocation {
-  id         Int                 @id @default(autoincrement())
-  lotId      Int
-  lot        CustomerMaterialLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
-  jobcardId  Int
-  jobcard    Jobcard             @relation(fields: [jobcardId], references: [id], onDelete: Restrict)
-  qty        Decimal             @db.Decimal(14, 3)
-  weight     Decimal             @db.Decimal(14, 3)
-  createdById Int?
-  releasedById Int?
-  createdAt  DateTime            @default(now())
-  releasedAt DateTime?
+  id            Int                 @id @default(autoincrement())
+  lotId         Int
+  lot           CustomerMaterialLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  jobcardId     Int
+  jobcard       Jobcard             @relation(fields: [jobcardId], references: [id], onDelete: Restrict)
+  qty           Decimal             @db.Decimal(14, 3)
+  weight        Decimal             @db.Decimal(14, 3)
+  createdById   Int?
+  releasedById  Int?
+  createdAt     DateTime            @default(now())
+  releasedAt    DateTime?
   releaseReason String?
 
   @@index([lotId, releasedAt])
@@ -991,22 +995,22 @@ enum DispatchStatus {
 }
 
 model DispatchChallan {
-  id          Int            @id @default(autoincrement())
-  number      String         @unique
-  date        DateTime
-  partyId     Int
-  party       Party          @relation(fields: [partyId], references: [id])
-  vehicleNo   String?
-  driverName  String?
-  driverPhone String?
-  ewayBillNo  String?
-  status      DispatchStatus @default(DRAFT)
-  invoiceId   Int?
-  notes       String?
-  lines       DispatchLine[]
-  salesReturns SalesReturn[] @relation("DispatchChallanSalesReturns")
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id           Int            @id @default(autoincrement())
+  number       String         @unique
+  date         DateTime
+  partyId      Int
+  party        Party          @relation(fields: [partyId], references: [id])
+  vehicleNo    String?
+  driverName   String?
+  driverPhone  String?
+  ewayBillNo   String?
+  status       DispatchStatus @default(DRAFT)
+  invoiceId    Int?
+  notes        String?
+  lines        DispatchLine[]
+  salesReturns SalesReturn[]  @relation("DispatchChallanSalesReturns")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   @@index([partyId])
   @@index([status])
@@ -1464,41 +1468,41 @@ enum ReturnStatus {
 }
 
 model SalesReturn {
-  id           Int               @id @default(autoincrement())
-  number       String            @unique
-  date         DateTime
-  invoiceId    Int
-  invoice      Invoice           @relation(fields: [invoiceId], references: [id])
-  partyId      Int
-  party        Party             @relation("PartySalesReturns", fields: [partyId], references: [id])
-  status       ReturnStatus      @default(DRAFT)
-  subtotal     Decimal           @default(0.00) @db.Decimal(14, 2)
-  cgst         Decimal           @default(0.00) @db.Decimal(14, 2)
-  sgst         Decimal           @default(0.00) @db.Decimal(14, 2)
-  igst         Decimal           @default(0.00) @db.Decimal(14, 2)
-  discount     Decimal           @default(0.00) @db.Decimal(14, 2)
-  total        Decimal           @default(0.00) @db.Decimal(14, 2)
-  refundAmount Decimal           @default(0.00) @db.Decimal(14, 2)
-  reason       String?           @db.Text
-  notes        String?           @db.Text
-  approvedById Int?
-  approvedBy   User?             @relation("SalesReturnApprovedBy", fields: [approvedById], references: [id])
-  approvedAt   DateTime?
+  id                Int               @id @default(autoincrement())
+  number            String            @unique
+  date              DateTime
+  invoiceId         Int
+  invoice           Invoice           @relation(fields: [invoiceId], references: [id])
+  partyId           Int
+  party             Party             @relation("PartySalesReturns", fields: [partyId], references: [id])
+  status            ReturnStatus      @default(DRAFT)
+  subtotal          Decimal           @default(0.00) @db.Decimal(14, 2)
+  cgst              Decimal           @default(0.00) @db.Decimal(14, 2)
+  sgst              Decimal           @default(0.00) @db.Decimal(14, 2)
+  igst              Decimal           @default(0.00) @db.Decimal(14, 2)
+  discount          Decimal           @default(0.00) @db.Decimal(14, 2)
+  total             Decimal           @default(0.00) @db.Decimal(14, 2)
+  refundAmount      Decimal           @default(0.00) @db.Decimal(14, 2)
+  reason            String?           @db.Text
+  notes             String?           @db.Text
+  approvedById      Int?
+  approvedBy        User?             @relation("SalesReturnApprovedBy", fields: [approvedById], references: [id])
+  approvedAt        DateTime?
   // AUD-211: proof that the goods PHYSICALLY came back. Stock may only be
   // restored (process) once a return challan number and the date the material
   // was received are recorded — a return document alone proves a commercial
   // claim, not the movement of goods.
-  returnChallanNo  String?
-  receivedAt       DateTime?
-  receivedById     Int?
-  receivedBy       User?             @relation("SalesReturnReceivedBy", fields: [receivedById], references: [id])
+  returnChallanNo   String?
+  receivedAt        DateTime?
+  receivedById      Int?
+  receivedBy        User?             @relation("SalesReturnReceivedBy", fields: [receivedById], references: [id])
   // optional link to the outbound dispatch challan the goods went out on;
   // when present, quantities are capped by what that challan actually shipped
   dispatchChallanId Int?
-  dispatchChallan   DispatchChallan? @relation("DispatchChallanSalesReturns", fields: [dispatchChallanId], references: [id])
-  lines        SalesReturnLine[]
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
+  dispatchChallan   DispatchChallan?  @relation("DispatchChallanSalesReturns", fields: [dispatchChallanId], references: [id])
+  lines             SalesReturnLine[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   @@index([invoiceId])
   @@index([partyId])

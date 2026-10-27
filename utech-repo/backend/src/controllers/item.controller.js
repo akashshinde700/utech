@@ -23,6 +23,8 @@ async function list(req, res) {
       { name: { contains: search } },
       { code: { contains: search } },
       { hsnCode: { contains: search } },
+      // the stock register is searched by size as often as by name
+      { size: { contains: search } },
     ];
   }
   if (lowStockOnly) {

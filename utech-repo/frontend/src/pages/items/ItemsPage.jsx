@@ -87,6 +87,7 @@ export default function ItemsPage() {
           columns={[
             { key: 'code', title: 'Code', width: 90 },
             { key: 'name', title: 'Name' },
+            { key: 'size', title: 'Size', render: (r) => r.size || '—' },
             { key: 'project', title: 'Project', render: (r) => r.project?.code || r.projectNumber || '—' },
             { key: 'type', title: 'Type' },
             { key: 'hsnCode', title: 'HSN' },

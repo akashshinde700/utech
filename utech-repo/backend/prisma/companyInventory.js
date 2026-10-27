@@ -446,12 +446,19 @@ async function seedCompanyInventory(prisma, { now = () => new Date(), log = () =
   let created = 0;
   let skipped = 0;
   let ledgerRows = 0;
+  let sizesFilled = 0;
 
   for (const item of items) {
     const existing = await prisma.item.findUnique({ where: { code: item.code } });
     if (existing) {
       // Never rewrite an existing item's balances or master data: operational
-      // documents (GRN, dispatch, production) may already reference it.
+      // documents (GRN, dispatch, production) may already reference it. The one
+      // exception is a size that was never recorded — filling a blank field
+      // adds information without changing any number.
+      if (!existing.size && item.size) {
+        await prisma.item.update({ where: { id: existing.id }, data: { size: item.size } });
+        sizesFilled += 1;
+      }
       skipped += 1;
       continue;
     }
@@ -463,6 +470,7 @@ async function seedCompanyInventory(prisma, { now = () => new Date(), log = () =
           name: item.name,
           description: item.description,
           type: 'RAW_MATERIAL',
+          size: item.size,
           hsnCode: item.hsnCode,
           purchaseRate: item.rate,
           saleRate: null,
@@ -492,8 +500,9 @@ async function seedCompanyInventory(prisma, { now = () => new Date(), log = () =
     });
   }
 
-  log(`Company inventory: ${created} item(s) created, ${skipped} already present (unchanged).`);
-  return { created, skipped, ledgerRows, items: items.length, verification };
+  log(`Company inventory: ${created} item(s) created, ${skipped} already present`
+    + (sizesFilled ? `, ${sizesFilled} had their size filled in` : ' (unchanged)') + '.');
+  return { created, skipped, ledgerRows, sizesFilled, items: items.length, verification };
 }
 
 module.exports = {

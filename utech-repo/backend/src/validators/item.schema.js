@@ -6,6 +6,7 @@ const itemBase = {
   name: z.string().min(2),
   description: z.string().optional().nullable(),
   type: z.enum(['RAW_MATERIAL', 'SEMI_FINISHED', 'FINISHED', 'CONSUMABLE', 'SERVICE']).default('RAW_MATERIAL'),
+  size: z.string().max(191).optional().nullable(),
   hsnCode: z.string().optional().nullable(),
   projectNumber: z.string().optional().nullable(),
   projectId: z.number().int().optional().nullable(),
