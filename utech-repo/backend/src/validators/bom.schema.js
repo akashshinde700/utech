@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 const bomItemSchema = z.object({
   itemId: z.number().int().positive(),
@@ -18,6 +19,6 @@ const createBomSchema = z.object({
 
 // `code` is the BOM's identity — locked after creation, like every other
 // master in this app (item/party/machine/process)
-const updateBomSchema = createBomSchema.omit({ code: true }).partial();
+const updateBomSchema = partialNoDefaults(createBomSchema.omit({ code: true }));
 
 module.exports = { createBomSchema, updateBomSchema };

@@ -13,7 +13,15 @@ const SALES_RETURN_INCLUDE = {
   invoice: { include: { lines: true } },
   lines: { include: { item: true } },
   approvedBy: { select: { id: true, name: true, email: true } },
+  receivedBy: { select: { id: true, name: true, email: true } },
+  dispatchChallan: { select: { id: true, number: true, status: true, date: true } },
 };
+
+// Statuses where the physical receipt may still be recorded/changed. Once the
+// stock has been put back (PROCESSED) or the document abandoned, the proof is
+// frozen with the rest of the document.
+const RECEIPT_OPEN_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED'];
+const CHALLAN_DISPATCHED_STATUSES = ['DISPATCHED', 'DELIVERED'];
 
 async function list(req, res) {
   const { skip, take, page, pageSize, sortBy, sortDir, search } = parseListQuery(req.query, [
@@ -97,6 +105,125 @@ async function assertReturnableLines(prismaLike, lines, invoice, excludeReturnId
       throw new HttpError(400, `Return quantity exceeds the invoiced quantity for line ${l.invoiceLineId} (invoiced ${Number(invoiceLine.qty)}, already returned ${priorReturned})`);
     }
   }
+}
+
+// AUD-211 — a sales return proves a commercial claim, not that the goods came
+// back. Stock is only allowed to move on process(), and only once this proof is
+// recorded: the challan number the material arrived with, the date it was
+// received, and (optionally) the outbound dispatch challan it belongs to.
+//
+// When a dispatch challan is named it must be the SAME customer's, it must
+// actually have left the building (DISPATCHED/DELIVERED — a draft reserves
+// stock but was never shipped), and the cumulative quantity returned against
+// it can never exceed what that challan shipped.
+async function validateReceiptProof(prismaLike, salesReturn, proof) {
+  const receivedAt = new Date(proof.receivedAt);
+  if (Number.isNaN(receivedAt.getTime())) {
+    throw new HttpError(400, 'Received date is not a valid date');
+  }
+  // A receipt cannot be dated in the future: that would let someone "prove" a
+  // physical return that has not happened yet. A minute of slack absorbs clock
+  // skew between the client and the server.
+  if (receivedAt.getTime() > Date.now() + 60 * 1000) {
+    throw new HttpError(400, 'Received date cannot be in the future');
+  }
+
+  const challanId = proof.dispatchChallanId == null ? null : Number(proof.dispatchChallanId);
+  if (challanId == null) return { receivedAt, challanId: null, challan: null };
+
+  const challan = await prismaLike.dispatchChallan.findUnique({
+    where: { id: challanId },
+    include: { lines: true },
+  });
+  if (!challan) throw new HttpError(404, 'Dispatch challan not found');
+  if (challan.partyId !== salesReturn.partyId) {
+    throw new HttpError(400, 'The dispatch challan belongs to a different customer');
+  }
+  if (!CHALLAN_DISPATCHED_STATUSES.includes(challan.status)) {
+    throw new HttpError(
+      400,
+      `Dispatch challan ${challan.number} is ${challan.status} — only dispatched or delivered goods can come back`,
+    );
+  }
+
+  // Cumulative returned quantity per item against this challan, excluding the
+  // return being edited/processed (its own lines must not count twice).
+  const dispatchedByItem = new Map();
+  for (const line of challan.lines || []) {
+    const key = Number(line.itemId);
+    dispatchedByItem.set(key, (dispatchedByItem.get(key) || 0) + Number(line.qty));
+  }
+  const returnedByItem = new Map();
+  for (const line of salesReturn.lines || []) {
+    if (line.itemId == null) continue;
+    const key = Number(line.itemId);
+    returnedByItem.set(key, (returnedByItem.get(key) || 0) + Number(line.qty));
+  }
+  for (const [itemId, returning] of returnedByItem.entries()) {
+    const dispatched = dispatchedByItem.get(itemId) || 0;
+    if (dispatched === 0) {
+      throw new HttpError(
+        400,
+        `This return contains an item that dispatch challan ${challan.number} never shipped`,
+      );
+    }
+    const priorAgg = await prismaLike.salesReturnLine.aggregate({
+      where: {
+        itemId,
+        salesReturn: {
+          dispatchChallanId: challanId,
+          status: { not: 'CANCELLED' },
+          ...(salesReturn.id ? { id: { not: salesReturn.id } } : {}),
+        },
+      },
+      _sum: { qty: true },
+    });
+    const priorReturned = Number(priorAgg._sum.qty || 0);
+    if (priorReturned + returning > dispatched) {
+      throw new HttpError(
+        400,
+        `Return quantity exceeds what dispatch challan ${challan.number} shipped for this item (shipped ${dispatched}, already returned ${priorReturned})`,
+      );
+    }
+  }
+
+  return { receivedAt, challanId, challan };
+}
+
+// POST /sales-returns/:id/receipt — record the physical goods receipt.
+async function recordReceipt(req, res) {
+  const id = parseInt(req.params.id, 10);
+  const { returnChallanNo, receivedAt, dispatchChallanId } = req.body;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const existing = await tx.salesReturn.findUnique({ where: { id }, include: { lines: true } });
+    if (!existing) throw new HttpError(404, 'Sales return not found');
+    if (!RECEIPT_OPEN_STATUSES.includes(existing.status)) {
+      throw new HttpError(400, `Cannot record a receipt for a sales return in ${existing.status} status`);
+    }
+
+    const proof = await validateReceiptProof(tx, existing, {
+      receivedAt,
+      dispatchChallanId: dispatchChallanId ?? existing.dispatchChallanId ?? null,
+    });
+
+    const saved = await tx.salesReturn.update({
+      where: { id },
+      data: {
+        returnChallanNo: returnChallanNo.trim(),
+        receivedAt: proof.receivedAt,
+        receivedById: req.user ? req.user.id : null,
+        dispatchChallanId: proof.challanId,
+      },
+      include: SALES_RETURN_INCLUDE,
+    });
+    await audit(req, 'receipt', 'SalesReturn', id, {
+      number: saved.number, returnChallanNo: saved.returnChallanNo, dispatchChallanId: proof.challanId,
+    }, tx);
+    return saved;
+  });
+
+  res.json(updated);
 }
 
 async function create(req, res) {
@@ -261,6 +388,48 @@ async function process(req, res) {
       throw new HttpError(400, 'Cannot process sales return in ' + existing.status + ' status');
     }
 
+    // AUD-211 — no physical proof, no stock movement. Proof captured on the
+    // document wins; a caller may also supply it inline (and it is then stored
+    // on the same record, so the audit trail is identical either way).
+    const inlineProof = req.body && (req.body.returnChallanNo || req.body.receivedAt);
+    if (inlineProof) {
+      const proof = await validateReceiptProof(tx, existing, {
+        receivedAt: req.body.receivedAt || existing.receivedAt,
+        dispatchChallanId: req.body.dispatchChallanId ?? existing.dispatchChallanId ?? null,
+      });
+      existing.returnChallanNo = (req.body.returnChallanNo || existing.returnChallanNo || '').trim();
+      existing.receivedAt = proof.receivedAt;
+      existing.dispatchChallanId = proof.challanId;
+      if (!existing.returnChallanNo) {
+        throw new HttpError(400, 'Record the return challan number before processing');
+      }
+      await tx.salesReturn.update({
+        where: { id },
+        data: {
+          returnChallanNo: existing.returnChallanNo,
+          receivedAt: existing.receivedAt,
+          receivedById: req.user ? req.user.id : null,
+          dispatchChallanId: existing.dispatchChallanId,
+        },
+      });
+    }
+
+    if (!existing.returnChallanNo || !existing.receivedAt) {
+      throw new HttpError(
+        400,
+        'Record the physical return receipt first (return challan number and the date the goods were received) — '
+        + 'without it there is no proof the material actually came back, so stock cannot be restored',
+      );
+    }
+    if (existing.dispatchChallanId) {
+      // re-validate at the moment stock moves: another return may have claimed
+      // the same challan quantity since the receipt was recorded
+      await validateReceiptProof(tx, existing, {
+        receivedAt: existing.receivedAt,
+        dispatchChallanId: existing.dispatchChallanId,
+      });
+    }
+
     // Update stock ledger for returned items. A description-only line (no
     // catalog item) has no stock position — the sale never moved item stock
     // for it, so "restoring" it would mint inventory out of thin air
@@ -312,4 +481,4 @@ async function remove(req, res) {
   res.json({ ok: true });
 }
 
-module.exports = { list, get, create, update, approve, process, remove };
+module.exports = { list, get, create, update, approve, recordReceipt, process, remove };

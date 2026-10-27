@@ -1,6 +1,10 @@
 # BUSINESS_LOGIC_BUGS.md — confirmed defects, fixes and verification
 
 **Audit date:** 2026-10-17 · **Branch:** `arena/5f43ac08-utech` (pass 2; pass 1 = PR #1, `arena/f79889ce-utech`)
+**Pass 3 (2026-10-27, `arena/2b90aa02-utech`):** AUD-210 (GRN cancel → negative stock),
+AUD-211 (sales return had no physical-receipt proof), AUD-212 (zod v4 update-payload
+defaults) and AUD-213 (dependency advisories) — full write-up in
+[`HARDENING_2026-10-27.md`](./HARDENING_2026-10-27.md).
 Severity: P0 data loss/security · P1 core workflow broken · P2 degraded/risky · P3 hygiene.
 Status: `FIXED` = code changed **and** a regression test that failed before the change · `OPEN` = diagnosed, not changed.
 
@@ -67,6 +71,15 @@ Status: `FIXED` = code changed **and** a regression test that failed before the 
 - Full write-up in `KEYBOARD_SHORTCUT_AUDIT.md`. Root cause: same-node `document` listeners + `stopPropagation` cannot suppress them; registration order ran the Modal first. Fix: the select consumes Escape on `window` capture. 2 tests fail pre-fix.
 
 ---
+
+## Fixed in pass 3 (2026-10-27) — details in HARDENING_2026-10-27.md
+
+| ID | Sev | Finding | Fix |
+|---|---|---|---|
+| AUD-210 | P1 | `DELETE /api/grns/:id` reversed a receipt with `allowNegative: true` unconditionally, so cancelling after the goods were consumed/dispatched left `Item.currentStock` negative with no warning | pre-check shared in `stockService.findStockShortfalls`; 400 with the exact shortfalls; forced reversal only with `stock.adjust`/SUPERADMIN, audited and noted in the ledger |
+| AUD-211 | P1 | `POST /api/sales-returns/:id/process` restored stock on the return document alone — no evidence the material came back | `returnChallanNo` + `receivedAt` + `receivedById` (+ optional `dispatchChallanId`) on the return, `POST /:id/receipt` to record it, process requires it; challan quantities cap the return |
+| AUD-212 | P1 | zod v4 re-injected `.default()` values into partial (update) payloads, resurrecting AUD-201 | `validators/partial.js` `partialNoDefaults()` used by all 14 update schemas |
+| AUD-213 | P1 | Dependency advisories were never measured (`npm audit` unreachable) | scan executed: 16 backend + 21 frontend advisories → **0 / 0**; `xlsx` and unused `nodemailer` removed, zod/vitest/vite/axios/router bumped, targeted overrides |
 
 ## Open findings (carried + new observations)
 

@@ -74,6 +74,59 @@ async function moveCompanyStock({
   return ledger;
 }
 
+// Read-only pre-check used by reversal flows (GRN cancel) that must not drive
+// company stock below zero. `moveCompanyStock({ allowNegative: true })` still
+// exists — it is the deliberate, audited escape hatch — but a reversal should
+// never reach for it by default: the goods may have been consumed or shipped
+// since the receipt, and a silent negative balance hides that.
+//
+// Returns one entry per item that cannot cover the requested quantity:
+//   [{ itemId, name, available, needed, short }]
+// The caller decides whether to refuse or to proceed with an override; the
+// conditional decrement inside moveCompanyStock remains the concurrency guard.
+async function findStockShortfalls(tx, requirements) {
+  const neededByItem = new Map();
+  for (const req of requirements || []) {
+    if (!req || req.itemId == null) continue;
+    const qty = Number(req.qty);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const key = Number(req.itemId);
+    neededByItem.set(key, roundQuantity((neededByItem.get(key) || 0) + qty));
+  }
+  if (neededByItem.size === 0) return [];
+
+  const items = await tx.item.findMany({
+    where: { id: { in: [...neededByItem.keys()] } },
+    select: { id: true, name: true, currentStock: true },
+  });
+  const shortfalls = [];
+  for (const item of items) {
+    const available = roundQuantity(item.currentStock);
+    const needed = neededByItem.get(Number(item.id));
+    if (needed === undefined) continue;
+    if (available < needed) {
+      shortfalls.push({
+        itemId: item.id,
+        name: item.name,
+        available,
+        needed,
+        short: roundQuantity(needed - available),
+      });
+    }
+  }
+  // An item row that does not exist is NOT reported as a shortfall: the
+  // subsequent moveCompanyStock throws its own 404 and the transaction rolls
+  // back, so inventing a shortfall here would only change the error message.
+  return shortfalls;
+}
+
+// Human-readable one-liner for a refusal message.
+function describeShortfalls(shortfalls) {
+  return shortfalls
+    .map((s) => `${s.name}: needed ${s.needed}, available ${s.available} (short ${s.short})`)
+    .join('; ');
+}
+
 // Current on-hand qty for a customer material lot, derived from its ledger
 // (not cached — lot volume is far lower than item volume, so an extra SUM per
 // mutation is cheap and keeps a single source of truth).
@@ -120,4 +173,7 @@ async function getLowStockItems(db, { take } = {}) {
   return take ? low.slice(0, take) : low;
 }
 
-module.exports = { moveCompanyStock, moveCustomerMaterial, getCustomerLotAvailableQty, getLowStockItems, roundQuantity };
+module.exports = {
+  moveCompanyStock, moveCustomerMaterial, getCustomerLotAvailableQty, getLowStockItems,
+  roundQuantity, findStockShortfalls, describeShortfalls,
+};

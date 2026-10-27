@@ -58,6 +58,7 @@ model User {
   permissionOverrides         UserPermission[]
   salesReturnsApprovedByMe    SalesReturn[]              @relation("SalesReturnApprovedBy")
   purchaseReturnsApprovedByMe PurchaseReturn[]          @relation("PurchaseReturnApprovedBy")
+  salesReturnsReceivedByMe    SalesReturn[]              @relation("SalesReturnReceivedBy")
   processesCreated            Process[]
   notifications               Notification[]
   createdCustomerMaterialLots CustomerMaterialLot[]      @relation("CustomerMaterialLotCreatedBy")
@@ -976,6 +977,7 @@ model DispatchChallan {
   invoiceId   Int?
   notes       String?
   lines       DispatchLine[]
+  salesReturns SalesReturn[] @relation("DispatchChallanSalesReturns")
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
@@ -1455,6 +1457,18 @@ model SalesReturn {
   approvedById Int?
   approvedBy   User?             @relation("SalesReturnApprovedBy", fields: [approvedById], references: [id])
   approvedAt   DateTime?
+  // AUD-211: proof that the goods PHYSICALLY came back. Stock may only be
+  // restored (process) once a return challan number and the date the material
+  // was received are recorded — a return document alone proves a commercial
+  // claim, not the movement of goods.
+  returnChallanNo  String?
+  receivedAt       DateTime?
+  receivedById     Int?
+  receivedBy       User?             @relation("SalesReturnReceivedBy", fields: [receivedById], references: [id])
+  // optional link to the outbound dispatch challan the goods went out on;
+  // when present, quantities are capped by what that challan actually shipped
+  dispatchChallanId Int?
+  dispatchChallan   DispatchChallan? @relation("DispatchChallanSalesReturns", fields: [dispatchChallanId], references: [id])
   lines        SalesReturnLine[]
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
@@ -1462,6 +1476,7 @@ model SalesReturn {
   @@index([invoiceId])
   @@index([partyId])
   @@index([status])
+  @@index([dispatchChallanId])
 }
 
 model SalesReturnLine {

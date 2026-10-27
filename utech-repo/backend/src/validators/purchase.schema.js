@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 // itemId is optional on both documents because an outsourced, vendor-made part
 // often has no Item master row — such a line carries a description instead.
@@ -27,10 +28,18 @@ const purchaseOrderBase = z.object({
 });
 
 const createPurchaseOrderSchema = purchaseOrderBase;
-const updatePurchaseOrderSchema = purchaseOrderBase.partial();
+const updatePurchaseOrderSchema = partialNoDefaults(purchaseOrderBase);
 
 const reasonSchema = z.object({
   reason: z.string().trim().nullable().optional(),
+});
+
+// Cancelling a receipt reverses stock. `force` is the explicit acknowledgement
+// that the reversal may push the item below zero (only honoured for a caller
+// holding stock.adjust / Super Admin — see grn.controller.cancel).
+const cancelGrnSchema = z.object({
+  reason: z.string().trim().max(500).nullable().optional(),
+  force: z.union([z.boolean(), z.enum(['true', 'false'])]).optional(),
 });
 
 const grnLineSchema = withItemOrDescription(
@@ -71,6 +80,7 @@ module.exports = {
   createPurchaseOrderSchema,
   updatePurchaseOrderSchema,
   reasonSchema,
+  cancelGrnSchema,
   createGrnSchema,
   updateGrnSchema,
 };

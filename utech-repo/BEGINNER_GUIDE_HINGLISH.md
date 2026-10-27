@@ -58,13 +58,13 @@ Company stock aur ledger ki quantities maximum **3 decimal places** tak rakhein,
 | Positive / negative stock adjustment | Utna badhta / ghatta hai. |
 | PO banana ya approve karna | Koi change nahi. |
 | GRN save | Catalog item ki **accepted** quantity badhti hai; rejected quantity nahi. Vendor-made free-text line ka catalog item stock nahi hota. |
-| GRN cancel | Accepted quantity reverse hoti hai, linked PO ki received quantity bhi reverse hoti hai. Dhyan: pehle maal use ho gaya ho to stock negative ho sakta hai. |
+| GRN cancel | Accepted quantity reverse hoti hai, linked PO ki received quantity bhi reverse hoti hai. Agar utna stock ab available nahi hai to cancellation **refuse** ho jata hai (kaun-kaun item short hai, wo message me dikhta hai). Sirf `stock.adjust` permission wala user explicitly "Reverse anyway" karke negative balance bana sakta hai — wo ledger me forced reversal ke roop me likha jata hai. |
 | Company material jobwork issue | Bheji hui quantity ghat-ti hai; received aur physically returned rejected quantity wapas badhti hai. |
 | Production batch complete | Saved actual raw-material consumption ghatta hai aur produced output item badhta hai. Planning alone stock nahi badalti. |
 | Delivery Challan create | Challan quantity ghat-ti hai; eligible cancelled challan par wapas badhti hai. |
 | Invoice create/payment | Company stock par koi change nahi; yeh billing/party ledger ke liye hai. |
 | Purchase return process | Company stock ghat sakta hai; return document process hone par effect hota hai. |
-| Sales return process | Linked item stock badh sakta hai; pehle physical return aur original dispatch independently verify karein. |
+| Sales return process | Sirf tab stock badhta hai jab **Physical Receipt** record ho chuka ho — return challan number + received date (+ optional dispatch challan). Iske bina process 400 dega. Dispatch challan link karne par quantity usi challan ki shipped quantity tak limited rehti hai. |
 | Customer Material inward/consume/dispatch/return | **Customer lot ledger** badalta hai, company item stock nahi. |
 
 ## 5. Maal kharidna: PO se GRN tak
@@ -74,7 +74,7 @@ Company stock aur ledger ki quantities maximum **3 decimal places** tak rakhein,
 3. PO detail me authorized user **Approve** kare. Approval permissions aur maker-checker rule lagu hote hain; zaroorat par doosre authorized user se approve karayein.
 4. PO detail se **Create GRN** use karein, ya **Company Inventory → GRN (Stock In) → New GRN** me PO choose karein. Linked vendor/PO items usi order se aate hain.
 5. Physically arrived quantity aur rejected quantity fill karein. Accepted quantity ka calculation check karein: `received 8 − rejected 2 = accepted 6`. Lines aur vendor verify karke **Save** karein. Sirf accepted 6 stock me add honge. PO me partial receipts aur remaining quantity track hoti hai; PO quantity se zyada accepted receipt allowed nahi.
-6. Items aur ledger me naya balance/`GRN` row verify karein. Agar receipt galat hai, GRN detail kholkar permission ke saath **Cancel GRN** aur reason use kar sakte hain. Pehle stock usage/return verify karein; cancellation negative stock bana sakta hai. Processed/dependent documents cancellation ko block kar sakte hain.
+6. Items aur ledger me naya balance/`GRN` row verify karein. Agar receipt galat hai, GRN detail kholkar permission ke saath **Cancel GRN** aur reason use kar sakte hain. Agar received material already use/dispatch ho chuka hai to cancellation pehle **refuse** hoga (message me short items dikhte hain) — pehle stock adjustment karein, ya stock administrator se forced reversal karayein. Processed/dependent documents cancellation ko block kar sakte hain.
 
 ## 6. Maal bhejna aur bill banana alag steps hain
 
@@ -165,8 +165,8 @@ Playwright E2E command isolated temporary in-memory API/UI start karta hai aur t
 ## 10. Important limitations aur troubleshooting
 
 - **Demo ≠ production proof:** automated browser checks temporary in-memory database par chale hain; real MySQL persistence, isolation aur simultaneous users ki race conditions verify nahi hui hain. Go-live se pehle real database par backup/restore, security, concurrency aur stock/account reconciliation test karayein.
-- GRN cancel consumed stock ko reverse karke negative balance bana sakta hai. Sales return invoice se linked hai, lekin invoice se physical dispatch prove nahi hota. Process karne se pehle responsible staff evidence check kare.
+- GRN cancel consumed stock ko reverse karke negative balance nahi banata — shortage par system refuse karta hai aur sirf explicit, audited override se negative ja sakta hai. Sales return process karne se pehle **Physical Receipt** (return challan number + received date) lazmi record karein; dispatch challan link karein to returned quantity shipped quantity se zyada nahi ja sakti.
 - Other modules/selectors aur exceptional workflows ka end-to-end coverage complete nahi hai. Dashboard daily document counts me cancelled records bhi ho sakte hain; financial/physical reconciliation ke liye source documents dekhein.
-- `npm audit` me unresolved dependency advisories mile hain. Deployment se pehle compatible security updates aur regression testing karein; blindly force-upgrade na karein.
+- Dependency audit 2026-10-27 ko execute hua: backend aur frontend dono me **0 open advisories** (pehle 16 aur 21 the). `xlsx` hata kar `exceljs`, aur zod 4 / vitest 5 / vite 8 / axios / react-router 7 par upgrade kiya gaya hai. CI me `npm audit --audit-level=moderate` chalate rahein.
 - **Button/link missing:** role permission aur document status check karein. **Insufficient stock:** company vs customer ownership, UOM, prior postings aur quantity check karein. **Dropdown me item nahi:** naam/code search karein; inactive records aur permissions check karein. **Login issue:** admin se account/password reset karayein.
 - GST, invoicing, returns aur statutory compliance ka final review qualified accounts/tax professional kare; is guide ko legal/tax advice na maanein.

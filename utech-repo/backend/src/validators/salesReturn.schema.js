@@ -39,4 +39,26 @@ const updateSalesReturnSchema = z.object({
   lines: z.array(lineSchema).min(1).optional(),
 });
 
-module.exports = { createSalesReturnSchema, updateSalesReturnSchema };
+// Physical-return proof. Stock is only restored (process) once these are
+// recorded, because the return document itself proves a commercial claim, not
+// the movement of goods.
+const receiptShape = {
+  returnChallanNo: z.string().trim().min(3).max(60),
+  receivedAt: z.coerce.date(),
+  dispatchChallanId: z.number().int().positive().nullable().optional(),
+};
+
+const recordReceiptSchema = z.object(receiptShape);
+
+// Processing accepts the proof inline for API clients that never called the
+// receipt endpoint; every field is optional here because the stored values are
+// the normal source.
+const processSalesReturnSchema = z.object({
+  returnChallanNo: receiptShape.returnChallanNo.optional(),
+  receivedAt: receiptShape.receivedAt.optional(),
+  dispatchChallanId: receiptShape.dispatchChallanId,
+});
+
+module.exports = {
+  createSalesReturnSchema, updateSalesReturnSchema, recordReceiptSchema, processSalesReturnSchema,
+};

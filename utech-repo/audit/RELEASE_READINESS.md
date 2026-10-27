@@ -20,8 +20,8 @@ and password reset does not work end to end.
 | Security vulnerabilities confirmed | ✅ **none** |
 | Security hardening open | ⚠️ 5 findings (all P3) |
 | CI/CD | ❌ **absent** |
-| Dependency vulnerability scan | ❌ **not run** — no advisory access in the sandbox |
-| Browser E2E / responsive / accessibility contrast | ❌ **not assessed** — no browser available |
+| Dependency vulnerability scan | ✅ **run 2026-10-27** — 0 advisories in both apps (was 16 backend / 21 frontend); see `HARDENING_2026-10-27.md` |
+| Browser E2E / responsive / accessibility contrast | ✅ **Playwright available since 2026-10-17** — 13 specs pass, incl. the two new inventory safeguards |
 | Real-database testing | ❌ **not run** — Prisma client cannot be generated in the sandbox |
 
 ---
@@ -112,7 +112,7 @@ verified here.
 | Responsive at 6 viewports | Needs a real layout engine | Playwright `devices` presets |
 | Colour contrast / target size | jsdom has no computed styles; axe `color-contrast` was disabled rather than faked | axe via Playwright on a rendered page |
 | Load / performance | No staging target; production is out of bounds without written permission | Agreed staging instance + a written ceiling |
-| `npm audit` / Semgrep / CodeQL / OWASP ZAP | Advisory endpoint not in the sandbox allowlist; SAST binaries unavailable | Run in CI on a GitHub runner |
+| Semgrep / CodeQL / OWASP ZAP | SAST binaries unavailable in this sandbox | Run in CI on a GitHub runner (`npm audit` has since been executed — 0 findings) |
 
 **No result anywhere in this audit was inferred from a test that did not run.** Every
 untested area is listed above and repeated in the document that would otherwise have

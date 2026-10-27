@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 // matches the completeBatch handler body: { qtyProduced, qtyRejected? } —
 // unvalidated quantities used to allow NaN/negative stock movements
@@ -57,7 +58,7 @@ const shiftSchema = z.object({
   endTime: z.string().optional().nullable(),
   isActive: z.boolean().optional(),
 });
-const updateShiftSchema = shiftSchema.omit({ code: true }).partial();
+const updateShiftSchema = partialNoDefaults(shiftSchema.omit({ code: true }));
 
 module.exports = {
   completeBatchSchema, createBatchSchema, updateBatchSchema,

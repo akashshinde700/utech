@@ -19,17 +19,28 @@ export default function GRNView() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
+  // set when the server refuses to reverse because the received stock is gone
+  const [shortfall, setShortfall] = useState(null);
   const user = useAuth((s) => s.user);
-  async function cancelGrn() {
+  // the server only honours force for stock.adjust holders / Super Admin
+  const canForce = hasPermission(user, 'stock.adjust');
+  async function cancelGrn(force = false) {
     if (!reason.trim()) { toast.error('Enter a reason for cancelling the GRN'); return; }
     setCancelBusy(true);
     try {
-      const { data } = await api.delete(`/grns/${id}`, { data: { reason: reason.trim() } });
+      const { data } = await api.delete(`/grns/${id}`, { data: { reason: reason.trim(), force } });
       setGrn(data.grn);
       setCancelOpen(false);
-      toast.success('GRN cancelled and stock reversed');
+      setShortfall(null);
+      toast.success(force && data.forcedNegative ? 'GRN cancelled — stock reversed into negative' : 'GRN cancelled and stock reversed');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not cancel GRN');
+      const message = err.response?.data?.message || 'Could not cancel GRN';
+      // stock shortfall: keep the dialog open and explain exactly what is missing
+      if (err.response?.status === 400 && /no longer on hand/i.test(message)) {
+        setShortfall(message);
+      } else {
+        toast.error(message);
+      }
     } finally { setCancelBusy(false); }
   }
   useEffect(() => { api.get(`/grns/${id}`).then((r) => setGrn(r.data)); }, [id]);
@@ -96,13 +107,32 @@ export default function GRNView() {
           </div>
         )}
       </FormSection>
-      <Modal open={cancelOpen} onClose={() => { if (!cancelBusy) setCancelOpen(false); }} title="Cancel this GRN?" size="md"
+      <Modal open={cancelOpen} onClose={() => { if (!cancelBusy) { setCancelOpen(false); setShortfall(null); } }} title="Cancel this GRN?" size="md"
         footer={<>
-          <button type="button" className={styles.secondaryBtn} onClick={() => setCancelOpen(false)} disabled={cancelBusy}>Keep GRN</button>
-          <button type="button" className={styles.dangerBtn} onClick={cancelGrn} disabled={cancelBusy}>{cancelBusy && <Loader2 className="h-4 w-4 animate-spin" />} Cancel GRN</button>
+          <button type="button" className={styles.secondaryBtn} onClick={() => { setCancelOpen(false); setShortfall(null); }} disabled={cancelBusy}>Keep GRN</button>
+          {shortfall && canForce ? (
+            <button type="button" className={styles.dangerBtn} onClick={() => cancelGrn(true)} disabled={cancelBusy}>
+              {cancelBusy && <Loader2 className="h-4 w-4 animate-spin" />} Reverse anyway (negative stock)
+            </button>
+          ) : (
+            <button type="button" className={styles.dangerBtn} onClick={() => cancelGrn(false)} disabled={cancelBusy}>
+              {cancelBusy && <Loader2 className="h-4 w-4 animate-spin" />} Cancel GRN
+            </button>
+          )}
         </>}>
-        <p className="mb-4 text-sm text-slate-600">This reverses accepted stock and the linked PO receipt. If goods have already been used or dispatched, this can make stock negative. Check the ledger first.</p>
+        <p className="mb-4 text-sm text-slate-600">This reverses accepted stock and the linked PO receipt. The cancellation is refused if the received material has already been consumed or dispatched — posting a negative balance would corrupt every valuation downstream.</p>
         <FormField id="grn-cancel-reason" label="Reason" required><textarea id="grn-cancel-reason" className={styles.textarea} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></FormField>
+        {shortfall && (
+          <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="font-semibold">Stock is no longer available</div>
+            <p className="mt-1">{shortfall}</p>
+            <p className="mt-2">
+              {canForce
+                ? 'As a stock administrator you may reverse anyway, but the item balance will go negative and the ledger will record it as a forced reversal.'
+                : 'Post a stock adjustment for the missing quantity first, or ask a stock administrator to reverse it.'}
+            </p>
+          </div>
+        )}
       </Modal>
     </div>
   );

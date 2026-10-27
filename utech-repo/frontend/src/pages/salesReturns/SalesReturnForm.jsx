@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Check, ListPlus, Loader2, Play, RotateCcw, Save, X } from 'lucide-react';
+import { Check, ListPlus, Loader2, PackageCheck, Play, RotateCcw, Save, Truck, X } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import FormField from '../../components/ui/FormField';
@@ -35,6 +35,11 @@ export default function SalesReturnForm() {
     notes: '',
   });
   const [data, setData] = useState(null);
+  // AUD-211 — proof that the goods physically came back. Stock cannot be
+  // restored until this is recorded against the return.
+  const [dispatches, setDispatches] = useState([]);
+  const [receipt, setReceipt] = useState({ returnChallanNo: '', receivedAt: toLocalInput(), dispatchChallanId: '' });
+  const [receiptBusy, setReceiptBusy] = useState(false);
 
   async function loadInvoices() {
     const { data: response } = await api.get('/invoices', { params: { pageSize: 1000, status: 'ISSUED,PAID,PARTIALLY_PAID' } });
@@ -52,6 +57,41 @@ export default function SalesReturnForm() {
       notes: response.notes || '',
     });
     setItems(response.lines || []);
+    setReceipt({
+      returnChallanNo: response.returnChallanNo || '',
+      receivedAt: response.receivedAt ? String(response.receivedAt).split('T')[0] : toLocalInput(),
+      dispatchChallanId: response.dispatchChallanId || '',
+    });
+    // the optional dispatch challan must be one of THIS customer's
+    try {
+      const { data: list } = await api.get('/dispatch', { params: { partyId: response.partyId, pageSize: 100 } });
+      setDispatches(list.items || []);
+    } catch {
+      // a user without dispatch.read can still record the challan number
+      setDispatches([]);
+    }
+  }
+
+  // Records the physical return receipt; the server validates the challan,
+  // the customer and the quantity that challan actually shipped.
+  async function saveReceipt() {
+    if (!receipt.returnChallanNo.trim()) { toast.error('Enter the return challan number'); return; }
+    if (!receipt.receivedAt) { toast.error('Enter the date the goods were received'); return; }
+    setReceiptBusy(true);
+    try {
+      await api.post(`/sales-returns/${id}/receipt`, {
+        returnChallanNo: receipt.returnChallanNo.trim(),
+        receivedAt: receipt.receivedAt,
+        dispatchChallanId: receipt.dispatchChallanId ? parseInt(receipt.dispatchChallanId, 10) : null,
+      });
+      toast.success('Physical receipt recorded');
+      await loadReturn();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.response?.data?.message || 'Could not record the receipt');
+    } finally {
+      setReceiptBusy(false);
+    }
   }
 
   async function loadInvoiceLines(invoiceId) {
@@ -173,7 +213,7 @@ export default function SalesReturnForm() {
         await api.post(`/sales-returns/${id}/approve`);
         toast.success('Approved successfully');
       } else {
-        await api.post(`/sales-returns/${id}/process`);
+        await api.post(`/sales-returns/${id}/process`, {});
         toast.success('Processed successfully');
       }
       setConfirmAction(null);
@@ -195,6 +235,13 @@ export default function SalesReturnForm() {
   // the backend only allows editing a sales return while it's still DRAFT —
   // once approved/processed, header + line fields are read-only
   const editable = !isEdit || data?.status === 'DRAFT';
+  const hasReceipt = !!(data?.returnChallanNo && data?.receivedAt);
+  const receiptEditable = isEdit && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED'].includes(data?.status);
+  const dispatchOptions = dispatches.map((d) => ({
+    value: d.id,
+    label: `${d.number} — ${date(d.date)}`,
+    subtitle: d.status,
+  }));
 
   return (
     <div>
@@ -252,6 +299,73 @@ export default function SalesReturnForm() {
             </FormField>
           </div>
         </FormSection>
+
+        {isEdit && (
+          <FormSection
+            icon={PackageCheck}
+            title="Physical Receipt"
+            description="Proof the material actually came back — stock is only restored once this is recorded"
+          >
+            {hasReceipt && (
+              <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                <div className="font-semibold">Receipt recorded</div>
+                <div className="mt-1 grid gap-1 sm:grid-cols-3">
+                  <div><span className="text-xs text-emerald-700">Return challan</span><div className="font-medium">{data.returnChallanNo}</div></div>
+                  <div><span className="text-xs text-emerald-700">Received on</span><div className="font-medium">{date(data.receivedAt)}</div></div>
+                  <div><span className="text-xs text-emerald-700">Dispatch challan</span><div className="font-medium">{data.dispatchChallan?.number || '—'}</div></div>
+                </div>
+                {data.receivedBy?.name && (
+                  <div className="mt-2 text-xs text-emerald-700">Booked by {data.receivedBy.name}</div>
+                )}
+              </div>
+            )}
+            {!receiptEditable ? (
+              !hasReceipt && (
+                <p className="text-sm text-slate-500">
+                  This return can no longer be processed — no physical receipt was recorded.
+                </p>
+              )
+            ) : (
+              <div className={styles.formGrid}>
+                <FormField id="return-challan-no" label="Return challan no." required hint="The document the customer sent the goods back with">
+                  <input
+                    id="return-challan-no"
+                    className={styles.input}
+                    value={receipt.returnChallanNo}
+                    maxLength={60}
+                    onChange={(e) => setReceipt((r) => ({ ...r, returnChallanNo: e.target.value }))}
+                  />
+                </FormField>
+                <FormField id="return-received-at" label="Received on" required hint="Cannot be a future date">
+                  <input
+                    id="return-received-at"
+                    type="date"
+                    className={styles.input}
+                    value={receipt.receivedAt}
+                    onChange={(e) => setReceipt((r) => ({ ...r, receivedAt: e.target.value }))}
+                  />
+                </FormField>
+                <FormField id="return-dispatch-challan" label="Dispatch challan" className="sm:col-span-2"
+                  hint="Optional — caps the returned quantity at what we actually shipped">
+                  <SearchableSelect
+                    id="return-dispatch-challan"
+                    value={receipt.dispatchChallanId}
+                    onChange={(v) => setReceipt((r) => ({ ...r, dispatchChallanId: v }))}
+                    options={dispatchOptions}
+                    placeholder="Not linked to a dispatch"
+                    emptyText="No dispatches for this customer"
+                  />
+                </FormField>
+                <div className="sm:col-span-2">
+                  <button type="button" onClick={saveReceipt} disabled={receiptBusy} className={styles.secondaryBtn}>
+                    {receiptBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                    {hasReceipt ? 'Update receipt' : 'Record receipt'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </FormSection>
+        )}
 
         <FormSection icon={ListPlus} title="Return Items" description="Quantities to bring back into stock">
           {items.length === 0 ? (
@@ -333,9 +447,20 @@ export default function SalesReturnForm() {
                 </button>
               )}
               {isEdit && data?.status === 'APPROVED' && (
-                <button type="button" onClick={() => setConfirmAction('process')} className={styles.secondaryBtn}>
+                <button
+                  type="button"
+                  onClick={() => setConfirmAction('process')}
+                  className={styles.secondaryBtn}
+                  disabled={!hasReceipt}
+                  title={hasReceipt ? 'Restore stock and credit the customer' : 'Record the physical return receipt first'}
+                >
                   <Play className="h-4 w-4" /> Process
                 </button>
+              )}
+              {isEdit && data?.status === 'APPROVED' && !hasReceipt && (
+                <span className="self-center text-xs text-amber-700">
+                  Record the physical receipt (challan no. + received date) to process this return.
+                </span>
               )}
             </div>
             <button type="button" onClick={() => navigate('/sales-returns')} className={styles.secondaryBtn}>Cancel</button>
@@ -357,7 +482,7 @@ export default function SalesReturnForm() {
         title={confirmAction === 'approve' ? 'Approve this sales return?' : 'Process this sales return?'}
         message={confirmAction === 'approve'
           ? 'The return will be locked for editing and can then be processed.'
-          : 'This will update stock and party ledger.'}
+          : `This restores stock against the recorded receipt ${data?.returnChallanNo ? `(${data.returnChallanNo})` : ''} and credits the customer.`}
         confirmLabel={confirmAction === 'approve' ? 'Approve' : 'Process'}
         loading={actionLoading}
       />

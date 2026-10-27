@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 const STATUSES = [
   'NOT_STARTED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'ON_HOLD',
@@ -29,7 +30,7 @@ const createTaskSchema = z.object({
   sequence: z.number().int().optional(),
 });
 
-const updateTaskSchema = createTaskSchema.omit({ jobcardId: true }).partial();
+const updateTaskSchema = partialNoDefaults(createTaskSchema.omit({ jobcardId: true }));
 
 // several predefined items onto one project, same operators for all
 const bulkCreateTaskSchema = z.object({

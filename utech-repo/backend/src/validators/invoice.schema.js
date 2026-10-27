@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 const lineSchema = z.object({
   itemId: z.number().int().optional().nullable(),
@@ -23,7 +24,7 @@ const baseInvoice = {
 };
 
 const createInvoiceSchema = z.object(baseInvoice);
-const updateInvoiceSchema = z.object({ ...baseInvoice }).partial();
+const updateInvoiceSchema = partialNoDefaults(z.object({ ...baseInvoice }));
 
 const paymentSchema = z.object({
   date: z.coerce.date(),

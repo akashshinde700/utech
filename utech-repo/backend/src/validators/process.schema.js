@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 // Process Master: predefined + Department Head-added custom processes and
 // sub-processes share this one schema (see schema.prisma's Process model doc).
@@ -22,6 +23,6 @@ const createProcessSchema = z.object(processBase).omit({ code: true }).extend({
   // other master in this app (item/party) via nextCode
   code: z.string().optional().nullable(),
 });
-const updateProcessSchema = z.object(processBase).omit({ code: true }).partial();
+const updateProcessSchema = partialNoDefaults(z.object(processBase).omit({ code: true }));
 
 module.exports = { createProcessSchema, updateProcessSchema };

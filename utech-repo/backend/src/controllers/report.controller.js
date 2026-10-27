@@ -1,14 +1,14 @@
 'use strict';
-const XLSX = require('xlsx');
+const { sendXlsx } = require('../utils/xlsx');
 const prisma = require('../config/prisma');
 const dayjs = require('dayjs');
 const { audit } = require('../utils/audit');
 
-function send(res, wb, name) {
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${name}-${dayjs().format('YYYYMMDD-HHmm')}.xlsx"`);
-  res.send(buf);
+// One workbook, one named sheet — the shape every export below needs.
+// Returns the byte length so the caller can audit the export size.
+async function send(res, rows, sheet, name) {
+  const stamp = dayjs().format('YYYYMMDD-HHmm');
+  return sendXlsx(res, { filename: `${name}-${stamp}.xlsx`, sheets: [{ name: sheet, rows }] });
 }
 
 async function invoices(req, res) {
@@ -43,10 +43,8 @@ async function invoices(req, res) {
     Balance: Number(r.total) - Number(r.amountPaid),
   }));
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Invoices');
   audit(req, 'export', 'Invoice', null, { count: rows.length });
-  send(res, wb, 'invoices');
+  await send(res, data, 'Invoices', 'invoices');
 }
 
 async function jobcards(req, res) {
@@ -65,10 +63,8 @@ async function jobcards(req, res) {
     Rejected: Number(r.qtyRejected),
     Status: r.status,
   }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Jobcards');
   audit(req, 'export', 'Jobcard', null, { count: rows.length });
-  send(res, wb, 'jobcards');
+  await send(res, data, 'Jobcards', 'jobcards');
 }
 
 async function items(req, res) {
@@ -90,10 +86,8 @@ async function items(req, res) {
     'Current Stock': Number(r.currentStock),
     'Min Stock': Number(r.minStock),
   }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Items');
   audit(req, 'export', 'Item', null, { count: rows.length });
-  send(res, wb, 'items');
+  await send(res, data, 'Items', 'items');
 }
 
 async function expenses(req, res) {
@@ -119,9 +113,7 @@ async function expenses(req, res) {
     Mode: r.paymentMode,
     Reference: r.reference || '',
   }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Expenses');
-  send(res, wb, 'expenses');
+  await send(res, data, 'Expenses', 'expenses');
 }
 
 async function partyLedger(req, res) {
@@ -144,9 +136,7 @@ async function partyLedger(req, res) {
       Notes: e.notes || '',
     };
   });
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Ledger');
-  send(res, wb, `${party.code}-ledger`);
+  await send(res, data, 'Ledger', `${party.code}-ledger`);
 }
 
 async function customerStock(req, res) {
@@ -170,10 +160,8 @@ async function customerStock(req, res) {
     Location: r.location || '',
     Status: r.status,
   }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Customer Stock');
   audit(req, 'export', 'CustomerMaterialLot', null, { count: rows.length });
-  send(res, wb, 'customer-stock');
+  await send(res, data, 'Customer Stock', 'customer-stock');
 }
 
 // vendor's current position is computed (qtySent - qtyReceived - qtyRejected)
@@ -204,10 +192,8 @@ async function vendorStock(req, res) {
       Status: l.challan.status,
     }))
     .filter((r) => r.Outstanding > 0);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Vendor Stock');
   audit(req, 'export', 'JobworkChallan', null, { count: data.length });
-  send(res, wb, 'vendor-stock');
+  await send(res, data, 'Vendor Stock', 'vendor-stock');
 }
 
 async function stockLedgerReport(req, res) {
@@ -237,10 +223,8 @@ async function stockLedgerReport(req, res) {
     Balance: Number(r.balance),
     Notes: r.notes || '',
   }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Stock Ledger');
   audit(req, 'export', 'StockLedger', null, { count: rows.length });
-  send(res, wb, 'stock-ledger');
+  await send(res, data, 'Stock Ledger', 'stock-ledger');
 }
 
 module.exports = {

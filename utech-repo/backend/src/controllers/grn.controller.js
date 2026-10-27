@@ -199,11 +199,31 @@ async function update(req, res) {
   res.json(grn);
 }
 
+// Who may reverse a receipt into negative stock. `stock.adjust` is the right
+// already used for deliberate, audited stock write-downs, so it is the natural
+// second key; SUPERADMIN keeps the bypass every other route gives it.
+function canForceNegativeStock(user) {
+  if (!user) return false;
+  if (user.role === 'SUPERADMIN') return true;
+  return Array.isArray(user.permissions) && user.permissions.includes('stock.adjust');
+}
+
 // Reverse a wrongly booked receipt. Without this a mistyped GRN left company
 // stock permanently inflated with no way back.
+//
+// AUD-210: cancelling used to reverse the accepted quantity with
+// `allowNegative: true` unconditionally, so a GRN whose goods had already been
+// consumed or dispatched drove Item.currentStock below zero — a negative
+// balance that then corrupted every valuation and every "available" check
+// downstream. Cancelling now refuses when the stock is no longer there and
+// tells the operator exactly which items are short. The override still exists
+// for the genuine "the receipt was wrong AND the goods are gone" case, but it
+// must be asked for explicitly (`force: true`) and the caller must hold
+// stock.adjust (or be a Super Admin); the forced reversal is audited.
 async function cancel(req, res) {
   const id = parseInt(req.params.id, 10);
   const reason = req.body.reason || null;
+  const force = req.body.force === true || req.body.force === 'true';
 
   const result = await prisma.$transaction(async (tx) => {
     const grn = await tx.gRN.findUnique({ where: { id }, include: { lines: true } });
@@ -213,6 +233,29 @@ async function cancel(req, res) {
     const returns = await tx.purchaseReturn.count({ where: { grnId: id } });
     if (returns > 0) {
       throw new HttpError(400, 'Cannot cancel: a purchase return already exists against this GRN');
+    }
+
+    // Stock check BEFORE any write: the goods this receipt added may already
+    // have been consumed, sold or dispatched, in which case reversing the
+    // receipt would invent a negative balance.
+    const shortfalls = await stockService.findStockShortfalls(
+      tx,
+      grn.lines.map((l) => ({ itemId: l.itemId, qty: Number(l.qtyAccepted) })),
+    );
+    if (shortfalls.length > 0) {
+      if (!force) {
+        throw new HttpError(
+          400,
+          `Cannot cancel GRN ${grn.number}: the received stock is no longer on hand (${stockService.describeShortfalls(shortfalls)}). `
+          + 'Post a stock adjustment first, or repeat the cancellation with force=true to reverse into negative stock.',
+        );
+      }
+      if (!canForceNegativeStock(req.user)) {
+        throw new HttpError(
+          403,
+          'Forcing a negative-stock reversal requires the stock.adjust permission',
+        );
+      }
     }
 
     // Claim cancellation before reversing stock; a second concurrent caller
@@ -225,13 +268,17 @@ async function cancel(req, res) {
     for (const l of grn.lines) {
       const accepted = Number(l.qtyAccepted);
       if (accepted > 0 && l.itemId) {
-        // allowNegative: the goods may already have been consumed or dispatched
-        // since, and refusing to reverse would be worse than a negative balance
-        // the stock ledger makes plainly visible
+        // allowNegative only on the explicit, authorised override. Without it
+        // the conditional decrement inside moveCompanyStock is the race guard:
+        // if another request consumed the stock after the check above, this
+        // throws and the whole cancellation rolls back.
         await stockService.moveCompanyStock({
           tx, itemId: l.itemId, date: new Date(),
           refType: 'GRN_CANCEL', refId: id, qtyOut: accepted,
-          notes: `GRN ${grn.number} cancelled`, allowNegative: true, skipAudit: true,
+          notes: force && shortfalls.length
+            ? `GRN ${grn.number} cancelled — forced negative-stock reversal`
+            : `GRN ${grn.number} cancelled`,
+          allowNegative: force, skipAudit: true,
         });
       }
       if (l.poLineId && accepted > 0) {
@@ -250,11 +297,19 @@ async function cancel(req, res) {
       : null;
 
     const updated = await tx.gRN.findUnique({ where: { id }, include: INCLUDE });
-    return { grn: updated, vwo };
+    return { grn: updated, vwo, forcedNegative: force && shortfalls.length > 0, shortfalls };
   });
 
-  audit(req, 'cancel', 'GRN', id, { reason });
-  res.json({ ok: true, grn: result.grn });
+  audit(req, 'cancel', 'GRN', id, {
+    reason,
+    forcedNegative: result.forcedNegative,
+    ...(result.forcedNegative ? { shortfalls: result.shortfalls } : {}),
+  });
+  res.json({
+    ok: true,
+    grn: result.grn,
+    ...(result.forcedNegative ? { forcedNegative: true, shortfalls: result.shortfalls } : {}),
+  });
 }
 
 module.exports = { list, get, create, update, cancel };

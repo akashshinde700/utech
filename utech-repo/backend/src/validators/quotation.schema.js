@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 // Quotations are quoted without GST — a line is just description + qty + rate.
 const lineSchema = z.object({
@@ -33,6 +34,6 @@ const base = {
 
 // type is fixed at creation — a customer quote never becomes a vendor one
 const createQuotationSchema = z.object({ ...base, type: z.enum(['CUSTOMER', 'VENDOR']).default('CUSTOMER') });
-const updateQuotationSchema = z.object(base).partial();
+const updateQuotationSchema = partialNoDefaults(z.object(base));
 
 module.exports = { createQuotationSchema, updateQuotationSchema };
