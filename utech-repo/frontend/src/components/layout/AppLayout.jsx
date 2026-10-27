@@ -12,6 +12,7 @@ import {
   ShoppingCart, PackageCheck, Briefcase, Wallet, FileSpreadsheet, Cog,
   RotateCcw, ArrowLeftToLine, FileDown, BarChart3, ChevronRight, Home,
   Boxes, SlidersHorizontal, Building2, ListChecks, CheckSquare, Layers, Menu, X, KeyRound,
+  Calculator,
 } from 'lucide-react';
 
 // perm = the permission key the backend actually requires for that page's GET
@@ -39,6 +40,8 @@ const NAV_SECTIONS = [
       { to: '/jobcards', label: 'Jobcards', icon: ClipboardList, perm: 'jobcard.read' },
       { to: '/assignments', label: 'Assignments', icon: ListChecks, perm: 'assignment.read' },
       { to: '/machines', label: 'Machines', icon: Cog, perm: 'machine.read' },
+      // read-only weight/price tool, open to every signed-in user (auth-only API)
+      { to: '/metal-calculator', label: 'Metal Calculator', icon: Calculator },
     ],
   },
   // Department Head task assignment / progress tracking over the manufacturing

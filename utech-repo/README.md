@@ -75,6 +75,28 @@ amount (both totals are reported; per-piece is what is stored).
 Seeding is additive: an existing item is never re-priced or re-stocked, so re-seeding
 cannot overwrite balances that receipts, dispatches or production have already moved.
 
+## Metal weight & price calculator
+
+Masters → **Metal Calculator** (`/metal-calculator`) gives the weight and price of
+11 raw-material shapes (round bar, pipe, square bar/tube, flat bar, hexagon, plate,
+angle, beam, channel, T profile) for the 22 metals with their densities, in
+metric or imperial units, by weight or by length — ported from the reverse
+engineered **Metal Calculator v11.2** APK.
+
+```bash
+# API (authenticated, read-only — no stock/ledger side effects)
+GET  /api/metal-calculator/catalog
+GET  /api/metal-calculator/profiles?shape=beam&search=IPE
+POST /api/metal-calculator/calculate
+```
+
+The 97 standard-profile families (2,925 profiles) shipped with it are the APK's
+own kg/m values and still carry the APK's regional mis-mappings, so the screen
+always offers a manual kg/m override. Read
+[docs/METAL_CALCULATOR.md](./docs/METAL_CALCULATOR.md) before quoting from the
+table — it documents the formulas, the deliberate differences from the APK, the
+known data issues and what is still left to port.
+
 ## Stock and billing behavior
 
 - Opening balances, accepted GRNs, manual adjustments, jobwork, production, dispatch and applicable returns create stock movements. Company stock and customer material lots are tracked separately.
