@@ -7,10 +7,13 @@ import FormSection from '../../components/ui/FormSection';
 import FormField from '../../components/ui/FormField';
 import SearchableSelect from '../../components/ui/SearchableSelect';
 import EmptyState from '../../components/ui/EmptyState';
+import QuickCreateItemModal from '../../components/items/QuickCreateItemModal';
 import { styles } from '../../lib/formStyles';
 import { required, positiveNumber, validateAll } from '../../lib/validation';
 import { todayLocal } from '../../lib/format';
+import { hasPermission } from '../../lib/permissions';
 import useRemoteOptions from '../../lib/useRemoteOptions';
+import { useAuth } from '../../store/auth';
 import toast from 'react-hot-toast';
 
 const emptyLine = () => ({ itemId: '', description: '', poLineId: '', qty: 0, qtyAccepted: 0, qtyRejected: 0, rate: '', notes: '', _autoAccepted: true });
@@ -42,10 +45,13 @@ export default function GRNForm() {
   const { items: parties, search: searchParties, error: partyLookupError, include: includeParties } = useRemoteOptions('/parties', { type: 'VENDOR' });
   const { items, search: searchItems, error: itemLookupError, include: includeItems } = useRemoteOptions('/items');
   const { items: pos, search: searchPOs, error: poLookupError } = useRemoteOptions('/purchase-orders', { status: 'APPROVED,PARTIALLY_RECEIVED,RECEIVED' });
+  const user = useAuth((s) => s.user);
+  const canCreateItem = hasPermission(user, 'item.create');
   const [urlPoOption, setUrlPoOption] = useState(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitted, setSubmitted] = useState(false);
+  const [newItemTarget, setNewItemTarget] = useState(null);
   const [form, setForm] = useState({
     date: todayLocal(),
     poId: poIdParam || '', partyId: '', vehicleNo: '', notes: '',
@@ -89,16 +95,46 @@ export default function GRNForm() {
       return { ...f, lines: ls };
     });
     setErrors((e) => {
-      const qtyKey = `line-${i}-qty`;
-      if (!e[qtyKey]) return e;
+      const keysToClear = [];
+      if ('itemId' in patch) keysToClear.push(`line-${i}-item`);
+      if ('qty' in patch) keysToClear.push(`line-${i}-qty`);
+      if (!keysToClear.some((key) => e[key])) return e;
       const next = { ...e };
-      delete next[qtyKey];
+      keysToClear.forEach((key) => delete next[key]);
       return next;
     });
   }
 
   function removeLine(i) {
     setForm((f) => ({ ...f, lines: f.lines.filter((_, ix) => ix !== i) }));
+  }
+
+  // PO-linked receipts must keep each line's item identical to its PO line.
+  // Quick-create is therefore offered only on direct receipts / non-PO lines.
+  function openCreateItem(lineIndex = null, initialName = '') {
+    setNewItemTarget({ lineIndex, initialName });
+  }
+
+  function handleItemCreated(item) {
+    const target = newItemTarget;
+    if (!target || !item?.id) return;
+
+    // POST /items is the same endpoint as the item master, so the new record is
+    // immediately visible in Items and in every other item picker after refresh.
+    includeItems([item]);
+    searchItems('');
+
+    const lineIndex = target.lineIndex == null
+      ? form.lines.findIndex((line) => !line.itemId && !line.poLineId && !String(line.description || '').trim())
+      : target.lineIndex;
+    if (lineIndex >= 0 && lineIndex < form.lines.length) {
+      setLine(lineIndex, { itemId: item.id, description: '' });
+    } else {
+      setForm((f) => ({ ...f, lines: [...f.lines, { ...emptyLine(), itemId: item.id }] }));
+      setErrors((e) => (e.lines ? { ...e, lines: undefined } : e));
+    }
+    setNewItemTarget(null);
+    toast.success('Item created and added to the GRN');
   }
 
   function validate() {
@@ -228,7 +264,16 @@ export default function GRNForm() {
           </div>
         </FormSection>
 
-        <FormSection icon={ListPlus} title="Item Lines" description="Quantities received, accepted and rejected">
+        <FormSection
+          icon={ListPlus}
+          title="Item Lines"
+          description="Quantities received, accepted and rejected"
+          actions={canCreateItem && !form.poId ? (
+            <button type="button" className={`${styles.secondaryBtn} !h-9`} onClick={() => openCreateItem()}>
+              <Plus className="h-4 w-4" /> New item
+            </button>
+          ) : undefined}
+        >
           {form.lines.length === 0 ? (
             <EmptyState
               icon={ListPlus}
@@ -260,17 +305,33 @@ export default function GRNForm() {
                             {l.poLineId && !l.itemId ? (
                               <span className="block min-w-[150px] py-2 text-sm text-slate-700">{l.description || 'Vendor-made part'} <span className="block text-xs text-slate-500">No catalog stock</span></span>
                             ) : (
-                              <SearchableSelect
-                                id={`line-${i}-item`}
-                                value={l.itemId}
-                                onChange={(v) => setLine(i, { itemId: v })}
-                                options={items.map((it) => ({ value: it.id, label: `${it.code} — ${it.name}` }))}
-                                onSearchChange={searchItems}
-                                placeholder="Select item…"
-                                disabled={!!l.poLineId}
-                                error={show(`line-${i}-item`)}
-                                emptyText="No items match"
-                              />
+                              <div className="flex min-w-[180px] items-start gap-1">
+                                <SearchableSelect
+                                  className="min-w-0 flex-1"
+                                  id={`line-${i}-item`}
+                                  value={l.itemId}
+                                  onChange={(v) => setLine(i, { itemId: v })}
+                                  options={items.map((it) => ({ value: it.id, label: `${it.code} — ${it.name}` }))}
+                                  onSearchChange={searchItems}
+                                  onCreate={canCreateItem && !l.poLineId ? (name) => openCreateItem(i, name) : undefined}
+                                  createLabel="Create new item"
+                                  placeholder="Select item…"
+                                  disabled={!!l.poLineId}
+                                  error={show(`line-${i}-item`)}
+                                  emptyText="No items match"
+                                />
+                                {canCreateItem && !l.poLineId && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Create new item for line ${i + 1}`}
+                                    title="Create new item"
+                                    className={`${styles.secondaryBtn} !h-10 !w-10 shrink-0 !px-0`}
+                                    onClick={() => openCreateItem(i)}
+                                  >
+                                    <Plus className="h-4 w-4" />
+                                  </button>
+                                )}
+                              </div>
                             )}
                             {show(`line-${i}-item`) && <p role="alert" className={styles.errorText}>{show(`line-${i}-item`)}</p>}
                           </td>
@@ -350,6 +411,12 @@ export default function GRNForm() {
           </button>
         </div>
       </form>
+      <QuickCreateItemModal
+        open={!!newItemTarget}
+        initialName={newItemTarget?.initialName || ''}
+        onClose={() => setNewItemTarget(null)}
+        onCreated={handleItemCreated}
+      />
     </div>
   );
 }
