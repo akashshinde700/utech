@@ -75,7 +75,8 @@ export default function CustomerMaterialPage() {
           { key: 'materialDescription', title: 'Material' },
           { key: 'lot', title: 'Heat / Lot', render: (r) => [r.heatNumber, r.lotNumber].filter(Boolean).join(' / ') || '—' },
           { key: 'qty', title: 'Qty', align: 'right', render: (r) => <span className="tabular-nums">{Number(r.qty)}</span> },
-          { key: 'availableQty', title: 'Available', align: 'right', render: (r) => <span className="tabular-nums">{Number(r.availableQty)}</span> },
+          { key: 'availableQty', title: 'On-hand', align: 'right', render: (r) => <span className="tabular-nums">{Number(r.availableQty)}</span> },
+          { key: 'unallocatedQty', title: 'Unallocated', align: 'right', render: (r) => <span className="tabular-nums">{Number(r.unallocatedQty)}</span> },
           { key: 'status', title: 'Status', render: (r) => <Badge status={r.status}>{(r.status || '').replace(/_/g, ' ')}</Badge> },
         ]}
       />

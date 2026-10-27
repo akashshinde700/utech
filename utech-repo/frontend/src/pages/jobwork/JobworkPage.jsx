@@ -9,6 +9,8 @@ import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
 import { styles } from '../../lib/formStyles';
 import { date } from '../../lib/format';
+import { numericPrecision } from '../../lib/quantityValidation';
+import Decimal from 'decimal.js';
 import toast from 'react-hot-toast';
 
 // vendor-facing labels over the same underlying JobworkStatus enum — no
@@ -46,42 +48,58 @@ export default function JobworkPage() {
   useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function openReceive(row) {
-    const { data } = await api.get(`/jobwork/${row.id}`);
-    setReceiving({
-      ...data,
-      lines: (data.lines || []).map((l) => ({ ...l, qtyReceiveNow: '', qtyRejectNow: '' })),
-    });
+    try {
+      const { data } = await api.get(`/jobwork/${row.id}`);
+      setReceiving({
+        ...data,
+        lines: (data.lines || []).map((l) => ({ ...l, qtyReceiveNow: '', qtyRejectNow: '', weightReceiveNow: '', weightRejectNow: '' })),
+      });
+    } catch (err) {
+      if (!err.response) toast.error('Unable to load the challan. Check your connection and retry.');
+    }
   }
 
-  const lineOutstanding = (l) => Number(l.qtySent) - Number(l.qtyReceived) - Number(l.qtyRejected);
-  // live inline error: received + rejected can never exceed what is still
-  // outstanding at the vendor (same rule the submit guard enforces)
-  const lineOver = (l) =>
-    Number(l.qtyReceiveNow || 0) + Number(l.qtyRejectNow || 0) > lineOutstanding(l);
+  const lineOutstanding = (l) => new Decimal(String(l.qtySent)).minus(String(l.qtyReceived || 0)).minus(String(l.qtyRejected || 0)).toNumber();
+  // Compare decimal quantities exactly, including e.g. 0.1 + 0.2 = 0.3.
+  const lineOver = (l) => new Decimal(String(l.qtyReceiveNow || 0)).plus(String(l.qtyRejectNow || 0)).gt(lineOutstanding(l));
 
   async function doReceive() {
     // quantity going back can never exceed what is still outstanding at the
     // vendor (sent − already received − already rejected)
-    const overLines = receiving.lines.filter((l) => {
-      const outstanding = Number(l.qtySent) - Number(l.qtyReceived) - Number(l.qtyRejected);
-      const now = Number(l.qtyReceiveNow || 0) + Number(l.qtyRejectNow || 0);
-      return now > outstanding;
-    });
+    const overLines = receiving.lines.filter(lineOver);
     if (overLines.length) {
       const l = overLines[0];
-      const outstanding = Number(l.qtySent) - Number(l.qtyReceived) - Number(l.qtyRejected);
+      const outstanding = lineOutstanding(l);
       toast.error(`"${l.item?.name || l.description || 'Line'}" only has ${outstanding} outstanding — received + rejected can't exceed that`);
       return;
+    }
+    if (receiving.materialOwnerType === 'CUSTOMER') {
+      for (const line of receiving.lines) {
+        for (const [weight, qty] of [[line.weightReceiveNow, line.qtyReceiveNow], [line.weightRejectNow, line.qtyRejectNow]]) {
+          if (String(weight ?? '').trim() === '') continue;
+          if (!Number.isFinite(Number(weight)) || Number(weight) < 0 || Number(qty) <= 0 || numericPrecision(weight, 'Weight', 3, '99999999999.999')) {
+            toast.error('Enter a valid measured weight with its corresponding quantity (maximum 3 decimals)');
+            return;
+          }
+        }
+      }
     }
     setSaving(true);
     try {
       await api.post(`/jobwork/${receiving.id}/receive`, {
         lines: receiving.lines
           .filter((l) => Number(l.qtyReceiveNow) > 0 || Number(l.qtyRejectNow) > 0)
-          .map((l) => ({ id: l.id, qtyReceived: Number(l.qtyReceiveNow) || 0, qtyRejected: Number(l.qtyRejectNow) || 0 })),
+          .map((l) => ({
+            id: l.id, qtyReceived: Number(l.qtyReceiveNow) || 0, qtyRejected: Number(l.qtyRejectNow) || 0,
+            ...(receiving.materialOwnerType === 'CUSTOMER' && String(l.weightReceiveNow).trim() !== '' ? { weightReceived: Number(l.weightReceiveNow) } : {}),
+            ...(receiving.materialOwnerType === 'CUSTOMER' && String(l.weightRejectNow).trim() !== '' ? { weightRejected: Number(l.weightRejectNow) } : {}),
+          })),
       });
       toast.success('Received'); setReceiving(null); load();
-    } catch {} finally {
+    } catch (err) {
+      // A network error or server error does not prove whether the write committed.
+      if (!err.response || err.response.status >= 500) toast.error('Could not confirm the receipt. Reload the challan and check it before retrying.');
+    } finally {
       setSaving(false);
     }
   }
@@ -126,7 +144,7 @@ export default function JobworkPage() {
         open={!!receiving}
         onClose={() => setReceiving(null)}
         title="Receive Challan"
-        description={receiving?.number}
+        description={receiving?.materialOwnerType === 'CUSTOMER' ? `${receiving.number} — enter measured weights to keep the on-hand weight known.` : receiving?.number}
         size="lg"
         footer={
           <>
@@ -146,11 +164,12 @@ export default function JobworkPage() {
                 <th className="table-th text-right">Sent</th>
                 <th className="table-th text-right">Already received</th>
                 <th className="table-th text-right">Receive now</th>
-                <th className="table-th text-right rounded-tr-lg">Reject now</th>
+                <th className="table-th text-right">Reject now</th>
+                {receiving.materialOwnerType === 'CUSTOMER' && <><th className="table-th text-right">Received weight</th><th className="table-th text-right">Rejected weight</th></>}
               </tr></thead>
               <tbody>
                 {receiving.lines.map((l, i) => {
-                  const outstanding = Number(l.qtySent) - Number(l.qtyReceived) - Number(l.qtyRejected);
+                  const outstanding = lineOutstanding(l);
                   const over = lineOver(l);
                   return (
                     <tr key={l.id} className={i % 2 === 1 ? 'bg-slate-50/30' : ''}>
@@ -188,6 +207,19 @@ export default function JobworkPage() {
                             setReceiving({ ...receiving, lines: ls });
                           }} />
                       </td>
+                      {receiving.materialOwnerType === 'CUSTOMER' && <>
+                        {[
+                          ['weightReceiveNow', 'received'], ['weightRejectNow', 'rejected'],
+                        ].map(([field, label]) => <td className="table-td text-right" key={field}>
+                          <input type="number" step="0.001" min="0" placeholder="Optional"
+                            aria-label={`Line ${i + 1} — measured ${label} weight`}
+                            className={`${styles.input} !h-9 text-right w-24 tabular-nums`}
+                            value={l[field]} onChange={(e) => {
+                              const ls = [...receiving.lines]; ls[i] = { ...l, [field]: e.target.value };
+                              setReceiving({ ...receiving, lines: ls });
+                            }} />
+                        </td>)}
+                      </>}
                     </tr>
                   );
                 })}

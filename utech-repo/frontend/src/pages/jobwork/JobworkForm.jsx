@@ -8,10 +8,11 @@ import FormSection from '../../components/ui/FormSection';
 import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
 import { positiveNumber, required, validateAll } from '../../lib/validation';
+import { numericPrecision, trackedQuantity } from '../../lib/quantityValidation';
 import { todayLocal } from '../../lib/format';
 import toast from 'react-hot-toast';
 
-const newLine = () => ({ itemId: '', description: '', qtySent: 1, rate: '', notes: '' });
+const newLine = () => ({ itemId: '', description: '', qtySent: 1, weightSent: '', rate: '', notes: '' });
 
 // untouched rows are skipped by validation but still go out in the payload
 // exactly like before — a fully blank row never errors
@@ -53,7 +54,7 @@ export default function JobworkForm() {
     () => customerLots.map((l) => ({
       value: l.id,
       label: `${l.inwardNumber} — ${l.materialDescription}`,
-      subtitle: `Available: ${Number(l.availableQty)}`,
+      subtitle: `Unallocated: ${Number(l.unallocatedQty)} (on-hand: ${Number(l.availableQty)})`,
     })),
     [customerLots]
   );
@@ -126,8 +127,14 @@ export default function JobworkForm() {
       } else if (!l.itemId) {
         le.itemId = required(l.itemId, 'Item');
       }
-      const qtyErr = positiveNumber(l.qtySent, 'Qty');
+      const qtyErr = trackedQuantity(l.qtySent, 'Qty');
       if (qtyErr) le.qtySent = qtyErr;
+      const weight = String(l.weightSent ?? '').trim();
+      if (isCustomerOwned && weight) {
+        if (!Number.isFinite(Number(weight)) || Number(weight) < 0) le.weightSent = 'Weight must be 0 or more';
+        else le.weightSent = numericPrecision(weight, 'Weight', 3, '99999999999.999');
+        if (!le.weightSent) delete le.weightSent;
+      }
       const rate = String(l.rate ?? '').trim();
       if (rate !== '') {
         const rateErr = positiveNumber(rate, 'Rate');
@@ -155,13 +162,16 @@ export default function JobworkForm() {
           itemId: isCustomerOwned ? null : (l.itemId ? Number(l.itemId) : null),
           description: isCustomerOwned ? (l.description || null) : null,
           qtySent: Number(l.qtySent),
+          ...(isCustomerOwned && String(l.weightSent ?? '').trim() !== '' ? { weightSent: Number(l.weightSent) } : {}),
           rate: l.rate ? Number(l.rate) : null,
           notes: l.notes || null,
         })),
       };
       await api.post('/jobwork', payload);
       toast.success('Saved'); navigate('/jobwork');
-    } catch {} finally {
+    } catch (err) {
+      if (!err.response || err.response.status >= 500) toast.error('Could not confirm the challan save. Check the challan list before retrying.');
+    } finally {
       setSaving(false);
     }
   }
@@ -262,7 +272,7 @@ export default function JobworkForm() {
         <FormSection
           icon={Package}
           title={isCustomerOwned ? 'Material Sent' : 'Items'}
-          description={isCustomerOwned ? 'Describe each customer-owned piece going out' : 'Catalog items going out — stock is deducted automatically'}
+          description={isCustomerOwned ? 'Enter measured outgoing weight to keep the on-hand weight known. Reserved material must be released first.' : 'Catalog items going out — stock is deducted automatically'}
           actions={
             <button
               type="button"
@@ -275,7 +285,7 @@ export default function JobworkForm() {
         >
           <div className="overflow-x-auto scroll-x-hint">
             <table className="min-w-full">
-              <thead><tr><th className="table-th rounded-tl-lg min-w-[14rem]">{isCustomerOwned ? 'Description' : 'Item'}</th><th className="table-th min-w-[6rem]">Qty</th><th className="table-th min-w-[7rem]">Rate</th><th className="table-th min-w-[9rem]">Notes</th><th className="table-th w-10 rounded-tr-lg"></th></tr></thead>
+              <thead><tr><th className="table-th rounded-tl-lg min-w-[14rem]">{isCustomerOwned ? 'Description' : 'Item'}</th><th className="table-th min-w-[6rem]">Qty</th>{isCustomerOwned && <th className="table-th min-w-[7rem]">Measured weight</th>}<th className="table-th min-w-[7rem]">Rate</th><th className="table-th min-w-[9rem]">Notes</th><th className="table-th w-10 rounded-tr-lg"></th></tr></thead>
               <tbody>
                 {form.lines.map((l, i) => (
                   <tr key={i} className={i % 2 === 1 ? 'bg-slate-50/30' : ''}>
@@ -329,6 +339,14 @@ export default function JobworkForm() {
                         <p id={`jw-line-${i}-qtySent-error`} role="alert" className={styles.errorText}>{lineError(i, 'qtySent')}</p>
                       )}
                     </td>
+                    {isCustomerOwned && <td className="table-td">
+                      <input id={`jw-line-${i}-weightSent`} aria-label={`Line ${i + 1} measured weight`}
+                        type="number" step="0.001" min="0" placeholder="Optional" value={l.weightSent}
+                        className={`${styles.input} !h-9 !text-xs tabular-nums w-28 ${lineError(i, 'weightSent') ? styles.inputError : ''}`}
+                        aria-invalid={!!lineError(i, 'weightSent')}
+                        onChange={(e) => setLine(i, 'weightSent', e.target.value)} />
+                      {lineError(i, 'weightSent') && <p role="alert" className={styles.errorText}>{lineError(i, 'weightSent')}</p>}
+                    </td>}
                     <td className="table-td">
                       <input
                         id={`jw-line-${i}-rate`}

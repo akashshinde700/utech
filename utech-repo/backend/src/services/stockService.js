@@ -138,24 +138,72 @@ async function getCustomerLotAvailableQty(tx, lotId) {
   return roundQuantity(Number(agg._sum.qtyIn || 0) - Number(agg._sum.qtyOut || 0));
 }
 
+// Active job-card reservations are protected by the same lot-row lock as stock.
+async function getCustomerLotReservations(tx, lotId) {
+  const agg = await tx.customerMaterialAllocation.aggregate({
+    where: { lotId, releasedAt: null }, _sum: { qty: true, weight: true },
+  });
+  return { qty: roundQuantity(agg._sum.qty || 0), weight: roundQuantity(agg._sum.weight || 0) };
+}
+
+// Customer-lot writers serialize on the lot row. All callers must use an
+// interactive transaction at READ COMMITTED: at MySQL's default REPEATABLE READ
+// an earlier consistent read could otherwise leave the later ledger SUM on an
+// old snapshot even after this lock is acquired. The tagged query is parameterized.
+async function lockCustomerLot(tx, lotId) {
+  await tx.$queryRaw`SELECT \`id\` FROM \`CustomerMaterialLot\` WHERE \`id\` = ${lotId} FOR UPDATE`;
+}
+
 // The customer-material analog of moveCompanyStock — never touches
 // Item.currentStock, only the lot and its own StockLedger rows.
 async function moveCustomerMaterial({
-  tx, lotId, date = new Date(), refType, refId = null, qtyIn = 0, qtyOut = 0, notes = null,
+  tx, lotId, date = new Date(), refType, refId = null, qtyIn = 0, qtyOut = 0,
+  weightIn = null, weightOut = null, notes = null,
 }) {
-  validateMovement(Number(qtyIn), Number(qtyOut));
+  const inQty = Number(qtyIn);
+  const outQty = Number(qtyOut);
+  const inWeight = weightIn == null ? null : Number(weightIn);
+  const outWeight = weightOut == null ? null : Number(weightOut);
+  validateMovement(inQty, outQty);
+  validateMovement(inWeight ?? 0, outWeight ?? 0);
+  if ((inWeight != null && (!inQty || inWeight > 99999999999.999))
+      || (outWeight != null && (!outQty || outWeight > 99999999999.999))) {
+    throw new HttpError(400, 'Measured weight must correspond to a quantity movement');
+  }
+  await lockCustomerLot(tx, lotId);
   const lot = await tx.customerMaterialLot.findUnique({ where: { id: lotId } });
   if (!lot) throw new HttpError(404, `Customer material lot ${lotId} not found`);
 
   const available = await getCustomerLotAvailableQty(tx, lotId);
-  const balance = roundQuantity(available + Number(qtyIn) - Number(qtyOut));
+  const reserved = await getCustomerLotReservations(tx, lotId);
+  const balance = roundQuantity(available + inQty - outQty);
   if (balance < 0) {
     throw new HttpError(400, `Insufficient quantity on lot ${lot.inwardNumber} (available ${available}, needed ${qtyOut})`);
+  }
+  if (balance < reserved.qty) throw new HttpError(400, 'Quantity is reserved for job cards; release the reservation before issuing it');
+
+  let weightBalance = lot.currentWeight == null ? null : Number(lot.currentWeight);
+  if (refType !== 'CUSTOMER_INWARD' && (inQty > 0 || outQty > 0)) {
+    const unmeasured = (inQty > 0 && inWeight == null) || (outQty > 0 && outWeight == null);
+    if (outQty > 0 && reserved.weight > 0 && (outWeight == null || weightBalance == null)) {
+      throw new HttpError(400, 'Measure the outgoing weight and reconcile on-hand weight before moving material reserved for job cards');
+    }
+    if (unmeasured || weightBalance == null) weightBalance = null;
+    else {
+      weightBalance = roundQuantity(weightBalance + (inWeight || 0) - (outWeight || 0));
+      if (weightBalance < 0 || weightBalance < reserved.weight) {
+        throw new HttpError(400, 'Insufficient unreserved on-hand weight');
+      }
+      if (weightBalance > 99999999999.999) throw new HttpError(400, 'On-hand weight exceeds the supported limit');
+    }
+    const previous = lot.currentWeight == null ? null : Number(lot.currentWeight);
+    if (weightBalance !== previous) await tx.customerMaterialLot.update({ where: { id: lotId }, data: { currentWeight: weightBalance } });
   }
 
   return tx.stockLedger.create({
     data: {
-      itemId: lot.itemId || null, date, refType, refId, qtyIn, qtyOut, balance, notes,
+      itemId: lot.itemId || null, date, refType, refId, qtyIn: inQty, qtyOut: outQty, balance,
+      weightIn: inWeight, weightOut: outWeight, weightBalance, notes,
       ownerType: 'CUSTOMER', customerMaterialLotId: lotId,
     },
   });
@@ -174,6 +222,6 @@ async function getLowStockItems(db, { take } = {}) {
 }
 
 module.exports = {
-  moveCompanyStock, moveCustomerMaterial, getCustomerLotAvailableQty, getLowStockItems,
+  moveCompanyStock, moveCustomerMaterial, lockCustomerLot, getCustomerLotAvailableQty, getCustomerLotReservations, getLowStockItems,
   roundQuantity, findStockShortfalls, describeShortfalls,
 };

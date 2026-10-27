@@ -11,6 +11,8 @@ import SearchableSelect from '../../components/ui/SearchableSelect';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import { styles } from '../../lib/formStyles';
 import { positiveNumber, required, validateAll } from '../../lib/validation';
+import { numericPrecision, trackedQuantity } from '../../lib/quantityValidation';
+import { calculateInvoiceLineAmount } from '../../lib/invoiceTotals';
 import { toLocalInput } from '../../lib/format';
 import toast from 'react-hot-toast';
 
@@ -210,7 +212,7 @@ export default function QuotationForm() {
     const updated = [...lines];
     updated[index][field] = value;
     if (field === 'qty' || field === 'rate') {
-      updated[index].amount = updated[index].qty * updated[index].rate;
+      updated[index].amount = calculateInvoiceLineAmount(updated[index].qty, updated[index].rate);
     }
     setLines(updated);
     // clear the line's error as soon as the offending value is fixed
@@ -232,8 +234,8 @@ export default function QuotationForm() {
     const { errors: errs, ok } = validateAll(formData, schema);
     const lErrs = lines.map((l) => ({
       description: required(l.description, 'Part name'),
-      qty: positiveNumber(l.qty, 'Qty'),
-      rate: positiveNumber(l.rate, 'Rate'),
+      qty: trackedQuantity(l.qty, 'Qty'),
+      rate: positiveNumber(l.rate, 'Rate') || numericPrecision(l.rate, 'Rate', 2, '999999999999.99'),
     }));
     if (!ok || lErrs.some((le) => le.description || le.qty || le.rate)) {
       setErrors(errs);
@@ -287,6 +289,7 @@ export default function QuotationForm() {
         }
       />
       <form onSubmit={handleSubmit} noValidate className="max-w-5xl space-y-5">
+        {isEdit && ['SENT', 'APPROVED', 'REJECTED'].includes(data?.status) && <p className="text-sm text-amber-700">Saving changes resets this quotation to draft. It must be sent and accepted again before conversion.</p>}
         <FormSection icon={FileText} title="Quotation Details" description={isVendor ? 'Vendor, validity and notes for the rate they quoted' : 'Customer, validity and notes for this quotation'}>
           <div className={styles.formGrid}>
             <FormField id="quotation-party" label={isVendor ? 'Vendor' : 'Customer'} required error={errors.partyId} className="sm:col-span-2" hint={isVendor ? 'Only vendors are listed' : 'Only customers are listed'}>

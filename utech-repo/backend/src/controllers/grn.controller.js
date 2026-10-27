@@ -6,6 +6,7 @@ const { nextNumber } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
 const vendorWorkOrderService = require('../services/vendorWorkOrderService');
+const { lockVendorWorkOrder } = require('../utils/transactionLocks');
 
 const INCLUDE = {
   po: { select: { id: true, number: true } },
@@ -115,15 +116,46 @@ async function create(req, res) {
     // A receipt against a PO that was itself raised from a vendor work order
     // belongs to that work order. Resolving it here is what makes the
     // outsourcing tracker advance on its own, with nothing to link by hand.
-    let vwoId = vendorWorkOrderId ? Number(vendorWorkOrderId) : null;
-    if (!vwoId && poId) {
-      const linked = await tx.vendorWorkOrder.findUnique({ where: { poId: Number(poId) }, select: { id: true } });
-      if (linked) vwoId = linked.id;
+    const explicitVwoId = vendorWorkOrderId ? Number(vendorWorkOrderId) : null;
+    const linked = poId
+      ? await tx.vendorWorkOrder.findUnique({ where: { poId: Number(poId) }, select: { id: true } })
+      : null;
+    if (poId && explicitVwoId && (!linked || linked.id !== explicitVwoId)) {
+      throw new HttpError(400, 'Vendor work order does not belong to this purchase order');
     }
+    const vwoId = explicitVwoId || (linked && linked.id) || null;
+    if (!vwoId && lines.some((l) => l.vendorWorkOrderLineId)) {
+      throw new HttpError(400, 'A vendor work order is required when a work order line is supplied');
+    }
+    let vwo = null;
     let vwoLineByPoLine = new Map();
     if (vwoId) {
-      const vwoLines = await tx.vendorWorkOrderLine.findMany({ where: { vendorWorkOrderId: vwoId } });
-      vwoLineByPoLine = new Map(vwoLines.filter((l) => l.poLineId).map((l) => [l.poLineId, l.id]));
+      await lockVendorWorkOrder(tx, vwoId);
+      vwo = await tx.vendorWorkOrder.findUnique({ where: { id: vwoId }, include: { lines: true } });
+      if (!vwo) throw new HttpError(400, 'Vendor work order not found');
+      if (!poId && vwo.poId) throw new HttpError(400, 'This work order must be received against its purchase order');
+      if (!poId && !['SENT', 'PARTIAL_RECEIVED'].includes(vwo.status)) {
+        throw new HttpError(400, `Cannot record a return against a work order in ${vwo.status} status`);
+      }
+      // A direct (non-PO) GRN changes the work order just like its own return
+      // endpoint, so it must not bypass that endpoint's permission or scope.
+      if (!poId && req.user.role !== 'SUPERADMIN') {
+        if (!req.user.permissions.includes('vendorWorkOrder.update')) throw new HttpError(403, 'Missing permission: vendorWorkOrder.update');
+        const limited = req.user.scopeToDepartment && !(req.user.hierarchyLevel != null && req.user.hierarchyLevel <= 3);
+        if (limited && vwo.departmentId !== req.user.departmentId) throw new HttpError(403, 'This vendor work order belongs to another department');
+      }
+      if (rest.partyId && Number(rest.partyId) !== vwo.partyId) throw new HttpError(400, 'GRN party does not match the vendor work order');
+      vwoLineByPoLine = new Map(vwo.lines.filter((l) => l.poLineId).map((l) => [l.poLineId, l.id]));
+      for (const l of lines) {
+        if (!l.vendorWorkOrderLineId) continue;
+        const source = vwo.lines.find((row) => row.id === Number(l.vendorWorkOrderLineId));
+        if (!source || (poId && source.poLineId !== Number(l.poLineId))) {
+          throw new HttpError(400, 'GRN line does not belong to this vendor work order and purchase order');
+        }
+        if (source.itemId && source.itemId !== (l.itemId || null)) {
+          throw new HttpError(400, 'GRN item does not match its vendor work order line');
+        }
+      }
     }
 
     const created = await tx.gRN.create({
@@ -132,7 +164,7 @@ async function create(req, res) {
         date: new Date(rest.date),
         number,
         poId: poId ? Number(poId) : null,
-        partyId: rest.partyId ? Number(rest.partyId) : (po ? po.partyId : null),
+        partyId: rest.partyId ? Number(rest.partyId) : (po ? po.partyId : (vwo ? vwo.partyId : null)),
         vendorWorkOrderId: vwoId,
         status: 'ACCEPTED',
         lines: {
@@ -170,12 +202,12 @@ async function create(req, res) {
 
     if (created.poId) await rollUpPoStatus(tx, created.poId);
 
-    const vwo = vwoId
+    const updatedVwo = vwoId
       ? await vendorWorkOrderService.applyGrnDelta({ tx, grn: created, sign: 1 })
       : null;
 
-    return { grn: created, vwo };
-  });
+    return { grn: created, vwo: updatedVwo };
+  }, { isolationLevel: 'ReadCommitted' });
 
   audit(req, 'create', 'GRN', result.grn.id, {
     number, poId: result.grn.poId, vendorWorkOrderId: result.grn.vendorWorkOrderId,
@@ -298,7 +330,7 @@ async function cancel(req, res) {
 
     const updated = await tx.gRN.findUnique({ where: { id }, include: INCLUDE });
     return { grn: updated, vwo, forcedNegative: force && shortfalls.length > 0, shortfalls };
-  });
+  }, { isolationLevel: 'ReadCommitted' });
 
   audit(req, 'cancel', 'GRN', id, {
     reason,

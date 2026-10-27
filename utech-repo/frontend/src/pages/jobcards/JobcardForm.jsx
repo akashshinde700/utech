@@ -289,6 +289,10 @@ export default function JobcardForm() {
     setErrors({});
 
     setSaving(true);
+    // Drawing uploads are separate HTTP requests, not part of the job-card DB
+    // transaction. Track a confirmed save so an upload failure cannot invite
+    // a duplicate create from this form.
+    let savedJobcardId = null;
     try {
       const payload = {
         ...form,
@@ -316,6 +320,7 @@ export default function JobcardForm() {
         jobcardId = r.data.id;
         respLines = r.data.lines;
       }
+      savedJobcardId = jobcardId;
 
       // upload any locally staged PDFs now that lines have real ids
       const knownIds = new Set(form.lines.filter((l) => l.id).map((l) => l.id));
@@ -339,7 +344,15 @@ export default function JobcardForm() {
 
       toast.success('Saved');
       navigate(`/jobcards/${jobcardId}`);
-    } catch {} finally {
+    } catch (err) {
+      if (savedJobcardId) {
+        toast.error('Job card saved, but one or more files may not have uploaded. Verify its attachments before retrying.', { duration: 8000 });
+        navigate(`/jobcards/${savedJobcardId}`);
+      } else if (!err.response || err.response.status >= 500) {
+        toast.error('Save result is uncertain. Check the job card list before retrying.', { duration: 8000 });
+      }
+      // HTTP validation errors are already shown by the API interceptor.
+    } finally {
       setSaving(false);
     }
   }

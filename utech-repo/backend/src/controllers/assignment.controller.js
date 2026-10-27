@@ -3,6 +3,8 @@ const prisma = require('../config/prisma');
 const HttpError = require('../utils/httpError');
 const { audit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
+const { lockJobcard } = require('../utils/transactionLocks');
+const { assertJobcardAccess } = require('../utils/jobcardAccess');
 
 const INCLUDE = {
   attachment: { select: { id: true, filename: true, category: true, refType: true, refId: true } },
@@ -40,8 +42,8 @@ function assertParticipant(a, user) {
   }
 }
 
-async function notifyUser(userId, payload) {
-  await prisma.notification.create({ data: { userId, ...payload } });
+async function notifyUser(userId, payload, db = prisma) {
+  await db.notification.create({ data: { userId, ...payload } });
 }
 
 async function list(req, res) {
@@ -165,6 +167,18 @@ async function get(req, res) {
   res.json(a);
 }
 
+// Assignment creation/reopening and job-card completion use the same parent
+// lock so a completed project cannot acquire new open drawing assignments.
+async function lockOpenJobcard(tx, attachment, user) {
+  if (attachment.refType !== 'JOBCARD') return;
+  await lockJobcard(tx, attachment.refId);
+  const card = await tx.jobcard.findUnique({ where: { id: attachment.refId } });
+  if (!card) throw new HttpError(404, 'Job card not found');
+  await assertJobcardAccess(user, card, tx);
+  if (card.status === 'COMPLETED') throw new HttpError(400, 'Revert the job card before assigning or reopening work');
+  if (card.status === 'CANCELLED') throw new HttpError(400, 'Cannot assign or reopen work on a cancelled job card');
+}
+
 async function create(req, res) {
   const { attachmentId, assignedToId, pageNumbers, departmentId, departmentSubCategoryId, instructions, priority, dueDate } = req.body;
   const attachment = await prisma.attachment.findUnique({ where: { id: attachmentId } });
@@ -189,39 +203,42 @@ async function create(req, res) {
 
   const cleanPages = pageNumbers && pageNumbers.length ? [...new Set(pageNumbers)].sort((x, y) => x - y) : null;
 
-  // guard against accidental double-submits (e.g. a double click) creating
-  // the exact same assignment twice
-  const existing = await prisma.assignment.findMany({
-    where: { attachmentId, assignedToId, status: { not: 'CANCELLED' } },
-    select: { pageNumbers: true },
-  });
-  const dup = existing.some((e) => {
-    const ep = e.pageNumbers || null;
-    if (!ep && !cleanPages) return true;
-    if (!ep || !cleanPages || ep.length !== cleanPages.length) return false;
-    return ep.every((p, i) => p === cleanPages[i]);
-  });
-  if (dup) throw new HttpError(409, 'This exact page range is already assigned to this user.');
-
-  const a = await prisma.assignment.create({
-    data: {
-      attachmentId, assignedToId, pageNumbers: cleanPages,
-      departmentId: departmentId || null,
-      departmentSubCategoryId: departmentSubCategoryId || null,
-      instructions: instructions || null,
-      priority: priority || 'MEDIUM',
-      dueDate: dueDate || null,
-      assignedById: req.user.id,
-      status: 'ASSIGNED',
-    },
-    include: INCLUDE,
-  });
+  const a = await prisma.$transaction(async (tx) => {
+    await lockOpenJobcard(tx, attachment, req.user);
+    const currentAttachment = await tx.attachment.findUnique({ where: { id: attachmentId } });
+    if (!currentAttachment) throw new HttpError(404, 'Attachment not found');
+    // The parent job-card lock also serializes identical assignments on that card.
+    const existing = await tx.assignment.findMany({
+      where: { attachmentId, assignedToId, status: { not: 'CANCELLED' } }, select: { pageNumbers: true },
+    });
+    const dup = existing.some((e) => {
+      const ep = e.pageNumbers || null;
+      if (!ep && !cleanPages) return true;
+      if (!ep || !cleanPages || ep.length !== cleanPages.length) return false;
+      return ep.every((p, i) => p === cleanPages[i]);
+    });
+    if (dup) throw new HttpError(409, 'This exact page range is already assigned to this user.');
+    const created = await tx.assignment.create({
+      data: {
+        attachmentId, assignedToId, pageNumbers: cleanPages,
+        departmentId: departmentId || null,
+        departmentSubCategoryId: departmentSubCategoryId || null,
+        instructions: instructions || null,
+        priority: priority || 'MEDIUM',
+        dueDate: dueDate || null,
+        assignedById: req.user.id,
+        status: 'ASSIGNED',
+      },
+      include: INCLUDE,
+    });
+    await notifyUser(assignedToId, {
+      type: 'ASSIGNMENT_ASSIGNED', title: `New work assigned: ${attachment.filename}`,
+      body: `${req.user.name} assigned you "${attachment.filename}"${cleanPages ? ` (page ${cleanPages.join(', ')})` : ''}.`,
+      refType: 'ASSIGNMENT', refId: created.id,
+    }, tx);
+    return created;
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'create', 'Assignment', a.id, { attachmentId, assignedToId, departmentId, departmentSubCategoryId, pageNumbers: cleanPages });
-  await notifyUser(assignedToId, {
-    type: 'ASSIGNMENT_ASSIGNED', title: `New work assigned: ${attachment.filename}`,
-    body: `${req.user.name} assigned you "${attachment.filename}"${cleanPages ? ` (page ${cleanPages.join(', ')})` : ''}.`,
-    refType: 'ASSIGNMENT', refId: a.id,
-  });
   res.status(201).json(a);
 }
 
@@ -291,19 +308,23 @@ async function reopen(req, res) {
   const a = await prisma.assignment.findUnique({ where: { id }, include: INCLUDE });
   if (!a) throw new HttpError(404, 'Assignment not found');
   if (a.assignedById !== req.user.id) throw new HttpError(403, 'Only the person who assigned this can reopen it');
-  if (a.status !== 'COMPLETED') throw new HttpError(400, `Cannot reopen an assignment in ${a.status} status`);
-
-  const updated = await prisma.assignment.update({
-    where: { id },
-    data: { status: 'REOPENED', completedAt: null, completedById: null },
-    include: INCLUDE,
-  });
+  const updated = await prisma.$transaction(async (tx) => {
+    await lockOpenJobcard(tx, a.attachment, req.user);
+    const current = await tx.assignment.findUnique({ where: { id } });
+    if (!current) throw new HttpError(404, 'Assignment not found');
+    if (current.assignedById !== req.user.id) throw new HttpError(403, 'Only the person who assigned this can reopen it');
+    if (current.status !== 'COMPLETED') throw new HttpError(400, `Cannot reopen an assignment in ${current.status} status`);
+    const reopened = await tx.assignment.update({
+      where: { id }, data: { status: 'REOPENED', completedAt: null, completedById: null }, include: INCLUDE,
+    });
+    await notifyUser(a.assignedToId, {
+      type: 'ASSIGNMENT_REOPENED', title: `Work reopened: ${a.attachment.filename}`,
+      body: `${req.user.name} reopened "${a.attachment.filename}"${req.body.reason ? `: ${req.body.reason}` : ''}.`,
+      refType: 'ASSIGNMENT', refId: id,
+    }, tx);
+    return reopened;
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'reopen', 'Assignment', id, { reason: req.body.reason || null });
-  await notifyUser(a.assignedToId, {
-    type: 'ASSIGNMENT_REOPENED', title: `Work reopened: ${a.attachment.filename}`,
-    body: `${req.user.name} reopened "${a.attachment.filename}"${req.body.reason ? `: ${req.body.reason}` : ''}.`,
-    refType: 'ASSIGNMENT', refId: id,
-  });
   res.json(updated);
 }
 

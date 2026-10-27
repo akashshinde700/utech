@@ -12,7 +12,8 @@ router.get('/', requirePermission('customerQuotation.read', 'vendorQuotation.rea
 router.get('/:id', requirePermission('customerQuotation.read', 'vendorQuotation.read'), ah(ctrl.get));
 router.post('/', requirePermission('customerQuotation.create', 'vendorQuotation.create'), validate(createQuotationSchema), ah(ctrl.create));
 router.put('/:id', requirePermission('customerQuotation.update', 'vendorQuotation.update'), validate(updateQuotationSchema), ah(ctrl.update));
-router.post('/:id/convert', requirePermission('customerQuotation.update', 'vendorQuotation.update'), ah(ctrl.convertToInvoice));
+// Conversion changes both a customer quotation and a financial document.
+router.post('/:id/convert', requirePermission('customerQuotation.update'), requirePermission('invoice.create'), ah(ctrl.convertToInvoice));
 router.delete('/:id', requirePermission('customerQuotation.delete', 'vendorQuotation.delete'), ah(ctrl.remove));
 
 module.exports = router;

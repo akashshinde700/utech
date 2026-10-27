@@ -1,6 +1,7 @@
 'use strict';
 const { z } = require('zod');
 const { partialNoDefaults } = require('./partial');
+const { quantity } = require('./precision');
 
 // a line is either a catalog item or a free-text/drawing-identified part — the
 // whole point of the module is that outsourced parts often aren't in the Item
@@ -11,7 +12,7 @@ const lineSchema = z
     description: z.string().trim().min(1).nullable().optional(),
     drawingNumber: z.string().trim().nullable().optional(),
     partNumber: z.string().trim().nullable().optional(),
-    qtySent: z.coerce.number().positive(),
+    qtySent: quantity(z.coerce.number().positive()),
     uomCode: z.string().trim().nullable().optional(),
     rate: z.coerce.number().nonnegative().nullable().optional(),
     gstRate: z.coerce.number().min(0).max(100).optional(),
@@ -41,7 +42,7 @@ const updateVendorWorkOrderSchema = partialNoDefaults(baseSchema);
 // issue what the company actually tracks a quantity for
 const materialLineSchema = z.object({
   itemId: z.coerce.number().int().positive(),
-  qtySent: z.coerce.number().positive(),
+  qtySent: quantity(z.coerce.number().positive()),
   processId: z.coerce.number().int().positive().nullable().optional(),
   rate: z.coerce.number().nonnegative().nullable().optional(),
   notes: z.string().trim().nullable().optional(),
@@ -59,12 +60,15 @@ const receiveVendorWorkOrderSchema = z.object({
     .array(
       z.object({
         id: z.coerce.number().int().positive(),
-        qtyReceived: z.coerce.number().nonnegative().optional(),
-        qtyRejected: z.coerce.number().nonnegative().optional(),
+        qtyReceived: quantity(z.coerce.number().nonnegative()).optional(),
+        qtyRejected: quantity(z.coerce.number().nonnegative()).optional(),
       })
     )
     .min(1),
   remarks: z.string().trim().nullable().optional(),
+}).refine((body) => new Set(body.lines.map((line) => line.id)).size === body.lines.length, {
+  path: ['lines'],
+  message: 'Each work order line may appear only once in a return',
 });
 
 const raisePurchaseOrderSchema = z.object({

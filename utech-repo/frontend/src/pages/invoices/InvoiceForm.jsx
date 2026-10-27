@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import Decimal from 'decimal.js';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Calculator, ListPlus, Loader2, Plus, ReceiptText, Save, StickyNote, Trash2,
@@ -11,7 +12,7 @@ import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
 import { gstRate, positiveNumber, required, validateAll } from '../../lib/validation';
 import { inr, todayLocal } from '../../lib/format';
-import { calculateInvoiceTotals } from '../../lib/invoiceTotals';
+import { calculateInvoiceLineAmount, calculateInvoiceTotals } from '../../lib/invoiceTotals';
 import useRemoteOptions from '../../lib/useRemoteOptions';
 import toast from 'react-hot-toast';
 
@@ -28,10 +29,17 @@ function nonNegative(v, label) {
   return null;
 }
 
+function numericPrecision(v, label, places, max) {
+  if (String(v ?? '').trim() === '' || !Number.isFinite(Number(v))) return null;
+  if (new Decimal(v).decimalPlaces() > places) return `${label} supports at most ${places} decimal places`;
+  if (Number(v) > max) return `${label} exceeds the supported limit`;
+  return null;
+}
+
 const schema = {
   date: (v) => required(v, 'Date'),
   partyId: (v) => required(v, 'Party'),
-  discount: (v) => nonNegative(v, 'Discount'),
+  discount: (v) => nonNegative(v, 'Discount') || numericPrecision(v, 'Discount', 2, 999999999999.99),
 };
 
 export default function InvoiceForm() {
@@ -141,8 +149,8 @@ export default function InvoiceForm() {
     const { errors: errs, ok } = validateAll(form, schema);
     const lErrs = form.lines.map((l) => ({
       description: required(l.description, 'Description'),
-      qty: positiveNumber(l.qty, 'Qty'),
-      rate: required(l.rate, 'Rate') || nonNegative(l.rate, 'Rate'),
+      qty: positiveNumber(l.qty, 'Qty') || numericPrecision(l.qty, 'Qty', 3, 99999999999.999),
+      rate: required(l.rate, 'Rate') || nonNegative(l.rate, 'Rate') || numericPrecision(l.rate, 'Rate', 2, 999999999999.99),
       gstRate: gstRate(l.gstRate),
     }));
     if (Number(form.discount || 0) > totals.subtotal) errs.discount = 'Discount cannot exceed the subtotal';
@@ -175,7 +183,7 @@ export default function InvoiceForm() {
       navigate('/invoices');
     } catch (err) {
       console.error(err);
-      toast.error(err.response?.data?.message || 'Failed to save invoice');
+      toast.error(err.response && err.response.status < 500 ? (err.response.data?.message || 'Failed to save invoice') : 'Save result is uncertain. Check the invoice list before retrying.');
     } finally {
       setSaving(false);
     }
@@ -287,7 +295,7 @@ export default function InvoiceForm() {
               </thead>
               <tbody>
                 {form.lines.map((l, i) => {
-                  const amount = Number(l.qty || 0) * Number(l.rate || 0);
+                  const amount = calculateInvoiceLineAmount(l.qty, l.rate);
                   return (
                     <tr key={i} className={i % 2 === 1 ? 'bg-slate-50/30' : ''}>
                       <td className="table-td">
@@ -381,7 +389,7 @@ export default function InvoiceForm() {
           {/* tablet / phone: one card per line, fields stacked */}
           <div className="space-y-3 lg:hidden">
             {form.lines.map((l, i) => {
-              const amount = Number(l.qty || 0) * Number(l.rate || 0);
+              const amount = calculateInvoiceLineAmount(l.qty, l.rate);
               return (
                 <div key={i} className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-3">
                   <div className="flex items-center justify-between">

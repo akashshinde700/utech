@@ -96,8 +96,9 @@ const authLimiter = rateLimit({
 });
 app.use(['/api/auth/login', '/api/auth/otp/request', '/api/auth/otp/verify'], authLimiter);
 
-// uploads (static)
-app.use('/uploads', express.static(path.resolve(env.UPLOAD_DIR)));
+// Business uploads are private. They are served only by the attachment and
+// quotation-image APIs, which check authentication and document permissions.
+// Never mount UPLOAD_DIR as a public static directory.
 
 // health
 app.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));

@@ -3,11 +3,21 @@ const prisma = require('../config/prisma');
 const HttpError = require('../utils/httpError');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
-const { calcLineAmount, calcTaxes, round2 } = require('../utils/gst');
+const { calcLineAmount, calcTaxes, roundInvoiceTotal } = require('../utils/gst');
+const Decimal = require('decimal.js');
 const { audit } = require('../utils/audit');
 const { quotationTypesFor, assertQuotationType } = require('../utils/typedAccess');
 
 const INCLUDE = { party: true, lines: { include: { item: true } } };
+
+async function lockQuotation(tx, id) {
+  await tx.$queryRaw`SELECT \`id\` FROM \`Quotation\` WHERE \`id\` = ${id} FOR UPDATE`;
+}
+
+const QUOTATION_TRANSITIONS = {
+  DRAFT: ['SENT'],
+  SENT: ['APPROVED', 'REJECTED'],
+};
 
 async function list(req, res) {
   const { skip, take, page, pageSize, sortBy, sortDir, search } = parseListQuery(req.query, [
@@ -61,12 +71,47 @@ function buildLines(lines) {
   }));
 }
 
+const maxMoney = new Decimal('999999999999.99');
+function quotationTotals(lines, isIntraState, discount) {
+  const taxes = calcTaxes(lines, isIntraState);
+  if (new Decimal(discount).greaterThan(taxes.subtotal)) throw new HttpError(400, 'Discount cannot exceed the subtotal');
+  const total = new Decimal(taxes.total).minus(discount);
+  if (new Decimal(taxes.subtotal).greaterThan(maxMoney) || total.greaterThan(maxMoney)) {
+    throw new HttpError(400, 'Quotation amount exceeds the supported money limit');
+  }
+  return { subtotal: taxes.subtotal, cgst: taxes.cgst, sgst: taxes.sgst, igst: taxes.igst, discount, total: total.toNumber() };
+}
+
+// Do not turn inconsistent historical quotation rows into a fresh receivable.
+// Existing data is left untouched; the quotation must first be corrected.
+function assertConvertibleAmounts(q) {
+  const invalid = () => { throw new HttpError(400, 'Quotation amounts are inconsistent; correct the quotation before conversion'); };
+  if (!Array.isArray(q.lines) || q.lines.length === 0) invalid();
+  let sum = new Decimal(0);
+  for (const line of q.lines) {
+    const qty = new Decimal(String(line.qty));
+    const rate = new Decimal(String(line.rate));
+    const amount = new Decimal(String(line.amount));
+    if (qty.lte(0) || rate.lt(0) || amount.lt(0) || !amount.eq(calcLineAmount(String(line.qty), String(line.rate)))) invalid();
+    sum = sum.plus(amount);
+  }
+  const subtotal = new Decimal(String(q.subtotal ?? 0));
+  const discount = new Decimal(String(q.discount ?? 0));
+  const tax = ['cgst', 'sgst', 'igst'].reduce((total, key) => {
+    const part = new Decimal(String(q[key] ?? 0));
+    if (part.lt(0)) invalid();
+    return total.plus(part);
+  }, new Decimal(0));
+  const total = new Decimal(String(q.total ?? 0));
+  if (!subtotal.eq(sum) || discount.lt(0) || discount.gt(subtotal)
+    || total.lt(0) || total.gt(maxMoney) || !total.eq(subtotal.plus(tax).minus(discount))) invalid();
+}
+
 async function create(req, res) {
   const { lines, isIntraState = true, discount = 0, validUntil, notes = '', headerText, footerText, type = 'CUSTOMER', ...rest } = req.body;
   assertQuotationType(req, 'create', type);
   await assertPartyFits(rest.partyId, type);
-  const taxes = calcTaxes(lines, isIntraState);
-  const total = round2(taxes.total - Number(discount || 0));
+  const totals = quotationTotals(lines, isIntraState, discount);
   const number = await nextNumber('quotation', type === 'VENDOR' ? 'vendorQuotation' : 'quotation');
   const q = await prisma.quotation.create({
     data: {
@@ -75,12 +120,7 @@ async function create(req, res) {
       date: new Date(rest.date),
       validTill: validUntil ? new Date(validUntil) : null,
       number,
-      subtotal: taxes.subtotal,
-      cgst: taxes.cgst,
-      sgst: taxes.sgst,
-      igst: taxes.igst,
-      discount,
-      total,
+      ...totals,
       notes,
       headerText: headerText || null,
       footerText: footerText || null,
@@ -98,7 +138,7 @@ async function update(req, res) {
   const existing = await prisma.quotation.findUnique({ where: { id }, select: { type: true } });
   if (!existing) throw new HttpError(404, 'Quotation not found');
   assertQuotationType(req, 'update', existing.type);
-  const { lines, isIntraState = true, discount = 0, validUntil, notes, headerText, footerText, ...rest } = req.body;
+  const { lines, isIntraState = true, discount, validUntil, notes, headerText, footerText, ...rest } = req.body;
   if (rest.partyId) await assertPartyFits(rest.partyId, existing.type);
   const data = {
     ...rest,
@@ -108,18 +148,32 @@ async function update(req, res) {
     ...(headerText !== undefined ? { headerText: headerText || null } : {}),
     ...(footerText !== undefined ? { footerText: footerText || null } : {}),
   };
-  if (lines) {
-    const taxes = calcTaxes(lines, isIntraState);
-    data.subtotal = taxes.subtotal;
-    data.cgst = taxes.cgst;
-    data.sgst = taxes.sgst;
-    data.igst = taxes.igst;
-    data.discount = discount;
-    data.total = round2(taxes.total - Number(discount || 0));
-  }
   const q = await prisma.$transaction(async (tx) => {
+    await lockQuotation(tx, id);
+    const current = await tx.quotation.findUnique({ where: { id }, include: { lines: true } });
+    if (!current) throw new HttpError(404, 'Quotation not found');
+    if (['CONVERTED', 'CANCELLED'].includes(current.status)) {
+      throw new HttpError(400, `Cannot edit a ${current.status.toLowerCase()} quotation`);
+    }
+    const editingContent = Object.keys(req.body).some((key) => key !== 'status');
+    if (rest.status && editingContent) throw new HttpError(400, 'Change quotation status separately from editing its content');
+    if (rest.status && rest.status !== current.status && !(QUOTATION_TRANSITIONS[current.status] || []).includes(rest.status)) {
+      throw new HttpError(400, `Cannot change quotation from ${current.status} to ${rest.status}`);
+    }
+    // Any edit to a sent/approved/rejected document invalidates its prior
+    // decision; the revised version must be sent and accepted again.
+    if (editingContent && current.status !== 'DRAFT') data.status = 'DRAFT';
     if (lines) {
+      Object.assign(data, quotationTotals(lines, isIntraState, discount ?? Number(current.discount || 0)));
       await tx.quotationLine.deleteMany({ where: { quotationId: id } });
+    } else if (discount !== undefined) {
+      const subtotal = new Decimal(String(current.subtotal ?? 0));
+      if (new Decimal(discount).greaterThan(subtotal)) throw new HttpError(400, 'Discount cannot exceed the subtotal');
+      const total = subtotal.plus(String(current.cgst ?? 0)).plus(String(current.sgst ?? 0))
+        .plus(String(current.igst ?? 0)).minus(discount);
+      if (total.gt(maxMoney)) throw new HttpError(400, 'Quotation amount exceeds the supported money limit');
+      data.discount = discount;
+      data.total = total.toNumber();
     }
     return tx.quotation.update({
       where: { id },
@@ -129,7 +183,7 @@ async function update(req, res) {
       },
       include: INCLUDE,
     });
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'update', 'Quotation', id, { number: q.number });
   res.json(q);
 }
@@ -141,13 +195,22 @@ async function convertToInvoice(req, res) {
   // a vendor's quote is something we buy — it never becomes our sales invoice
   if (q.type !== 'CUSTOMER') throw new HttpError(400, 'Only a customer quotation can be converted to an invoice');
   assertQuotationType(req, 'update', q.type);
-  if (q.status === 'CONVERTED') throw new HttpError(400, 'Already converted');
+  if (q.status !== 'APPROVED') throw new HttpError(400, 'Only an approved quotation can be converted to an invoice');
 
   const number = await nextNumber('invoice', 'invoice');
-  // round the carried-over grand total to the nearest rupee, like every other invoice
-  const exact = round2(Number(q.total));
-  const roundedTotal = Math.round(exact);
   const invoice = await prisma.$transaction(async (tx) => {
+    // Re-read after acquiring the same row lock used by quotation edits; this
+    // makes the approved lines, status, invoice and ledger one atomic snapshot.
+    await lockQuotation(tx, id);
+    const q = await tx.quotation.findUnique({ where: { id }, include: { lines: true } });
+    if (!q) throw new HttpError(404, 'Quotation not found');
+    if (q.type !== 'CUSTOMER' || q.status !== 'APPROVED') {
+      throw new HttpError(400, 'Only an approved customer quotation can be converted to an invoice');
+    }
+    assertQuotationType(req, 'update', q.type);
+    assertConvertibleAmounts(q);
+    const { total: roundedTotal, roundOff } = roundInvoiceTotal(Number(q.total));
+    if (new Decimal(roundedTotal).greaterThan(maxMoney)) throw new HttpError(400, 'Invoice amount exceeds the supported money limit');
     const created = await tx.invoice.create({
       data: {
         number,
@@ -156,7 +219,7 @@ async function convertToInvoice(req, res) {
         quotationId: q.id,
         status: 'ISSUED',
         subtotal: q.subtotal, cgst: q.cgst, sgst: q.sgst, igst: q.igst,
-        discount: q.discount, roundOff: round2(roundedTotal - exact), total: roundedTotal,
+        discount: q.discount, roundOff, total: roundedTotal,
         notes: q.notes,
         lines: {
           create: q.lines.map((l) => ({
@@ -179,30 +242,31 @@ async function convertToInvoice(req, res) {
       },
     });
     return created;
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   await audit(req, 'convertToInvoice', 'Quotation', id, { number: q.number, invoiceId: invoice.id });
   res.status(201).json(invoice);
 }
 
 async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
-  const q = await prisma.quotation.findUnique({ where: { id } });
-  if (!q) throw new HttpError(404, 'Quotation not found');
-  assertQuotationType(req, 'delete', q.type);
-
-  // first delete = cancel; deleting an already-cancelled quotation removes it for good
-  if (q.status === 'CANCELLED') {
-    await prisma.$transaction(async (tx) => {
-      // keep any invoice that was converted from this quotation, just drop the stale link
+  const result = await prisma.$transaction(async (tx) => {
+    // Use the same lock as edits/conversion, then re-read before deciding
+    // whether this request cancels or permanently removes the quotation.
+    await lockQuotation(tx, id);
+    const q = await tx.quotation.findUnique({ where: { id } });
+    if (!q) throw new HttpError(404, 'Quotation not found');
+    assertQuotationType(req, 'delete', q.type);
+    if (q.status === 'CANCELLED') {
+      // Preserve the existing behavior of keeping converted invoices.
       await tx.invoice.updateMany({ where: { quotationId: id }, data: { quotationId: null } });
       await tx.quotation.delete({ where: { id } });
-    });
-    return res.json({ ok: true, deleted: true });
-  }
-
-  await prisma.quotation.update({ where: { id }, data: { status: 'CANCELLED' } });
-  await audit(req, 'cancel', 'Quotation', id, { number: q.number });
-  res.json({ ok: true, deleted: false });
+      return { deleted: true, number: q.number };
+    }
+    await tx.quotation.update({ where: { id }, data: { status: 'CANCELLED' } });
+    return { deleted: false, number: q.number };
+  }, { isolationLevel: 'ReadCommitted' });
+  if (!result.deleted) await audit(req, 'cancel', 'Quotation', id, { number: result.number });
+  res.json({ ok: true, deleted: result.deleted });
 }
 
 module.exports = { list, get, create, update, convertToInvoice, remove };

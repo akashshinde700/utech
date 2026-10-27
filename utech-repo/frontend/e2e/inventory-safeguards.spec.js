@@ -146,7 +146,7 @@ test('sales return cannot restore stock without a physical receipt', async ({ pa
   await page.locator('#return-challan-no').fill(`RC-${Date.now()}`);
   await page.locator('#return-received-at').fill(today());
   await page.getByRole('button', { name: 'Record receipt' }).click();
-  await expect(page.getByText('Receipt recorded')).toBeVisible();
+  await expect(page.getByText('Receipt recorded', { exact: true })).toBeVisible();
   expect(await stockOf(page, token, item.id), 'recording proof must not move stock').toBe(20);
 
   // now processing is allowed and restores the returned quantity

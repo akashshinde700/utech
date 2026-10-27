@@ -5,12 +5,24 @@ const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
 const stockService = require('../services/stockService');
+const { lockChallan } = require('../utils/transactionLocks');
 
 const INCLUDE = {
   party: { select: { id: true, name: true } },
   lines: { include: { item: true, process: true } },
   customerMaterialLot: { select: { id: true, inwardNumber: true, materialDescription: true, customerId: true } },
 };
+
+// Called while holding the lot lock, after the current challan was updated.
+// Another challan may still have material at a vendor even if this one closed.
+async function syncLotVendorStatus(tx, lotId) {
+  const outstanding = await tx.jobworkChallan.count({
+    where: { customerMaterialLotId: lotId, status: { in: ['ISSUED', 'PARTIAL_RECEIVED'] } },
+  });
+  await tx.customerMaterialLot.update({
+    where: { id: lotId }, data: { status: outstanding ? 'AT_VENDOR' : 'IN_PROCESS' },
+  });
+}
 
 async function list(req, res) {
   const { skip, take, page, pageSize, sortBy, sortDir, search } = parseListQuery(req.query, [
@@ -43,9 +55,12 @@ async function create(req, res) {
     let lot = null;
     if (isCustomerOwned) {
       if (!rest.customerMaterialLotId) throw new HttpError(400, 'customerMaterialLotId is required for customer-owned material');
+      await stockService.lockCustomerLot(tx, rest.customerMaterialLotId);
       lot = await tx.customerMaterialLot.findUnique({ where: { id: rest.customerMaterialLotId } });
       if (!lot) throw new HttpError(404, 'Customer material lot not found');
-      if (!['RECEIVED', 'IN_PROCESS'].includes(lot.status)) {
+      // A lot may be split over several outstanding vendor challans; the
+      // ledger balance, not AT_VENDOR alone, limits the next issue.
+      if (!['RECEIVED', 'IN_PROCESS', 'AT_VENDOR'].includes(lot.status)) {
         throw new HttpError(400, `Lot ${lot.inwardNumber} is not available to send out (status ${lot.status})`);
       }
     }
@@ -56,6 +71,7 @@ async function create(req, res) {
     if (!isCustomerOwned) {
       for (const l of lines) {
         if (!l.itemId) throw new HttpError(400, 'itemId is required on every line of a company-owned challan');
+        if (l.weightSent != null) throw new HttpError(400, 'Measured weight is supported only for customer-owned material');
       }
     }
 
@@ -64,7 +80,8 @@ async function create(req, res) {
         ...rest,
         date: new Date(rest.date),
         number,
-        lines: { create: lines },
+        // Measured weights live in the customer stock ledger, not JobworkLine.
+        lines: { create: lines.map(({ weightSent: _weightSent, ...line }) => line) },
       },
       include: INCLUDE,
     });
@@ -75,7 +92,7 @@ async function create(req, res) {
       if (isCustomerOwned) {
         await stockService.moveCustomerMaterial({
           tx, lotId: rest.customerMaterialLotId, date: new Date(rest.date),
-          refType: 'JOBWORK_OUT', refId: created.id, qtyOut: l.qtySent,
+          refType: 'JOBWORK_OUT', refId: created.id, qtyOut: l.qtySent, weightOut: l.weightSent,
         });
       } else {
         await stockService.moveCompanyStock({
@@ -92,7 +109,7 @@ async function create(req, res) {
     }
 
     return created;
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   res.status(201).json(jw);
 }
 
@@ -100,12 +117,19 @@ async function receive(req, res) {
   const id = parseInt(req.params.id, 10);
   const { lines } = req.body;
   const jw = await prisma.$transaction(async (tx) => {
+    await lockChallan(tx, id);
     const challan = await tx.jobworkChallan.findUnique({ where: { id }, include: { lines: true } });
     if (!challan) throw new HttpError(404, 'Jobwork challan not found');
     if (!['ISSUED', 'PARTIAL_RECEIVED'].includes(challan.status)) {
       throw new HttpError(400, `Cannot receive against a challan in ${challan.status} status`);
     }
     const isCustomerOwned = challan.materialOwnerType === 'CUSTOMER';
+    if (isCustomerOwned && challan.customerMaterialLotId) {
+      await stockService.lockCustomerLot(tx, challan.customerMaterialLotId);
+    }
+    if (!isCustomerOwned && lines.some((line) => line.weightReceived != null || line.weightRejected != null)) {
+      throw new HttpError(400, 'Measured weight is supported only for customer-owned material');
+    }
 
     // reject payload lines that do not belong to this challan outright —
     // silently skipping them used to hide frontend bugs
@@ -146,7 +170,7 @@ async function receive(req, res) {
         if (isCustomerOwned) {
           await stockService.moveCustomerMaterial({
             tx, lotId: challan.customerMaterialLotId, date: new Date(),
-            refType: 'JOBWORK_IN', refId: id, qtyIn: qtyReceived,
+            refType: 'JOBWORK_IN', refId: id, qtyIn: qtyReceived, weightIn: upd.weightReceived,
           });
         } else {
           // a company-owned line without an item cannot move stock — the old
@@ -172,7 +196,7 @@ async function receive(req, res) {
           // longer held it. Company-owned material already restored it.
           await stockService.moveCustomerMaterial({
             tx, lotId: challan.customerMaterialLotId, date: new Date(),
-            refType: 'JOBWORK_IN', refId: id, qtyIn: qtyRejected,
+            refType: 'JOBWORK_IN', refId: id, qtyIn: qtyRejected, weightIn: upd.weightRejected,
             notes: `Jobwork ${challan.number} line ${line.id} rejected by vendor`,
           });
         } else {
@@ -206,26 +230,27 @@ async function receive(req, res) {
     });
 
     if (isCustomerOwned && challan.customerMaterialLotId) {
-      await tx.customerMaterialLot.update({
-        where: { id: challan.customerMaterialLotId },
-        data: { status: allResolved ? 'IN_PROCESS' : 'AT_VENDOR' },
-      });
+      await syncLotVendorStatus(tx, challan.customerMaterialLotId);
     }
     await audit(req, 'receive', 'JobworkChallan', id, { status: newStatus }, tx);
     return updated;
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   res.json(jw);
 }
 
 async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
   const jw = await prisma.$transaction(async (tx) => {
+    await lockChallan(tx, id);
     const challan = await tx.jobworkChallan.findUnique({ where: { id }, include: { lines: true } });
     if (!challan) throw new HttpError(404, 'Jobwork challan not found');
     if (['RECEIVED', 'REJECTED', 'CANCELLED'].includes(challan.status)) {
       throw new HttpError(400, `Cannot cancel a challan in ${challan.status} status`);
     }
     const isCustomerOwned = challan.materialOwnerType === 'CUSTOMER';
+    if (isCustomerOwned && challan.customerMaterialLotId) {
+      await stockService.lockCustomerLot(tx, challan.customerMaterialLotId);
+    }
 
     // reverse whatever is still outstanding (sent but not yet received/rejected)
     for (const line of challan.lines) {
@@ -246,14 +271,13 @@ async function remove(req, res) {
       }
     }
 
-    if (isCustomerOwned && challan.customerMaterialLotId) {
-      await tx.customerMaterialLot.update({ where: { id: challan.customerMaterialLotId }, data: { status: 'IN_PROCESS' } });
-    }
-
     const updated = await tx.jobworkChallan.update({ where: { id }, data: { status: 'CANCELLED' } });
+    if (isCustomerOwned && challan.customerMaterialLotId) {
+      await syncLotVendorStatus(tx, challan.customerMaterialLotId);
+    }
     await audit(req, 'cancel', 'JobworkChallan', id, null, tx);
     return updated;
-  });
+  }, { isolationLevel: 'ReadCommitted' });
   res.json({ ok: true, jobwork: jw });
 }
 

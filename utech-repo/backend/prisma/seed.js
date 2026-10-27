@@ -16,6 +16,11 @@ const MODULES = [
 const ACTIONS = ['create', 'read', 'update', 'delete'];
 
 async function main(prisma = defaultPrisma) {
+  // The demo seed contains a publicly known administrator. Refuse before any
+  // writes in production unless only configuration data was explicitly chosen.
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_CONFIG_ONLY !== '1') {
+    throw new Error('Refusing demo seed in production. Use SEED_CONFIG_ONLY=1 and provision administrators securely.');
+  }
   console.log('Seeding permissions...');
   for (const m of MODULES) {
     for (const a of ACTIONS) {
@@ -548,7 +553,7 @@ async function main(prisma = defaultPrisma) {
     await prisma.shift.upsert({ where: { code: shift.code }, update: {}, create: shift });
   }
 
-  console.log('Done. Login with admin@utech.local / Admin@123');
+  console.log('Seeding complete.');
 }
 
 if (require.main === module) {

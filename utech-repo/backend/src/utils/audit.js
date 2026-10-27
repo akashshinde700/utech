@@ -2,15 +2,16 @@
 const prisma = require('../config/prisma');
 
 /**
- * Write an audit log entry. Failure is swallowed so that audit cannot break
- * the main request. Truncate payload to 4KB to keep TEXT column light.
+ * Write an audit log entry. By default failures are swallowed for legacy callers.
+ * Critical callers can pass { required: true } inside their transaction so an
+ * audit failure rolls back the business change. Payloads are truncated to 4KB.
  *
  * Pass the transaction client as `db` when calling inside a $transaction:
  * using the global client there asks the pool for a second connection while
  * the first is still held, which can deadlock a small pool (and did: job
  * challans/GRNs sat for 5s and died with "transaction expired").
  */
-async function audit(req, action, entity, entityId = null, payload = null, db = prisma) {
+async function audit(req, action, entity, entityId = null, payload = null, db = prisma, { required = false } = {}) {
   try {
     let payloadStr = null;
     if (payload != null) {
@@ -31,6 +32,7 @@ async function audit(req, action, entity, entityId = null, payload = null, db = 
       },
     });
   } catch (e) {
+    if (required) throw e;
     console.error('[audit] failed:', e.message);
   }
 }

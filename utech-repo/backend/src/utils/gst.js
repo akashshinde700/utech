@@ -1,64 +1,53 @@
 'use strict';
 
-// GST + line-amount helpers.
-// All numbers are kept as plain JS numbers here; callers convert to Prisma Decimal as needed.
+const Decimal = require('decimal.js');
+// Use decimal arithmetic, not binary floats, for products and GST. The 40-digit
+// precision also covers products of the schema's DECIMAL(14,3)/(14,2) inputs.
+const Money = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
+const dec = (n) => new Money(n == null ? 0 : n);
+const paise = (n) => dec(n).toDecimalPlaces(2);
 
 function round2(n) {
-  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+  return paise(n).toNumber();
 }
 
 function calcLineAmount(qty, rate) {
-  return round2(Number(qty) * Number(rate));
+  // Preserve the helper's existing invalid-input contract; request validators
+  // reject such values before they can be written to financial records.
+  if (!Number.isFinite(Number(qty)) || !Number.isFinite(Number(rate))) return NaN;
+  return dec(qty).times(dec(rate)).toDecimalPlaces(2).toNumber();
 }
 
-// Compute the tax break-up for a set of lines.
-//
-//   lines        [{ qty, rate, gstRate }]
-//   isIntraState true  -> CGST + SGST (half each);  false -> IGST
-//   discount     a flat header discount (₹). Under GST a discount shown on the
-//                invoice reduces the *taxable value*, so it is spread across the
-//                lines in proportion to their amount and tax is charged on the
-//                net — NOT deducted after tax.
-//
-// Returns { subtotal, discount, taxable, cgst, sgst, igst, tax, total }
-//   subtotal = gross of all lines (before discount)
-//   taxable  = subtotal - discount   (the value GST is actually charged on)
-//   total    = taxable + tax         (before round-off — see roundInvoiceTotal)
+// Discount is a flat amount allocated proportionally across line values BEFORE
+// tax. Round each line to paise, then round the combined GST once, matching
+// the existing invoice policy. CGST receives an odd paisa when GST is odd.
 function calcTaxes(lines, isIntraState = true, discount = 0) {
-  let subtotal = 0;
-  for (const l of lines) subtotal += calcLineAmount(l.qty, l.rate);
-  subtotal = round2(subtotal);
+  const amounts = lines.map((l) => dec(l.qty).times(dec(l.rate)).toDecimalPlaces(2));
+  const subtotal = amounts.reduce((sum, amount) => sum.plus(amount), dec(0));
+  const disc = Money.min(paise(discount || 0), subtotal);
+  const keep = subtotal.gt(0) ? subtotal.minus(disc).div(subtotal) : dec(1);
+  const gst = amounts.reduce((sum, amount, i) =>
+    sum.plus(amount.times(keep).times(dec(lines[i].gstRate || 0)).div(100)), dec(0)).toDecimalPlaces(2);
+  const cgst = isIntraState ? gst.div(2).toDecimalPlaces(2) : dec(0);
+  const sgst = isIntraState ? gst.minus(cgst) : dec(0);
+  const igst = isIntraState ? dec(0) : gst;
+  const taxable = subtotal.minus(disc);
+  const total = taxable.plus(gst);
 
-  const disc = Math.min(round2(Number(discount) || 0), subtotal);
-  // proportion of each line's value that survives the discount
-  const keep = subtotal > 0 ? (subtotal - disc) / subtotal : 1;
-
-  let totalGst = 0;
-  for (const l of lines) {
-    const net = calcLineAmount(l.qty, l.rate) * keep;
-    totalGst += (net * Number(l.gstRate || 0)) / 100;
-  }
-  totalGst = round2(totalGst);
-
-  const cgst = isIntraState ? round2(totalGst / 2) : 0;
-  const sgst = isIntraState ? round2(totalGst - cgst) : 0; // absorbs the odd paisa
-  const igst = isIntraState ? 0 : totalGst;
-  const tax = round2(cgst + sgst + igst);
-  const taxable = round2(subtotal - disc);
-  const total = round2(taxable + tax);
-
-  return { subtotal, discount: disc, taxable, cgst, sgst, igst, tax, total };
+  return {
+    subtotal: subtotal.toNumber(), discount: disc.toNumber(), taxable: taxable.toNumber(),
+    cgst: cgst.toNumber(), sgst: sgst.toNumber(), igst: igst.toNumber(),
+    tax: gst.toNumber(), total: total.toNumber(),
+  };
 }
 
-// Round a grand total to the nearest rupee (standard on Indian tax invoices).
-// Returns { total: <rounded>, roundOff: <rounded - exact>, in [-0.5, 0.5] }.
+// Round a grand total to the nearest rupee; keep the exact paise difference.
 function roundInvoiceTotal(exactTotal) {
-  const exact = round2(exactTotal);
-  const total = Math.round(exact);
-  return { total, roundOff: round2(total - exact) };
+  const exact = paise(exactTotal);
+  const total = exact.toDecimalPlaces(0);
+  return { total: total.toNumber(), roundOff: total.minus(exact).toDecimalPlaces(2).toNumber() };
 }
 
-// GSTIN state code (first 2 chars) — used to decide intra vs inter-state.
 function stateCodeOf(gstin) {
   if (!gstin || typeof gstin !== 'string') return null;
   const m = gstin.trim().slice(0, 2);

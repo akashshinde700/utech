@@ -7,6 +7,8 @@ import Badge from '../../components/ui/Badge';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import { inr, date } from '../../lib/format';
 import { amountInWordsINR } from '../../lib/numberToWords';
+import { hasPermission } from '../../lib/permissions';
+import { useAuth } from '../../store/auth';
 import toast from 'react-hot-toast';
 
 const COMPANY = {
@@ -18,6 +20,7 @@ const COMPANY = {
 export default function QuotationView() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const user = useAuth((s) => s.user);
   const [searchParams] = useSearchParams();
   const shouldAutoPrint = searchParams.get('print') === '1';
   const [printed, setPrinted] = useState(false);
@@ -159,7 +162,7 @@ export default function QuotationView() {
           action={
             <div className="flex gap-2">
               <Link to="/quotations" className="btn-secondary"><ArrowLeft className="w-4 h-4" /> Back</Link>
-              <Link to={`/quotations/${id}/edit`} className="btn-secondary"><Pencil className="w-4 h-4" /> Edit</Link>
+              {!['CONVERTED', 'CANCELLED'].includes(q.status) && <Link to={`/quotations/${id}/edit`} className="btn-secondary"><Pencil className="w-4 h-4" /> Edit</Link>}
               <button className="btn-primary" onClick={() => window.print()}><Printer className="w-4 h-4" /> Print</button>
               {q.status === 'DRAFT' && (
                 <button className="btn-secondary" onClick={() => updateStatus('SENT')}><Send className="w-4 h-4" /> Mark as Sent</button>
@@ -170,7 +173,7 @@ export default function QuotationView() {
                   <button className="btn-danger" onClick={() => updateStatus('REJECTED')}><XCircle className="w-4 h-4" /> Reject</button>
                 </>
               )}
-              {q.status === 'APPROVED' && q.type !== 'VENDOR' && (
+              {q.status === 'APPROVED' && q.type !== 'VENDOR' && hasPermission(user, 'customerQuotation.update') && hasPermission(user, 'invoice.create') && (
                 <button className="btn-success" onClick={() => setConvertOpen(true)}><FileText className="w-4 h-4" /> Convert to Invoice</button>
               )}
             </div>

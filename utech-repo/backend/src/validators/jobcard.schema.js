@@ -1,6 +1,7 @@
 'use strict';
 const { z } = require('zod');
 const { partialNoDefaults } = require('./partial');
+const { quantity } = require('./precision');
 
 const lineSchema = z.object({
   id: z.number().int().optional(),
@@ -72,7 +73,8 @@ const jobworkLineSchema = z.object({
   itemId: z.number().int().optional().nullable(),
   description: z.string().optional().nullable(),
   processId: z.number().int().optional().nullable(),
-  qtySent: z.number().positive(),
+  qtySent: quantity(z.number().positive()),
+  weightSent: quantity(z.number().nonnegative()).optional().nullable(),
   rate: z.number().nonnegative().optional().nullable(),
   notes: z.string().optional().nullable(),
 }).refine((l) => l.itemId != null || (l.description && l.description.trim()), {
@@ -95,9 +97,12 @@ const createJobworkSchema = z.object({
 const receiveJobworkSchema = z.object({
   lines: z.array(z.object({
     id: z.number().int(),
-    qtyReceived: z.number().nonnegative().default(0),
-    qtyRejected: z.number().nonnegative().default(0),
-  })).min(1).refine((lines) => new Set(lines.map((line) => line.id)).size === lines.length, 'Each jobwork line may be received only once per request'),
+    qtyReceived: quantity(z.number().nonnegative()).default(0),
+    qtyRejected: quantity(z.number().nonnegative()).default(0),
+    weightReceived: quantity(z.number().nonnegative()).optional(),
+    weightRejected: quantity(z.number().nonnegative()).optional(),
+  }).refine((line) => (line.weightReceived === undefined || line.qtyReceived > 0)
+    && (line.weightRejected === undefined || line.qtyRejected > 0), 'A measured weight requires a corresponding quantity')).min(1).refine((lines) => new Set(lines.map((line) => line.id)).size === lines.length, 'Each jobwork line may be received only once per request'),
 });
 
 const dispatchLineSchema = z.object({
