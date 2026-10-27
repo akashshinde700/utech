@@ -16,7 +16,8 @@
     "prisma:studio": "prisma studio",
     "lint": "eslint src --ext .js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "items:recompute-weights": "node prisma/recomputeItemWeights.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
