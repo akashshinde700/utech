@@ -4,6 +4,7 @@ const HttpError = require('../utils/httpError');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
+const { dateRangeFilter } = require('../utils/dates');
 
 const BACK_ORDER_INCLUDE = {
   party: true,
@@ -19,11 +20,8 @@ async function list(req, res) {
   if (req.query.status) where.status = req.query.status;
   if (req.query.partyId) where.partyId = parseInt(req.query.partyId, 10);
   if (req.query.invoiceId) where.invoiceId = parseInt(req.query.invoiceId, 10);
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   if (search) {
     where.OR = [
       { number: { contains: search } },

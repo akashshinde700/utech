@@ -39,14 +39,20 @@ describe('AUD-201 — JobcardForm save payload', () => {
   });
 
   // Mechanism documentation: THIS is what the old form sent, and this is what
-  // the backend does with it. If either side changes, this pair of facts must
-  // be revisited together (see backend/tests/api/regressionDefects.test.js).
-  it('the backend replaces operations only when the key is present', () => {
+  // the backend now does with it. If either side changes, this pair of facts
+  // must be revisited together (see backend/tests/api/regressionDefects.test.js
+  // and backend/tests/api/integrity2026-10-27.test.js).
+  it('the backend applies an operations array through the id-preserving, history-safe path', () => {
     const ctrl = fs.readFileSync(
       path.resolve(FRONTEND, '..', 'backend', 'src/controllers/jobcard.controller.js'),
       'utf8'
     );
-    // the replace is gated on the key being present/truthy
-    expect(ctrl).toMatch(/if \(operations\) \{[\s\S]*jobcardOperation\.deleteMany/);
+    // AUD-214: a sent array is still the complete list, but it is applied by
+    // applyOperationSet(), which refuses to drop a task that has history.
+    expect(ctrl).toMatch(/if \(operations\) \{\s*await applyOperationSet\(tx, id, operations\);/);
+    expect(ctrl).toMatch(/function applyOperationSet\(/);
+    expect(ctrl).toMatch(/operationHasHistory/);
+    // the delete-everything replace that caused the data loss must be gone
+    expect(ctrl).not.toMatch(/jobcardOperation\.deleteMany\(\{ where: \{ jobcardId: id \} \}\)/);
   });
 });

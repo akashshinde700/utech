@@ -65,10 +65,16 @@ async function buildXlsx(sheets) {
 
 // Sends the workbook as a download and returns the byte length so callers can
 // audit the export size.
-async function sendXlsx(res, { filename, sheets }) {
+async function sendXlsx(res, { filename, sheets, headers = {} }) {
   const buffer = await buildXlsx(sheets);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  // A capped export must SAY it was capped: a silently truncated workbook is
+  // indistinguishable from a complete one once it leaves the server, and the
+  // totals in it then understate the business. Callers set these headers.
+  for (const [name, value] of Object.entries(headers)) {
+    if (value !== undefined && value !== null) res.setHeader(name, String(value));
+  }
   res.send(buffer);
   return buffer.length;
 }

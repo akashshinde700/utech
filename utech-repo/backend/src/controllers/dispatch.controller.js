@@ -33,12 +33,75 @@ async function get(req, res) {
   res.json(d);
 }
 
+
+// When a challan names the invoice it fulfils, that reference has to mean
+// something: the invoice must exist, belong to the same customer, still be
+// live, and the goods being shipped must not exceed what was billed. Before
+// this guard a challan could ship 100 pieces against a 2-piece invoice (or
+// against ANOTHER customer's invoice) with no warning, so the invoice, the
+// dispatch and the stock ledger told three different stories.
+async function assertInvoiceCoversDispatch(tx, invoiceId, partyId, lines) {
+  const invoice = await tx.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { lines: true, party: { select: { id: true, name: true } } },
+  });
+  if (!invoice) throw new HttpError(400, 'Invoice not found');
+  if (invoice.status === 'CANCELLED') throw new HttpError(400, 'Cannot dispatch against a cancelled invoice');
+  if (Number(invoice.partyId) !== Number(partyId)) {
+    throw new HttpError(400, `Invoice ${invoice.number} belongs to ${invoice.party ? invoice.party.name : 'another customer'}, not to this challan's party`);
+  }
+
+  const invoicedByItem = new Map();
+  for (const line of invoice.lines) {
+    if (line.itemId == null) continue;
+    invoicedByItem.set(line.itemId, (invoicedByItem.get(line.itemId) || 0) + Number(line.qty));
+  }
+
+  // everything already shipped (or queued) against this invoice
+  const prior = await tx.dispatchChallan.findMany({
+    where: { invoiceId, status: { not: 'CANCELLED' } },
+    include: { lines: true },
+  });
+  const shippedByItem = new Map();
+  for (const challan of prior) {
+    for (const line of challan.lines) {
+      if (line.itemId == null) continue;
+      shippedByItem.set(line.itemId, (shippedByItem.get(line.itemId) || 0) + Number(line.qty));
+    }
+  }
+
+  const requestedByItem = new Map();
+  for (const line of lines) {
+    if (line.itemId == null) continue;
+    requestedByItem.set(line.itemId, (requestedByItem.get(line.itemId) || 0) + Number(line.qty));
+  }
+
+  for (const [itemId, requested] of requestedByItem) {
+    const invoiced = invoicedByItem.get(itemId);
+    if (invoiced === undefined) {
+      throw new HttpError(400, `Item ${itemId} is not on invoice ${invoice.number} — bill it before dispatching`);
+    }
+    const alreadyShipped = stockService.roundQuantity(shippedByItem.get(itemId) || 0);
+    const remaining = stockService.roundQuantity(invoiced - alreadyShipped);
+    if (stockService.roundQuantity(requested) > remaining) {
+      throw new HttpError(
+        400,
+        `Dispatch exceeds invoice ${invoice.number} for item ${itemId}: invoiced ${invoiced}, already dispatched ${alreadyShipped}, remaining ${remaining}, requested ${stockService.roundQuantity(requested)}`,
+      );
+    }
+  }
+  return invoice;
+}
+
 async function create(req, res) {
   const { lines, ...rest } = req.body;
   const number = await nextNumber('dispatchChallan', 'dispatch');
   const d = await prisma.$transaction(async (tx) => {
     const party = await tx.party.findUnique({ where: { id: rest.partyId } });
     if (!party || party.type === 'VENDOR') throw new HttpError(400, 'Select a customer for dispatch');
+    if (rest.invoiceId != null) {
+      await assertInvoiceCoversDispatch(tx, Number(rest.invoiceId), rest.partyId, lines);
+    }
     const created = await tx.dispatchChallan.create({
       data: {
         ...rest,

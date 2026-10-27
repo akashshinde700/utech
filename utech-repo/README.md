@@ -49,6 +49,32 @@ npm run test:e2e
 
 The Playwright suite starts isolated temporary in-memory servers on ports 4101 and 5183 and creates/modifies test records. To test an external server, explicitly set `E2E_CONFIRM_DISPOSABLE=1` and `E2E_BASE_URL` with `npm run test:e2e:external`. **Never point these write tests at production or important data.** Backend unit/API tests use a programmable database mock and do not prove database constraints or isolation.
 
+## Company material inventory
+
+The four photographed stock sheets in [`company_inventory/`](./company_inventory) are
+part of the Prisma item master: 73 raw-material items (`RB-…` Round Bar & Hex,
+`PP-…` Pipe, `PL-…` Plate, `FL-…` Flange), each with its sheet quantity as opening
+stock, the printed rate as `purchaseRate`, a category, an HSN family code and an
+`OPENING` stock-ledger row.
+
+```bash
+cd backend
+npm run inventory:verify   # reconcile the transcription against the printed sheet totals
+npm run prisma:seed        # full demo seed also imports missing company items
+```
+
+`npm run inventory:verify` re-adds every sheet's rate column and compares it with the
+`Total=` printed on the photo (6,89,200 / 10,15,700 / 23,85,000 / 1,89,900), checks
+that all 73 codes/names are unique and that the sheets carry this company's identity
+(U-Tech Automation Industries, Chikhali, Pune 411062, state code 27) and only grades
+the plant works with. It exits non-zero on any mismatch. See
+[docs/COMPANY_INVENTORY_IMPORT.md](./docs/COMPANY_INVENTORY_IMPORT.md) — including the
+one open question about whether the sheet's `Rate` column is a per-piece rate or a line
+amount (both totals are reported; per-piece is what is stored).
+
+Seeding is additive: an existing item is never re-priced or re-stocked, so re-seeding
+cannot overwrite balances that receipts, dispatches or production have already moved.
+
 ## Stock and billing behavior
 
 - Opening balances, accepted GRNs, manual adjustments, jobwork, production, dispatch and applicable returns create stock movements. Company stock and customer material lots are tracked separately.

@@ -101,6 +101,8 @@ async function get(req, res) {
 async function create(req, res) {
   const { lines, operations, ...rest } = req.body;
   const number = await nextNumber('jobcard', 'jobcard');
+  // a create may not pin primary keys: drop any client-supplied task id
+  const newOperations = (operations || []).map(({ id, ...op }) => op);
   const jc = await prisma.jobcard.create({
     data: {
       ...rest,
@@ -108,12 +110,102 @@ async function create(req, res) {
       number,
       createdById: req.user ? req.user.id : null,
       lines: { create: lines },
-      operations: { create: operations },
+      operations: { create: newOperations },
     },
     include: INCLUDE,
   });
   await audit(req, 'create', 'Jobcard', jc.id, { number });
   res.status(201).json(jc);
+}
+
+
+// A job card's `operations` array is the Task Progress module's task list — not
+// throw-away form rows. The previous implementation deleted every operation and
+// re-created the array, which (a) destroyed each task's id, so an operator's
+// assignment, acceptance, progress, approval and comment thread (all cascading
+// children) vanished on an unrelated job-card edit, and (b) silently reset a
+// completed task back to NOT_STARTED. AUD-214 keeps the replace-all contract but
+// makes it id-preserving and refuses to discard work that has history.
+function operationHasHistory(op) {
+  // a row with no status column value is a never-started task, not history
+  return (op.status && op.status !== 'NOT_STARTED')
+    || Number(op.progressPercent || 0) > 0
+    || op.assignedToId != null
+    || op.approvedAt != null
+    || op.submittedAt != null
+    || op.startAt != null
+    || op.endAt != null
+    || op.acceptedAt != null
+    || (op.assignees && op.assignees.length > 0)
+    || (op.comments && op.comments.length > 0);
+}
+
+async function applyOperationSet(tx, jobcardId, incoming) {
+  const existing = await tx.jobcardOperation.findMany({
+    where: { jobcardId },
+    select: {
+      id: true, title: true, status: true, progressPercent: true, assignedToId: true,
+      approvedAt: true, submittedAt: true, startAt: true, endAt: true, acceptedAt: true,
+      assignees: { select: { id: true } },
+      comments: { select: { id: true } },
+    },
+  });
+  const byId = new Map(existing.map((op) => [op.id, op]));
+
+  const incomingIds = [];
+  for (const op of incoming) {
+    if (op.id == null) continue;
+    if (!byId.has(op.id)) {
+      throw new HttpError(400, `Task ${op.id} does not belong to this job card`);
+    }
+    if (incomingIds.includes(op.id)) {
+      throw new HttpError(400, `Task ${op.id} appears more than once in this request`);
+    }
+    incomingIds.push(op.id);
+  }
+
+  // Tasks the caller dropped from the array: only removable while they carry no
+  // work. Anything with progress, an assignee, an approval or comments is
+  // history the Task Progress module owns — deleting it is a data loss, so the
+  // whole update is refused and the user is told which task is the blocker.
+  const dropped = existing.filter((op) => !incomingIds.includes(op.id));
+  const blocked = dropped.filter(operationHasHistory);
+  if (blocked.length) {
+    const names = blocked.map((op) => op.title || `Task #${op.id}`).join(', ');
+    throw new HttpError(
+      400,
+      `Cannot remove ${blocked.length} task(s) that already have history (${names}). ` +
+      'Cancel or complete them in Task Progress instead of editing the job card.'
+    );
+  }
+  const blockedIds = new Set(blocked.map((op) => op.id));
+
+  // refs that would dangle if a dependent task were deleted
+  const referenced = await tx.jobcardOperation.findMany({
+    where: {
+      OR: [
+        { parentOperationId: { in: dropped.map((op) => op.id) } },
+        { dependsOnOperationId: { in: dropped.map((op) => op.id) } },
+      ],
+    },
+    select: { id: true, parentOperationId: true, dependsOnOperationId: true },
+  });
+  const referencedIds = new Set(referenced.flatMap((r) => [r.parentOperationId, r.dependsOnOperationId]).filter(Boolean));
+
+  for (const op of dropped) {
+    if (blockedIds.has(op.id) || referencedIds.has(op.id)) continue;
+    await tx.jobcardOperation.delete({ where: { id: op.id } });
+  }
+
+  for (const op of incoming) {
+    const { id, ...data } = op;
+    if (id != null && byId.has(id)) {
+      // in-place update; status/progress stay owned by the task endpoints
+      await tx.jobcardOperation.update({ where: { id }, data });
+    } else {
+      await tx.jobcardOperation.create({ data: { ...data, jobcardId } });
+    }
+  }
 }
 
 async function update(req, res) {
@@ -164,14 +256,13 @@ async function update(req, res) {
       }
     }
     if (operations) {
-      await tx.jobcardOperation.deleteMany({ where: { jobcardId: id } });
+      await applyOperationSet(tx, id, operations);
     }
+    // operations were already written by applyOperationSet() above — passing
+    // them again here would re-create them (and collide on their ids)
     return tx.jobcard.update({
       where: { id },
-      data: {
-        ...rest,
-        ...(operations ? { operations: { create: operations } } : {}),
-      },
+      data: { ...rest },
       include: INCLUDE,
     });
   }, { isolationLevel: 'ReadCommitted' });

@@ -3,28 +3,46 @@ const { sendXlsx } = require('../utils/xlsx');
 const prisma = require('../config/prisma');
 const dayjs = require('dayjs');
 const { audit } = require('../utils/audit');
+const { dateRangeFilter } = require('../utils/dates');
+
+// Every export is capped so one click cannot pull an unbounded table into
+// memory / into an e-mail. The cap is explicit: fetch one row more than the
+// limit, and when that extra row exists tell the caller (headers + audit log)
+// that the workbook is INCOMPLETE — a silently truncated report reconciles
+// against nothing.
+const EXPORT_LIMIT = 5000;
+
+async function fetchCapped(model, args) {
+  const rows = await model.findMany({ ...args, take: EXPORT_LIMIT + 1 });
+  const truncated = rows.length > EXPORT_LIMIT;
+  return { rows: truncated ? rows.slice(0, EXPORT_LIMIT) : rows, truncated };
+}
 
 // One workbook, one named sheet — the shape every export below needs.
 // Returns the byte length so the caller can audit the export size.
-async function send(res, rows, sheet, name) {
+async function send(res, rows, sheet, name, { truncated = false, limit = EXPORT_LIMIT } = {}) {
   const stamp = dayjs().format('YYYYMMDD-HHmm');
-  return sendXlsx(res, { filename: `${name}-${stamp}.xlsx`, sheets: [{ name: sheet, rows }] });
+  return sendXlsx(res, {
+    filename: `${name}-${stamp}.xlsx`,
+    sheets: [{ name: sheet, rows }],
+    headers: {
+      'X-Export-Rows': rows.length,
+      'X-Export-Row-Limit': limit,
+      'X-Export-Truncated': truncated ? 'true' : 'false',
+    },
+  });
 }
 
 async function invoices(req, res) {
   const where = {};
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   if (req.query.status) where.status = req.query.status;
 
-  const rows = await prisma.invoice.findMany({
+  const { rows, truncated } = await fetchCapped(prisma.invoice, {
     where,
     include: { party: true },
     orderBy: { date: 'desc' },
-    take: 5000,
   });
 
   const data = rows.map((r) => ({
@@ -43,8 +61,8 @@ async function invoices(req, res) {
     Balance: Number(r.total) - Number(r.amountPaid),
   }));
 
-  audit(req, 'export', 'Invoice', null, { count: rows.length });
-  await send(res, data, 'Invoices', 'invoices');
+  audit(req, 'export', 'Invoice', null, { count: rows.length, truncated });
+  await send(res, data, 'Invoices', 'invoices', { truncated });
 }
 
 async function jobcards(req, res) {
@@ -92,11 +110,8 @@ async function items(req, res) {
 
 async function expenses(req, res) {
   const where = {};
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   if (req.query.category) where.category = req.query.category;
 
   const rows = await prisma.expense.findMany({
@@ -113,6 +128,7 @@ async function expenses(req, res) {
     Mode: r.paymentMode,
     Reference: r.reference || '',
   }));
+  audit(req, 'export', 'Expense', null, { count: rows.length });
   await send(res, data, 'Expenses', 'expenses');
 }
 
@@ -120,7 +136,9 @@ async function partyLedger(req, res) {
   const partyId = parseInt(req.params.partyId, 10);
   const [party, entries] = await Promise.all([
     prisma.party.findUnique({ where: { id: partyId } }),
-    prisma.partyLedger.findMany({ where: { partyId }, orderBy: { date: 'asc' } }),
+    // date + id: two entries posted on the same date used to come back in an
+    // arbitrary order, so the running balance column could differ run to run
+    prisma.partyLedger.findMany({ where: { partyId }, orderBy: [{ date: 'asc' }, { id: 'asc' }] }),
   ]);
   if (!party) return res.status(404).json({ error: 'NotFound' });
   let bal = Number(party.openingBalance || 0);
@@ -143,8 +161,8 @@ async function customerStock(req, res) {
   const where = {};
   if (req.query.status) where.status = req.query.status;
   if (req.query.customerId) where.customerId = parseInt(req.query.customerId, 10);
-  const rows = await prisma.customerMaterialLot.findMany({
-    where, include: { customer: true, item: true }, orderBy: { receivedDate: 'desc' }, take: 5000,
+  const { rows, truncated } = await fetchCapped(prisma.customerMaterialLot, {
+    where, include: { customer: true, item: true }, orderBy: { receivedDate: 'desc' },
   });
   const data = rows.map((r) => ({
     'Inward No': r.inwardNumber,
@@ -160,8 +178,8 @@ async function customerStock(req, res) {
     Location: r.location || '',
     Status: r.status,
   }));
-  audit(req, 'export', 'CustomerMaterialLot', null, { count: rows.length });
-  await send(res, data, 'Customer Stock', 'customer-stock');
+  audit(req, 'export', 'CustomerMaterialLot', null, { count: rows.length, truncated });
+  await send(res, data, 'Customer Stock', 'customer-stock', { truncated });
 }
 
 // vendor's current position is computed (qtySent - qtyReceived - qtyRejected)
@@ -200,16 +218,12 @@ async function stockLedgerReport(req, res) {
   const where = {};
   if (req.query.ownerType) where.ownerType = req.query.ownerType;
   if (req.query.itemId) where.itemId = parseInt(req.query.itemId, 10);
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
-  const rows = await prisma.stockLedger.findMany({
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
+  const { rows, truncated } = await fetchCapped(prisma.stockLedger, {
     where,
     include: { item: true, customerMaterialLot: true },
-    orderBy: { date: 'desc' },
-    take: 2000,
+    orderBy: [{ date: 'desc' }, { id: 'desc' }],
   });
   const data = rows.map((r) => ({
     Date: dayjs(r.date).format('DD-MM-YYYY'),
@@ -223,8 +237,8 @@ async function stockLedgerReport(req, res) {
     Balance: Number(r.balance),
     Notes: r.notes || '',
   }));
-  audit(req, 'export', 'StockLedger', null, { count: rows.length });
-  await send(res, data, 'Stock Ledger', 'stock-ledger');
+  audit(req, 'export', 'StockLedger', null, { count: rows.length, truncated });
+  await send(res, data, 'Stock Ledger', 'stock-ledger', { truncated });
 }
 
 module.exports = {

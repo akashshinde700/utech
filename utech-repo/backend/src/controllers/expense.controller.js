@@ -4,7 +4,7 @@ const HttpError = require('../utils/httpError');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextNumber } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
-const { parseDate } = require('../utils/dates');
+const { parseDate, dateRangeFilter } = require('../utils/dates');
 
 async function list(req, res) {
   const { skip, take, page, pageSize, sortBy, sortDir, search } = parseListQuery(req.query, [
@@ -13,11 +13,8 @@ async function list(req, res) {
   const where = {};
   if (req.query.category) where.category = req.query.category;
   if (req.query.partyId) where.partyId = parseInt(req.query.partyId, 10);
-  if (req.query.from || req.query.to) {
-    where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
-  }
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
+  if (dateRange) where.date = dateRange;
   if (search) where.OR = [{ number: { contains: search } }, { description: { contains: search } }];
   const [items, total] = await Promise.all([
     prisma.expense.findMany({
@@ -83,19 +80,14 @@ async function remove(req, res) {
 }
 
 async function summary(req, res) {
-  // group by category
+  // group by category — same date-range semantics as the list endpoint, so the
+  // chart total always equals the sum of the rows it was filtered from
+  const dateRange = dateRangeFilter(req.query.from, req.query.to);
   const groups = await prisma.expense.groupBy({
     by: ['category'],
     _sum: { amount: true },
     _count: true,
-    where: req.query.from || req.query.to
-      ? {
-          date: {
-            ...(req.query.from ? { gte: new Date(req.query.from) } : {}),
-            ...(req.query.to ? { lte: new Date(req.query.to) } : {}),
-          },
-        }
-      : undefined,
+    where: dateRange ? { date: dateRange } : undefined,
   });
   res.json(groups.map((g) => ({
     category: g.category,
