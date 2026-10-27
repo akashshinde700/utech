@@ -102,7 +102,8 @@ async function remove(req, res) {
 async function stockHistory(req, res) {
   const id = parseInt(req.params.id, 10);
   const rows = await prisma.stockLedger.findMany({
-    where: { itemId: id }, orderBy: { date: 'asc' },
+    // Ledger balances reflect posting order; a document may be backdated.
+    where: { itemId: id }, orderBy: { id: 'asc' },
   });
   res.json(rows);
 }

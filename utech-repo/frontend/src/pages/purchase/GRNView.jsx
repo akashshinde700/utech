@@ -1,15 +1,37 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, PackageCheck, ListPlus } from 'lucide-react';
+import { ArrowLeft, PackageCheck, ListPlus, RotateCcw, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import Badge from '../../components/ui/Badge';
 import FormSection from '../../components/ui/FormSection';
+import FormField from '../../components/ui/FormField';
+import Modal from '../../components/ui/Modal';
+import { styles } from '../../lib/formStyles';
+import { useAuth } from '../../store/auth';
+import { hasPermission } from '../../lib/permissions';
+import toast from 'react-hot-toast';
 import { inr, date } from '../../lib/format';
 
 export default function GRNView() {
   const { id } = useParams();
   const [grn, setGrn] = useState(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const user = useAuth((s) => s.user);
+  async function cancelGrn() {
+    if (!reason.trim()) { toast.error('Enter a reason for cancelling the GRN'); return; }
+    setCancelBusy(true);
+    try {
+      const { data } = await api.delete(`/grns/${id}`, { data: { reason: reason.trim() } });
+      setGrn(data.grn);
+      setCancelOpen(false);
+      toast.success('GRN cancelled and stock reversed');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not cancel GRN');
+    } finally { setCancelBusy(false); }
+  }
   useEffect(() => { api.get(`/grns/${id}`).then((r) => setGrn(r.data)); }, [id]);
   if (!grn) return <div className="text-sm text-slate-500">Loading…</div>;
 
@@ -20,7 +42,10 @@ export default function GRNView() {
       <PageHeader
         title={`GRN ${grn.number}`}
         subtitle={`${grn.party?.name || '—'} • ${date(grn.date)}`}
-        action={<Link to="/grns" className="btn-secondary"><ArrowLeft className="h-4 w-4" /> Back</Link>}
+        action={<div className="flex flex-wrap gap-2">
+          <Link to="/grns" className="btn-secondary"><ArrowLeft className="h-4 w-4" /> Back</Link>
+          {grn.status !== 'CANCELLED' && hasPermission(user, 'grn.delete') && <button type="button" className="btn-secondary text-danger-700" onClick={() => { setReason(''); setCancelOpen(true); }}><RotateCcw className="h-4 w-4" /> Cancel GRN</button>}
+        </div>}
       />
 
       <FormSection icon={PackageCheck} title="Receipt Details" description={`Received on ${date(grn.date)}`}>
@@ -52,12 +77,12 @@ export default function GRNView() {
             <tbody className="divide-y divide-slate-100">
               {grn.lines.map((l) => (
                 <tr key={l.id}>
-                  <td className="px-3 py-2">{l.item?.name || '—'}</td>
+                  <td className="px-3 py-2">{l.item?.name || l.description || '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{Number(l.qty)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{Number(l.qtyAccepted)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{Number(l.qtyRejected)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{l.rate ? inr(l.rate) : '—'}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">{l.rate ? inr(Number(l.qtyAccepted) * Number(l.rate)) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{l.rate != null ? inr(l.rate) : '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">{l.rate != null ? inr(Number(l.qtyAccepted) * Number(l.rate)) : '—'}</td>
                   <td className="px-3 py-2">{l.notes || '—'}</td>
                 </tr>
               ))}
@@ -71,6 +96,14 @@ export default function GRNView() {
           </div>
         )}
       </FormSection>
+      <Modal open={cancelOpen} onClose={() => { if (!cancelBusy) setCancelOpen(false); }} title="Cancel this GRN?" size="md"
+        footer={<>
+          <button type="button" className={styles.secondaryBtn} onClick={() => setCancelOpen(false)} disabled={cancelBusy}>Keep GRN</button>
+          <button type="button" className={styles.dangerBtn} onClick={cancelGrn} disabled={cancelBusy}>{cancelBusy && <Loader2 className="h-4 w-4 animate-spin" />} Cancel GRN</button>
+        </>}>
+        <p className="mb-4 text-sm text-slate-600">This reverses accepted stock and the linked PO receipt. If goods have already been used or dispatched, this can make stock negative. Check the ledger first.</p>
+        <FormField id="grn-cancel-reason" label="Reason" required><textarea id="grn-cancel-reason" className={styles.textarea} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></FormField>
+      </Modal>
     </div>
   );
 }

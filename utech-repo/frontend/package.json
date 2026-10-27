@@ -10,9 +10,11 @@
     "lint": "eslint src --ext .js,.jsx",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "VERCEL=1 playwright test"
+    "test:e2e": "VERCEL=1 E2E_USE_DEMO=1 playwright test",
+    "test:e2e:external": "VERCEL=1 playwright test"
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
     "axios": "^1.7.7",
     "clsx": "^2.1.1",
     "lucide-react": "^0.460.0",

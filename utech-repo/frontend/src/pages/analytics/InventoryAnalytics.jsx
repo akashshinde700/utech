@@ -4,12 +4,12 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import api from '../../lib/api';
+import { quantity } from '../../lib/format';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 
-// series palette kept to the app family (violet/amber/pink/green/slate) —
-// the old fifth color was sky blue
-const COLORS = ['#8b5cf6', '#fb923c', '#ec4899', '#22c55e', '#94a3b8'];
+// Chart colors match the industrial teal / amber / slate dashboard palette.
+const COLORS = ['#0f766e', '#60a5a0', '#d9a441', '#637a94', '#a9bec7'];
 
 function MetricCard({ title, value, subtitle, icon: Icon }) {
   return (
@@ -154,8 +154,8 @@ export default function InventoryAnalytics() {
                     <tr key={it.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="table-td font-semibold">{it.code}</td>
                       <td className="table-td">{it.name}</td>
-                      <td className="table-td text-right text-danger-600 font-semibold tabular-nums">{Number(it.currentStock).toFixed(2)}</td>
-                      <td className="table-td text-right text-slate-500 tabular-nums">{Number(it.minStock).toFixed(2)}</td>
+                      <td className="table-td text-right text-danger-600 font-semibold tabular-nums">{quantity(it.currentStock)}</td>
+                      <td className="table-td text-right text-slate-500 tabular-nums">{quantity(it.minStock)}</td>
                     </tr>
                   ))}
                 </tbody>

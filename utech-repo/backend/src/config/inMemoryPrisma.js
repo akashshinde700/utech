@@ -43,7 +43,7 @@ function parseSchema(schemaText) {
 
       let defaultVal = undefined;
       let hasDefault = false;
-      const defMatch = rest.match(/@default\(([^)]+(?:\(\))?)\)/);
+      const defMatch = rest.match(/@default\((autoincrement\(\)|now\(\)|[^)]+)\)/);
       if (defMatch) {
         const rawDef = defMatch[1].trim();
         if (rawDef === 'autoincrement()') {

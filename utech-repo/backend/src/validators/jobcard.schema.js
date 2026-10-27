@@ -92,7 +92,7 @@ const receiveJobworkSchema = z.object({
     id: z.number().int(),
     qtyReceived: z.number().nonnegative().default(0),
     qtyRejected: z.number().nonnegative().default(0),
-  })).min(1),
+  })).min(1).refine((lines) => new Set(lines.map((line) => line.id)).size === lines.length, 'Each jobwork line may be received only once per request'),
 });
 
 const dispatchLineSchema = z.object({

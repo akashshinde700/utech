@@ -76,14 +76,42 @@ async function create(req, res) {
       throw new HttpError(400, 'GRN party does not match the purchase order party');
     }
   }
-  const poLineIds = po ? new Set((await prisma.purchaseOrderLine.findMany({ where: { poId: po.id }, select: { id: true } })).map((l) => l.id)) : null;
-  for (const l of lines) {
-    if (l.poLineId && poLineIds && !poLineIds.has(Number(l.poLineId))) {
-      throw new HttpError(400, `Line ${l.poLineId} does not belong to purchase order ${po.number}`);
-    }
+  if (!po && lines.some((line) => line.poLineId)) {
+    throw new HttpError(400, 'A purchase order is required when a PO line is supplied');
   }
 
   const result = await prisma.$transaction(async (tx) => {
+    // Claim accepted quantities on their own PO lines before creating the GRN.
+    // The conditional increment makes duplicate lines and simultaneous receipts
+    // obey the same outstanding-quantity limit. A failed claim rolls back the
+    // entire receipt, including any earlier claims and stock movements.
+    if (po) {
+      const currentPo = await tx.purchaseOrder.findUnique({ where: { id: po.id } });
+      if (!currentPo || !RECEIVABLE_PO_STATUSES.includes(currentPo.status)) {
+        throw new HttpError(400, 'This purchase order is no longer open for receiving');
+      }
+      for (const l of lines) {
+        if (!l.poLineId) throw new HttpError(400, 'Every line on a PO receipt must be linked to a purchase order line');
+        const poLine = await tx.purchaseOrderLine.findUnique({ where: { id: Number(l.poLineId) } });
+        if (!poLine || poLine.poId !== po.id) {
+          throw new HttpError(400, `Line ${l.poLineId} does not belong to purchase order ${po.number}`);
+        }
+        if ((poLine.itemId || null) !== (l.itemId || null)) {
+          throw new HttpError(400, `Item does not match purchase order line ${l.poLineId}`);
+        }
+        const accepted = Number(l.qtyAccepted ?? l.qty);
+        if (accepted > 0) {
+          const claim = await tx.purchaseOrderLine.updateMany({
+            where: { id: poLine.id, poId: po.id, qtyReceived: { lte: Number(poLine.qty) - accepted } },
+            data: { qtyReceived: { increment: accepted } },
+          });
+          if (!claim.count) {
+            throw new HttpError(400, `Accepted quantity exceeds the outstanding quantity on PO line ${l.poLineId}`);
+          }
+        }
+      }
+    }
+
     // A receipt against a PO that was itself raised from a vendor work order
     // belongs to that work order. Resolving it here is what makes the
     // outsourcing tracker advance on its own, with nothing to link by hand.
@@ -118,7 +146,7 @@ async function create(req, res) {
             qty: Number(l.qty),
             qtyAccepted: Number(l.qtyAccepted ?? l.qty),
             qtyRejected: Number(l.qtyRejected ?? 0),
-            rate: l.rate ? Number(l.rate) : null,
+            rate: l.rate != null ? Number(l.rate) : null,
             notes: l.notes || null,
           })),
         },
@@ -137,16 +165,6 @@ async function create(req, res) {
           refType: 'GRN', refId: created.id, qtyIn: accepted,
           skipAudit: true, // GRN already audits the whole document once, below
         });
-      }
-      if (l.poLineId) {
-        const line = await tx.purchaseOrderLine.findUnique({ where: { id: l.poLineId } });
-        if (line) {
-          const newReceived = Number(line.qtyReceived) + accepted;
-          await tx.purchaseOrderLine.update({
-            where: { id: l.poLineId },
-            data: { qtyReceived: newReceived },
-          });
-        }
       }
     }
 
@@ -197,6 +215,13 @@ async function cancel(req, res) {
       throw new HttpError(400, 'Cannot cancel: a purchase return already exists against this GRN');
     }
 
+    // Claim cancellation before reversing stock; a second concurrent caller
+    // cannot restore the same receipt twice. A failure below rolls this back.
+    const claim = await tx.gRN.updateMany({
+      where: { id, status: grn.status }, data: { status: 'CANCELLED', cancelReason: reason },
+    });
+    if (!claim.count) throw new HttpError(409, 'GRN changed. Refresh and try again.');
+
     for (const l of grn.lines) {
       const accepted = Number(l.qtyAccepted);
       if (accepted > 0 && l.itemId) {
@@ -209,14 +234,12 @@ async function cancel(req, res) {
           notes: `GRN ${grn.number} cancelled`, allowNegative: true, skipAudit: true,
         });
       }
-      if (l.poLineId) {
-        const line = await tx.purchaseOrderLine.findUnique({ where: { id: l.poLineId } });
-        if (line) {
-          await tx.purchaseOrderLine.update({
-            where: { id: l.poLineId },
-            data: { qtyReceived: Math.max(0, Number(line.qtyReceived) - accepted) },
-          });
-        }
+      if (l.poLineId && accepted > 0) {
+        const reversal = await tx.purchaseOrderLine.updateMany({
+          where: { id: l.poLineId, qtyReceived: { gte: accepted } },
+          data: { qtyReceived: { decrement: accepted } },
+        });
+        if (!reversal.count) throw new HttpError(409, 'Purchase order receipt balance changed. Refresh and try again.');
       }
     }
 
@@ -226,11 +249,7 @@ async function cancel(req, res) {
       ? await vendorWorkOrderService.applyGrnDelta({ tx, grn, sign: -1 })
       : null;
 
-    const updated = await tx.gRN.update({
-      where: { id },
-      data: { status: 'CANCELLED', cancelReason: reason },
-      include: INCLUDE,
-    });
+    const updated = await tx.gRN.findUnique({ where: { id }, include: INCLUDE });
     return { grn: updated, vwo };
   });
 

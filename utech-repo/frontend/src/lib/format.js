@@ -1,6 +1,9 @@
 export const inr = (n) =>
   '₹ ' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Inventory quantities are stored to three decimal places; don't hide small balances.
+export const quantity = (n) => Number(n ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 3 });
+
 export const date = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
 
 // local-date-safe YYYY-MM-DD for <input type="date"> prefills — toISOString()

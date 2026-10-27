@@ -60,7 +60,7 @@ async function get(req, res) {
   const id = parseInt(req.params.id, 10);
   const lot = await prisma.customerMaterialLot.findUnique({
     where: { id },
-    include: { ...INCLUDE, stockLedger: { orderBy: { date: 'asc' } } },
+    include: { ...INCLUDE, stockLedger: { orderBy: { id: 'asc' } } },
   });
   if (!lot) throw new HttpError(404, 'Customer material lot not found');
   const availableQty = await stockService.getCustomerLotAvailableQty(prisma, id);

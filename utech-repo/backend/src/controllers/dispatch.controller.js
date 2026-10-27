@@ -37,6 +37,8 @@ async function create(req, res) {
   const { lines, ...rest } = req.body;
   const number = await nextNumber('dispatchChallan', 'dispatch');
   const d = await prisma.$transaction(async (tx) => {
+    const party = await tx.party.findUnique({ where: { id: rest.partyId } });
+    if (!party || party.type === 'VENDOR') throw new HttpError(400, 'Select a customer for dispatch');
     const created = await tx.dispatchChallan.create({
       data: {
         ...rest,
@@ -67,12 +69,14 @@ async function markStatus(req, res) {
   const d = await prisma.$transaction(async (tx) => {
     const challan = await tx.dispatchChallan.findUnique({ where: { id }, include: { lines: true } });
     if (!challan) throw new HttpError(404, 'Dispatch not found');
-    if (challan.status === 'CANCELLED') {
-      throw new HttpError(400, `Cannot change status of a cancelled dispatch`);
+    const transitions = { DRAFT: ['DISPATCHED', 'CANCELLED'], DISPATCHED: ['DELIVERED', 'CANCELLED'] };
+    if (!(transitions[challan.status] || []).includes(status)) {
+      throw new HttpError(400, `Cannot change a ${challan.status} dispatch to ${status}`);
     }
-    if (status === 'CANCELLED' && challan.status === 'DELIVERED') {
-      throw new HttpError(400, 'Cannot cancel a delivered dispatch');
-    }
+    // Claim the status before restoring any stock. Concurrent cancellation or
+    // delivery attempts cannot both act on the same stale status.
+    const claim = await tx.dispatchChallan.updateMany({ where: { id, status: challan.status }, data: { status } });
+    if (!claim.count) throw new HttpError(409, 'Dispatch changed. Refresh and try again.');
 
     // cancelling gives the goods back: every line's qty was moved OUT of
     // company stock at creation (a draft reserves stock), so a cancel moves
@@ -90,7 +94,7 @@ async function markStatus(req, res) {
       }
     }
 
-    return tx.dispatchChallan.update({ where: { id }, data: { status }, include: INCLUDE });
+    return tx.dispatchChallan.findUnique({ where: { id }, include: INCLUDE });
   });
 
   if (status === 'CANCELLED') {

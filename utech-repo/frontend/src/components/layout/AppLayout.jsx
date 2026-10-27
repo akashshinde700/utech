@@ -77,6 +77,8 @@ const NAV_SECTIONS = [
       // gated on item.read because that is what /api/boms actually checks; the
       // seeded bom.* keys exist but no route reads them (see AUD-104)
       { to: '/boms', label: 'BOMs', icon: Package, perm: 'item.read' },
+      { to: '/production/batches', label: 'Production Batches', icon: Factory, perm: 'jobcard.read' },
+      { to: '/production/shifts', label: 'Shifts', icon: Cog, perm: 'jobcard.read' },
       { to: '/purchase-orders', label: 'Purchase Orders', icon: ShoppingCart, perm: 'purchase.read' },
       { to: '/grns', label: 'GRN (Stock In)', icon: PackageCheck, perm: 'grn.read' },
       { to: '/purchase-returns', label: 'Purchase Returns', icon: ArrowLeftToLine, perm: 'purchase.read' },
@@ -195,10 +197,12 @@ export default function AppLayout() {
     .filter((section) => section.items.length > 0);
 
   // topbar title follows the active module — longest matching nav link wins
-  const pageTitle = navSections
-    .flatMap((s) => s.items)
-    .filter((item) => location.pathname === item.to || location.pathname.startsWith(item.to + '/'))
-    .sort((a, b) => b.to.length - a.to.length)[0]?.label || 'Dashboard';
+  const matchesLocation = (item) => {
+    const path = item.to.split('?')[0];
+    return (location.pathname === path || (path !== '/' && location.pathname.startsWith(path + '/'))) && linkActive(item, true);
+  };
+  const pageTitle = navSections.flatMap((s) => s.items)
+    .filter(matchesLocation).sort((a, b) => b.to.length - a.to.length)[0]?.label || 'Workspace';
   const [expandedSections, setExpandedSections] = useState({
     dashboard: true,
     'my-projects': true,
@@ -216,39 +220,50 @@ export default function AppLayout() {
     }));
   };
 
-  // close the mobile drawer automatically whenever the route changes
-  useEffect(() => { setMobileNavOpen(false); }, [location.pathname]);
+  // Deep links open the relevant section, while route changes close the mobile drawer.
+  useEffect(() => {
+    setMobileNavOpen(false);
+    const activeSection = navSections.find((section) => section.items.some(matchesLocation));
+    if (activeSection) setExpandedSections((prev) => ({ ...prev, [activeSection.id]: true }));
+  }, [location.pathname, location.search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined;
+    const onKeyDown = (event) => { if (event.key === 'Escape') setMobileNavOpen(false); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mobileNavOpen]);
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden flex bg-gradient-to-br from-slate-50 to-brand-50">
+    <div className="min-h-screen w-full max-w-full flex bg-[#f4f7f7]">
       {mobileNavOpen && (
         <div className="no-print fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setMobileNavOpen(false)} />
       )}
 
       {/* sidebar — fixed slide-in drawer below lg, static column at lg+ */}
-      <aside className={`no-print fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-gradient-to-b from-brand-900 via-brand-900 to-cyan-950 text-white flex flex-col shadow-2xl border-r border-brand-800/20 backdrop-blur-xl transform transition-transform duration-300 lg:static lg:translate-x-0 lg:z-auto ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="px-6 py-6 border-b border-white/10">
+      <aside className={`no-print fixed inset-y-0 left-0 z-50 w-[264px] max-w-[85vw] bg-[#132b3a] text-white flex flex-col border-r border-white/5 transform transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:z-auto ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="px-5 py-6 border-b border-white/10">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-14 h-14 shrink-0 rounded-[1.25rem] bg-gradient-to-br from-brand-500 to-cyan-500 flex items-center justify-center shadow-2xl shadow-brand-500/25 transition-all duration-300 hover:scale-105">
-                <Box className="w-6 h-6 text-white" />
+              <div className="w-10 h-10 shrink-0 rounded-xl bg-[#36b5a0] flex items-center justify-center">
+                <Box className="w-5 h-5 text-[#102b35]" aria-hidden="true" />
               </div>
               <div className="min-w-0">
-                <div className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-brand-200 bg-clip-text text-transparent truncate">
-                  UTech ERP
+                <div className="text-base font-bold tracking-tight text-white truncate">
+                  U-Tech <span className="text-[#80d7c9]">ERP</span>
                 </div>
-                <div className="text-[10px] text-brand-200 font-medium tracking-wide uppercase truncate">
-                  Smart Manufacturing
+                <div className="text-[10px] text-slate-400 font-semibold tracking-[0.12em] uppercase truncate">
+                  Manufacturing workspace
                 </div>
               </div>
             </div>
-            <button type="button" className="lg:hidden shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-white/80 hover:bg-white/10" onClick={() => setMobileNavOpen(false)}>
+            <button type="button" className="lg:hidden shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-white/80 hover:bg-white/10" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)}>
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        <nav className="flex-1 py-4 overflow-y-auto scrollbar-thin scrollbar-thumb-brand-500/70 scrollbar-track-transparent">
+        <nav aria-label="Main navigation" className="flex-1 py-4 overflow-y-auto scrollbar-thin scrollbar-thumb-brand-500/70 scrollbar-track-transparent">
           {navSections.map((section) => {
             const SectionIcon = section.icon;
             const isExpanded = expandedSections[section.id];
@@ -258,18 +273,19 @@ export default function AppLayout() {
                 <button
                   type="button"
                   onClick={() => toggleSection(section.id)}
-                  aria-expanded={isExpanded}
-                  className="group w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-brand-200/80 transition-all duration-200 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/50"
+                  aria-expanded={!!isExpanded}
+                  aria-controls={`nav-${section.id}`}
+                  className="group w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-[11px] font-bold uppercase tracking-[0.09em] text-slate-300 transition-colors duration-200 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/50"
                 >
                   <span className="flex items-center gap-2.5">
-                    <SectionIcon className="h-4 w-4 text-brand-300 group-hover:text-white transition-colors" aria-hidden="true" />
+                    <SectionIcon className="h-4 w-4 text-slate-400 group-hover:text-white transition-colors" aria-hidden="true" />
                     <span className="text-white/80 group-hover:text-white">{section.label}</span>
                   </span>
                   <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} aria-hidden="true" />
                 </button>
 
                 {isExpanded && (
-                  <div className="mt-1 space-y-0.5 animate-slide-down">
+                  <div id={`nav-${section.id}`} className="mt-1 space-y-0.5 animate-slide-down">
                     {section.items.map((item) => {
                       const ItemIcon = item.icon;
                       return (
@@ -280,18 +296,18 @@ export default function AppLayout() {
                           className={({ isActive }) =>
                             'relative flex items-center gap-3 rounded-lg py-2 pl-4 pr-3 ml-4 text-sm font-medium transition-all duration-200 ' +
                             (linkActive(item, isActive)
-                              ? 'bg-brand-600/30 text-white shadow-sm ring-1 ring-brand-400/30'
-                              : 'text-brand-100 hover:bg-white/10 hover:text-white')
+                              ? 'bg-[#24524f] text-white ring-1 ring-[#43877b]/40'
+                              : 'text-slate-300 hover:bg-white/5 hover:text-white')
                           }
                         >
                           {({ isActive }) => (
                             <>
                               {/* active left accent bar */}
                               <span
-                                className={`absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full transition-opacity ${linkActive(item, isActive) ? 'bg-brand-300 opacity-100' : 'opacity-0'}`}
+                                className={`absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full transition-opacity ${linkActive(item, isActive) ? 'bg-[#7dd8c6] opacity-100' : 'opacity-0'}`}
                                 aria-hidden="true"
                               />
-                              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/5 text-brand-200 transition-colors duration-200">
+                              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/5 text-slate-300 transition-colors duration-200">
                                 <ItemIcon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
                               </span>
                               <span className="truncate">{item.label}</span>
@@ -307,30 +323,31 @@ export default function AppLayout() {
           })}
         </nav>
 
-        <div className="px-6 py-4 text-[10px] text-brand-200 border-t border-white/10">
-          <span className="font-medium">v2.0.0</span>
+        <div className="px-6 py-4 text-[10px] text-slate-400 border-t border-white/10">
+          <span className="font-medium">U-TECH AUTOMATION INDUSTRIES</span>
         </div>
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* topbar */}
-        <header className="no-print relative z-30 h-16 bg-white/90 backdrop-blur-xl border-b border-brand-100/50 px-3 sm:px-6 flex items-center justify-between shadow-sm">
+        <header className="no-print relative z-30 min-h-16 bg-white border-b border-slate-200 px-3 sm:px-8 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-            <button type="button" className="lg:hidden shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-brand-700 hover:bg-brand-50" onClick={() => setMobileNavOpen(true)}>
+            <button type="button" className="lg:hidden shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-slate-700 hover:bg-slate-100" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}>
               <Menu className="w-5 h-5" />
             </button>
-            <div className="text-base sm:text-lg font-bold text-brand-800 truncate">{pageTitle}</div>
-            <div className="h-6 w-px bg-brand-200 hidden sm:block"></div>
-            <div className="text-sm text-slate-600 font-medium hidden sm:block truncate">U-Tech Smart Manufacturing</div>
+            <div className="text-sm font-bold text-slate-800 truncate">{pageTitle}</div>
+            <div className="h-5 w-px bg-slate-200 hidden sm:block"></div>
+            <div className="text-xs text-slate-500 font-medium hidden sm:block truncate">Manufacturing workspace</div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
             <NotificationBell />
             <div className="relative" ref={userMenuRef}>
               <button
-                className="flex items-center gap-3 px-3 py-2 rounded-2xl hover:bg-brand-50 transition-all duration-200 border border-brand-100/50 shadow-sm hover:shadow-md"
+                className="flex items-center gap-3 px-2 py-1.5 rounded-xl hover:bg-slate-50 transition-colors"
+                aria-label="Account menu" aria-expanded={userOpen}
                 onClick={() => setUserOpen((v) => !v)}
               >
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-cyan-500 text-white flex items-center justify-center text-sm font-bold shadow-lg transition-transform duration-300 hover:scale-105">
+                <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-800 flex items-center justify-center text-sm font-bold">
                   {(user?.name || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="text-left hidden sm:block">
@@ -371,8 +388,8 @@ export default function AppLayout() {
 
         {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
 
-        <main className="flex-1 p-3 sm:p-6 overflow-auto overflow-x-hidden bg-gradient-to-br from-slate-50/50 to-emerald-50/30">
-          <Outlet />
+        <main className="flex-1 min-w-0 p-4 sm:p-6 xl:p-8">
+          <div className="mx-auto max-w-[1600px]"><Outlet /></div>
         </main>
       </div>
     </div>

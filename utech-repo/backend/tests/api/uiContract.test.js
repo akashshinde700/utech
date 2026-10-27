@@ -148,7 +148,7 @@ describe('POST /api/purchase-returns — payload exactly as PurchaseReturnForm s
 
   beforeEach(() => {
     getDb().when('gRN.findUnique', grn);
-    getDb().when('grnLine.findUnique', { id: 200, grnId: 61, qtyAccepted: 20 });
+    getDb().when('grnLine.findUnique', { id: 200, grnId: 61, itemId: 7, qtyAccepted: 20 });
     getDb().when('purchaseReturnLine.aggregate', { _sum: { qty: 0 } });
     getDb().when('purchaseReturn.create', (args) => ({ id: 71, number: 'PR-26-00001', ...args[0].data }));
   });

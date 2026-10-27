@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, Truck, Package, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
@@ -10,6 +10,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import { styles } from '../../lib/formStyles';
 import { required, positiveNumber, validateAll } from '../../lib/validation';
 import { todayLocal } from '../../lib/format';
+import useRemoteOptions from '../../lib/useRemoteOptions';
 import toast from 'react-hot-toast';
 
 const emptyLine = () => ({ itemId: '', qty: 1, uomCode: '', notes: '' });
@@ -26,8 +27,8 @@ function focusFirstError(errors) {
 
 export default function DispatchForm() {
   const navigate = useNavigate();
-  const [parties, setParties] = useState([]);
-  const [items, setItems] = useState([]);
+  const { items: parties, search: searchParties, error: partyLookupError } = useRemoteOptions('/parties', { type: 'CUSTOMER' });
+  const { items, search: searchItems, error: itemLookupError } = useRemoteOptions('/items');
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [form, setForm] = useState({
@@ -36,10 +37,6 @@ export default function DispatchForm() {
     lines: [emptyLine()],
   });
 
-  useEffect(() => {
-    api.get('/parties', { params: { pageSize: 100 } }).then((r) => setParties(r.data.items));
-    api.get('/items', { params: { pageSize: 200 } }).then((r) => setItems(r.data.items));
-  }, []);
 
   function set(k, v) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -110,6 +107,7 @@ export default function DispatchForm() {
     <div>
       <PageHeader title="New dispatch challan" subtitle="Goods being shipped — auto stock OUT" />
       <form onSubmit={save} className="max-w-5xl space-y-5">
+        {(partyLookupError || itemLookupError) && <p role="alert" className="text-sm text-danger-700">Search could not be loaded. Check the connection and try searching again.</p>}
         <FormSection icon={Truck} title="Dispatch Details" description="Who the goods ship to and who carries them">
           <div className={styles.formGrid4}>
             <FormField id="date" label="Date" required error={errors.date || null} htmlFor="date">
@@ -122,6 +120,7 @@ export default function DispatchForm() {
               <SearchableSelect
                 id="partyId"
                 value={form.partyId}
+                onSearchChange={searchParties}
                 onChange={(v) => set('partyId', v)}
                 options={parties.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}`, subtitle: p.phone || undefined }))}
                 placeholder="Select customer…"
@@ -178,6 +177,7 @@ export default function DispatchForm() {
                           setLine(i, { itemId: v, uomCode: it?.uom?.code || l.uomCode });
                         }}
                         options={itemOptions}
+                        onSearchChange={searchItems}
                         placeholder="Select item…"
                         error={itemErr}
                         emptyText="No items match"

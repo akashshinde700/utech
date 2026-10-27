@@ -413,7 +413,20 @@ async function main(prisma = defaultPrisma) {
   ];
 
   for (const item of sampleItems) {
-    await prisma.item.upsert({ where: { code: item.code }, update: {}, create: item });
+    // Only new demo items get a baseline. Never rewrite an existing item's
+    // balances or invent a history for an already-used database on re-seed.
+    if (await prisma.item.findUnique({ where: { code: item.code } })) continue;
+    await prisma.$transaction(async (tx) => {
+      const opening = Number(item.currentStock);
+      const created = await tx.item.create({ data: { ...item, openingStock: opening } });
+      if (opening > 0) {
+        await tx.stockLedger.create({ data: {
+          itemId: created.id, date: created.createdAt, refType: 'OPENING', refId: created.id,
+          qtyIn: opening, qtyOut: 0, balance: opening, ownerType: 'COMPANY',
+          notes: `Demo opening stock for ${created.code}`,
+        } });
+      }
+    });
   }
 
   console.log('Seeding sample invoices...');

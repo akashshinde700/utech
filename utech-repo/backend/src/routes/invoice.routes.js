@@ -11,6 +11,7 @@ const {
 router.use(requireAuth);
 
 router.get('/', requirePermission('invoice.read'), ah(ctrl.list));
+router.get('/tax-config', requirePermission('invoice.read'), ah(ctrl.taxConfig));
 router.get('/:id', requirePermission('invoice.read'), ah(ctrl.get));
 router.get('/:id/pdf', requirePermission('invoice.read'), ah(ctrl.downloadPdf));
 router.post('/', requirePermission('invoice.create'), validate(createInvoiceSchema), ah(ctrl.create));

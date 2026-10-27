@@ -80,12 +80,16 @@ function buildLines(lines) {
 // return could be edited past the accepted quantity or re-pointed at another
 // document's GRN line.
 async function assertReturnableLines(prismaLike, lines, { grn, po }, excludeReturnId = null) {
+  const seen = new Set();
   for (const l of lines) {
+    if (seen.has(Number(l.grnLineId))) throw new HttpError(400, 'Each source line may appear only once in a return');
+    seen.add(Number(l.grnLineId));
     if (!l.grnLineId) {
       throw new HttpError(400, 'Every purchase return line must reference a grnLineId');
     }
     const grnLine = await prismaLike.grnLine.findUnique({ where: { id: Number(l.grnLineId) } });
     if (!grnLine) throw new HttpError(404, `GRN line ${l.grnLineId} not found`);
+    if ((grnLine.itemId || null) !== (l.itemId || null)) throw new HttpError(400, 'Return item must match the original GRN line');
     if (grn) {
       if (grnLine.grnId !== grn.id) {
         throw new HttpError(400, `Line ${l.grnLineId} does not belong to GRN ${grn.number}`);

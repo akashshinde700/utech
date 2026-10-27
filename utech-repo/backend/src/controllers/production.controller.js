@@ -97,7 +97,7 @@ function buildMaterialConsumptions(materials) {
   return materials.map((m) => ({
     itemId: m.itemId,
     qtyPlanned: m.qtyPlanned,
-    qtyConsumed: m.qtyConsumed || 0,
+    qtyConsumed: m.qtyConsumed ?? m.qtyPlanned,
     uomCode: m.uomCode,
     notes: m.notes,
   }));
@@ -210,6 +210,14 @@ async function completeBatch(req, res) {
       throw new HttpError(400, 'Cannot complete batch in ' + existing.status + ' status');
     }
 
+    // Claim completion before posting either output or consumption, so a
+    // second completion cannot post the same batch twice.
+    const claim = await tx.productionBatch.updateMany({
+      where: { id, status: 'IN_PROGRESS' },
+      data: { status: 'COMPLETED', qtyProduced, qtyRejected, endTime: new Date() },
+    });
+    if (!claim.count) throw new HttpError(409, 'Batch changed. Refresh and try again.');
+
     // Update finished item stock
     await stockService.moveCompanyStock({
       tx, itemId: existing.itemId, date: new Date(),
@@ -219,10 +227,10 @@ async function completeBatch(req, res) {
 
     // Deduct material consumption from stock
     for (const material of existing.materialConsumptions) {
-      // qtyConsumed is a Prisma Decimal object even when its value is 0 — an
-      // object is always truthy, so `|| qtyPlanned` never falls through without
-      // comparing the numeric value first.
-      const consumedQty = Number(material.qtyConsumed) > 0 ? material.qtyConsumed : material.qtyPlanned;
+      // Actual usage is authoritative, including an explicit zero. Planned
+      // usage is only a default when a material is first created.
+      const consumedQty = Number(material.qtyConsumed);
+      if (consumedQty === 0) continue;
       await stockService.moveCompanyStock({
         tx, itemId: material.itemId, date: new Date(),
         refType: 'PRODUCTION', refId: id, qtyOut: consumedQty,
@@ -230,16 +238,7 @@ async function completeBatch(req, res) {
       });
     }
 
-    const updated = await tx.productionBatch.update({
-      where: { id },
-      data: {
-        status: 'COMPLETED',
-        qtyProduced,
-        qtyRejected,
-        endTime: new Date(),
-      },
-      include: PRODUCTION_INCLUDE,
-    });
+    const updated = await tx.productionBatch.findUnique({ where: { id }, include: PRODUCTION_INCLUDE });
     
     await audit(req, 'complete', 'ProductionBatch', id, { number: updated.number, qtyProduced, qtyRejected }, tx);
     return updated;
@@ -269,8 +268,8 @@ async function updateMaterialConsumption(req, res) {
     if (!existing) throw new HttpError(404, 'Production batch not found');
     // consumption drives the stock ledger at completion — editing it after
     // the batch is closed would diverge the ledger from what was moved
-    if (existing.status === 'COMPLETED') {
-      throw new HttpError(400, 'Cannot edit material consumption of a completed batch');
+    if (!['PLANNED', 'IN_PROGRESS'].includes(existing.status)) {
+      throw new HttpError(400, 'Cannot edit material consumption of a closed batch');
     }
 
     const material = await tx.productionMaterial.findUnique({ where: { id: materialId } });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Loader2, Search, X } from 'lucide-react';
 import { styles } from '../../lib/formStyles';
 import useClickOutside from '../../lib/useClickOutside';
@@ -31,12 +32,14 @@ export default function SearchableSelect({
   emptyText = 'No matches found',
   className = '',
   id,
+  onSearchChange,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [fixedStyle, setFixedStyle] = useState(null);
   const rootRef = useRef(null);
+  const menuRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
   const optionRefs = useRef([]);
@@ -48,6 +51,14 @@ export default function SearchableSelect({
   const sameValue = (v) => same(v, value);
   const selected = useMemo(() => options.find((o) => sameValue(o.value)) || null, [options, value]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Optional server-backed lookup for large masters (the API limits each
+  // page to 100 records). Debouncing avoids a request on every keystroke.
+  useEffect(() => {
+    if (!open || !onSearchChange) return undefined;
+    const timer = setTimeout(() => onSearchChange(query), 250);
+    return () => clearTimeout(timer);
+  }, [open, query, onSearchChange]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
@@ -58,7 +69,9 @@ export default function SearchableSelect({
     );
   }, [options, query]);
 
-  useClickOutside(rootRef, () => setOpen(false), { active: open });
+  useClickOutside(rootRef, (event) => {
+    if (!menuRef.current?.contains(event.target)) setOpen(false);
+  }, { active: open });
 
   // Escape must close ONLY the popover (topmost layer wins). The listener is
   // registered on `window` in the capture phase — one node ABOVE the
@@ -103,7 +116,7 @@ export default function SearchableSelect({
         ...(openUpward
           ? { bottom: `${vh - rect.top + 4}px` }
           : { top: `${rect.bottom + 4}px` }),
-        left: `${rect.left}px`,
+        left: `${Math.max(8, Math.min(rect.left, window.innerWidth - Math.max(rect.width, 220) - 8))}px`,
         width: `${Math.max(rect.width, 220)}px`,
       });
     } else {
@@ -115,7 +128,7 @@ export default function SearchableSelect({
     if (!open) return undefined;
     updatePosition();
     const onScroll = (e) => {
-      if (listRef.current && listRef.current.contains(e.target)) return;
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
       if (rootRef.current && rootRef.current.contains(e.target)) return;
       updatePosition();
     };
@@ -207,42 +220,11 @@ export default function SearchableSelect({
     .filter(Boolean)
     .join(' ');
 
-  return (
-    <div className={`relative ${className}`} ref={rootRef}>
-      <button
-        type="button"
-        id={id}
-        className={triggerClasses}
-        onClick={() => (open ? setOpen(false) : openPopover())}
-        onKeyDown={onKeyDown}
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listboxId : undefined}
-        aria-invalid={!!error}
-        aria-describedby={errorId}
-      >
-        <span className={`min-w-0 flex-1 truncate ${selected ? 'text-slate-800' : 'text-slate-400'}`}>
-          {selected ? selected.label : placeholder}
-        </span>
-        {allowClear && selected && !disabled && (
-          <span
-            role="button"
-            tabIndex={-1}
-            aria-label="Clear selection"
-            className="grid h-5 w-5 shrink-0 place-items-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            onClick={clear}
-          >
-            <X className="h-3.5 w-3.5" />
-          </span>
-        )}
-        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
-      </button>
-
-      {open && (
+  const menu = open ? (
         <div
+          ref={menuRef}
           style={fixedStyle || undefined}
-          className={`${fixedStyle ? 'z-[100]' : 'absolute z-50 mt-1 w-full'} rounded-lg border border-slate-200 bg-white shadow-lg animate-fade-in`}
+          className={`${fixedStyle ? 'z-[100]' : 'absolute z-50 mt-1 w-full'} rounded-lg border border-slate-200 bg-white shadow-lg`}
         >
           <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
             <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
@@ -312,7 +294,41 @@ export default function SearchableSelect({
             )}
           </ul>
         </div>
-      )}
+  ) : null;
+
+  return (
+    <div className={`relative ${className}`} ref={rootRef}>
+      <button
+        type="button"
+        id={id}
+        className={triggerClasses}
+        onClick={() => (open ? setOpen(false) : openPopover())}
+        onKeyDown={onKeyDown}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-invalid={!!error}
+        aria-describedby={errorId}
+      >
+        <span className={`min-w-0 flex-1 truncate ${selected ? 'text-slate-800' : 'text-slate-400'}`}>
+          {selected ? selected.label : placeholder}
+        </span>
+        {allowClear && selected && !disabled && (
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label="Clear selection"
+            className="grid h-5 w-5 shrink-0 place-items-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            onClick={clear}
+          >
+            <X className="h-3.5 w-3.5" />
+          </span>
+        )}
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+
+      {menu && (fixedStyle ? createPortal(menu, document.body) : menu)}
     </div>
   );
 }

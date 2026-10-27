@@ -11,7 +11,7 @@ const itemBase = {
   purchaseRate: z.number().nonnegative().optional().nullable(),
   saleRate: z.number().nonnegative().optional().nullable(),
   gstRate: z.number().min(0).max(100).optional().nullable(),
-  openingStock: z.number().optional().nullable(),
+  openingStock: z.number().nonnegative().refine((n) => Math.abs(n * 1000 - Math.round(n * 1000)) < 1e-7, 'Use at most three decimal places').optional().nullable(),
   minStock: z.number().nonnegative().optional().nullable(),
   uomId: z.number().int().optional().nullable(),
   categoryId: z.number().int().optional().nullable(),
