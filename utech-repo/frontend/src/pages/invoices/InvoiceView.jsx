@@ -37,7 +37,7 @@ export default function InvoiceView() {
   async function addPayment() {
     const { errors, ok } = validateAll(pay, {
       date: (v) => required(v, 'Date'),
-      amount: (v) => positiveNumber(v, 'Amount'),
+      amount: (v) => positiveNumber(v, 'Amount') || (Number(v) > balance ? 'Amount exceeds the remaining balance' : null) || (Math.abs(Number(v) * 100 - Math.round(Number(v) * 100)) > 1e-7 ? 'Use at most two decimal places' : null),
     });
     if (!ok) {
       setPayErrors(errors);
@@ -94,17 +94,18 @@ export default function InvoiceView() {
         title={`Invoice ${inv.number}`}
         subtitle={`To ${inv.party?.name ?? '—'} • ${date(inv.date)}`}
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button className="btn-secondary" onClick={downloadPdf} disabled={pdfBusy}>
               {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} PDF
             </button>
-            <Link to={`/invoices/${id}/edit`} className="btn-secondary"><Pencil className="w-4 h-4" /> Edit</Link>
-            <button className="btn-primary" onClick={() => { setPayErrors({}); setPay({ date: todayLocal(), amount: '', mode: 'BANK', reference: '', notes: '' }); }}><Wallet className="w-4 h-4" /> Record payment</button>
+            {inv.status !== 'CANCELLED' && Number(inv.amountPaid) === 0 && inv.status !== 'PAID' && <Link to={`/invoices/${id}/edit`} className="btn-secondary"><Pencil className="w-4 h-4" /> Edit</Link>}
+            {inv.status !== 'CANCELLED' && balance > 0 && <button className="btn-primary" onClick={() => { setPayErrors({}); setPay({ date: todayLocal(), amount: '', mode: 'BANK', reference: '', notes: '' }); }}><Wallet className="w-4 h-4" /> Record payment</button>}
           </div>
         }
       />
 
       <div className="max-w-5xl space-y-5">
+        {Number(inv.amountPaid) > 0 && <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">This invoice has payments. Its customer, items and tax are locked; use the approved credit note / return process for corrections.</p>}
         <FormSection icon={ReceiptText} title="Invoice Details" actions={<Badge status={inv.overdue ? 'OVERDUE' : inv.status}>{inv.overdue ? 'OVERDUE' : inv.status}</Badge>}>
           <div className="flex flex-col gap-6 sm:flex-row sm:justify-between">
             <div className="min-w-0">

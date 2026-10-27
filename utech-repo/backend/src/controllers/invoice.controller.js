@@ -132,6 +132,7 @@ async function create(req, res) {
 
   const party = await prisma.party.findUnique({ where: { id: rest.partyId } });
   if (!party) throw new HttpError(400, 'Party not found');
+  if (party.type === 'VENDOR') throw new HttpError(400, 'Select a customer, not a vendor, for a sales invoice');
   const intra = resolveIntraState(party, isIntraState);
 
   const totals = computeInvoiceTotals(lines, intra, discount);
@@ -157,47 +158,54 @@ async function create(req, res) {
   res.status(201).json(invoice);
 }
 
+// Optimistic row claim: a payment, cancellation or accounting edit must not
+// commit using a stale balance/total/customer. updateMany takes the row lock
+// and only one transaction can claim the exact version it read.
+function invoiceVersion(inv) {
+  return { id: inv.id, status: inv.status, amountPaid: inv.amountPaid ?? 0,
+    ...(inv.total != null ? { total: inv.total } : {}),
+    ...(inv.partyId != null ? { partyId: inv.partyId } : {}) };
+}
+
 async function update(req, res) {
   const id = parseInt(req.params.id, 10);
   const { lines, isIntraState, discount, ...rest } = req.body;
 
-  const existing = await prisma.invoice.findUnique({ where: { id }, include: { lines: true } });
-  if (!existing) throw new HttpError(404, 'Invoice not found');
-  if (existing.status === 'CANCELLED') throw new HttpError(400, 'Cannot edit a cancelled invoice');
-  if (existing.status === 'PAID' && (lines || discount !== undefined)) {
-    throw new HttpError(400, 'Cannot edit the lines or discount of a paid invoice');
-  }
-
-  const data = { ...rest };
-  if (rest.date) data.date = new Date(rest.date);
-
-  // recompute totals whenever the lines OR the discount OR the tax split changed
-  const linesChanged = Array.isArray(lines);
-  const discountChanged = discount !== undefined;
-  let recompute = linesChanged || discountChanged || isIntraState !== undefined;
-
-  if (recompute) {
-    const effLines = linesChanged
-      ? lines
-      : existing.lines.map((l) => ({ qty: Number(l.qty), rate: Number(l.rate), gstRate: Number(l.gstRate) }));
-    const effDiscount = discountChanged ? discount : Number(existing.discount);
-    // keep the split the invoice already carries unless the client sends one
-    const party = await prisma.party.findUnique({ where: { id: rest.partyId ?? existing.partyId } });
-    const intra = isIntraState !== undefined
-      ? resolveIntraState(party, isIntraState)
-      : !(Number(existing.igst) > 0);
-    Object.assign(data, computeInvoiceTotals(effLines, intra, effDiscount));
-  }
-
   const invoice = await prisma.$transaction(async (tx) => {
+    const existing = await tx.invoice.findUnique({ where: { id }, include: { lines: true } });
+    if (!existing) throw new HttpError(404, 'Invoice not found');
+    if (existing.status === 'CANCELLED') throw new HttpError(400, 'Cannot edit a cancelled invoice');
+
+    const financialEdit = lines !== undefined || discount !== undefined || isIntraState !== undefined || rest.partyId !== undefined;
+    if (financialEdit) {
+      const payments = await tx.invoicePayment.aggregate({ where: { invoiceId: id }, _sum: { amount: true } });
+      if (Number(existing.amountPaid) > 0 || Number(payments._sum.amount || 0) > 0 || ['PAID', 'PARTIALLY_PAID'].includes(existing.status)) {
+        throw new HttpError(400, 'Cannot change invoice items, tax or customer after a payment. Use a credit note instead.');
+      }
+      const returns = await tx.salesReturn.count({ where: { invoiceId: id, status: { not: 'CANCELLED' } } });
+      if (returns > 0) throw new HttpError(400, 'Cannot change an invoice with a sales return');
+    }
+
+    const data = { ...rest };
+    if (rest.date) data.date = new Date(rest.date);
+    const linesChanged = Array.isArray(lines);
+    const recompute = linesChanged || discount !== undefined || isIntraState !== undefined || rest.partyId !== undefined;
+    if (recompute) {
+      const effLines = linesChanged ? lines : existing.lines.map((l) => ({ qty: Number(l.qty), rate: Number(l.rate), gstRate: Number(l.gstRate) }));
+      const party = await tx.party.findUnique({ where: { id: rest.partyId ?? existing.partyId } });
+      if (!party) throw new HttpError(400, 'Party not found');
+      if (party.type === 'VENDOR') throw new HttpError(400, 'Select a customer, not a vendor, for a sales invoice');
+      const intra = resolveIntraState(party, isIntraState !== undefined ? isIntraState : !(Number(existing.igst) > 0));
+      Object.assign(data, computeInvoiceTotals(effLines, intra, discount !== undefined ? discount : Number(existing.discount)));
+    }
+
+    const claim = await tx.invoice.updateMany({ where: invoiceVersion(existing), data });
+    if (!claim.count) throw new HttpError(409, 'Invoice changed while editing. Refresh and try again.');
     if (linesChanged) {
       await tx.invoiceLine.deleteMany({ where: { invoiceId: id } });
+      await tx.invoiceLine.createMany({ data: buildLines(lines).map((line) => ({ ...line, invoiceId: id })) });
     }
-    const updated = await tx.invoice.update({
-      where: { id },
-      data: linesChanged ? { ...data, lines: { create: buildLines(lines) } } : data,
-      include: INVOICE_INCLUDE,
-    });
+    const updated = await tx.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
     if (recompute || rest.partyId || rest.date) await upsertInvoiceLedger(tx, updated);
     return updated;
   });
@@ -207,23 +215,21 @@ async function update(req, res) {
 
 async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
-  const existing = await prisma.invoice.findUnique({ where: { id } });
-  if (!existing) throw new HttpError(404, 'Invoice not found');
-  if (existing.status === 'CANCELLED') throw new HttpError(400, 'Invoice is already cancelled');
-
-  // money has moved against this document — cancelling it would silently
-  // erase a customer debit; a credit note is the accounting-correct reversal
-  const paid = await prisma.invoicePayment.aggregate({
-    where: { invoiceId: id },
-    _sum: { amount: true },
-  });
-  if (Number(paid._sum.amount || 0) > 0 || Number(existing.amountPaid) > 0) {
-    throw new HttpError(400, 'invoice has payments; use credit note');
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.invoice.update({ where: { id }, data: { status: 'CANCELLED' } });
+  const existing = await prisma.$transaction(async (tx) => {
+    const inv = await tx.invoice.findUnique({ where: { id } });
+    if (!inv) throw new HttpError(404, 'Invoice not found');
+    if (inv.status === 'CANCELLED') throw new HttpError(400, 'Invoice is already cancelled');
+    const paid = await tx.invoicePayment.aggregate({ where: { invoiceId: id }, _sum: { amount: true } });
+    if (Number(paid._sum.amount || 0) > 0 || Number(inv.amountPaid) > 0) {
+      throw new HttpError(400, 'invoice has payments; use credit note');
+    }
+    if (await tx.salesReturn.count({ where: { invoiceId: id, status: { not: 'CANCELLED' } } })) {
+      throw new HttpError(400, 'Cannot cancel an invoice with a sales return');
+    }
+    const claim = await tx.invoice.updateMany({ where: invoiceVersion(inv), data: { status: 'CANCELLED' } });
+    if (!claim.count) throw new HttpError(409, 'Invoice changed while cancelling. Refresh and try again.');
     await tx.partyLedger.deleteMany({ where: { refType: 'invoice', refId: id } });
+    return inv;
   });
   await audit(req, 'cancel', 'Invoice', id, { number: existing.number });
   res.json({ ok: true });
@@ -239,10 +245,8 @@ async function addPayment(req, res) {
     if (inv.status === 'CANCELLED') throw new HttpError(400, 'Cannot record a payment on a cancelled invoice');
     if (!Number.isFinite(amount) || amount <= 0) throw new HttpError(400, 'Payment amount must be greater than 0');
 
-    // the payments table is the source of truth for the race-free check; the
-    // denormalized amountPaid is only a floor (it never decreases and is only
-    // ever written here) so legacy rows that predate the payments table — or
-    // seed data that sets amountPaid without rows — cannot be overpaid
+    // Account for legacy rows that have only a header amount or only payment
+    // rows. The conditional claim below serializes competing writes.
     const paidAgg = await tx.invoicePayment.aggregate({
       where: { invoiceId: id },
       _sum: { amount: true },
@@ -255,8 +259,11 @@ async function addPayment(req, res) {
     const newPaid = round2(existingPaid + amount);
     const status = newPaid >= Number(inv.total) ? 'PAID' : 'PARTIALLY_PAID';
 
+    const claim = await tx.invoice.updateMany({
+      where: invoiceVersion(inv), data: { amountPaid: newPaid, status },
+    });
+    if (!claim.count) throw new HttpError(409, 'Invoice changed while recording payment. Refresh and try again.');
     const payment = await tx.invoicePayment.create({ data: { invoiceId: id, ...req.body } });
-    await tx.invoice.update({ where: { id }, data: { amountPaid: newPaid, status } });
     await tx.partyLedger.create({
       data: {
         partyId: inv.partyId,
@@ -283,4 +290,8 @@ async function downloadPdf(req, res) {
   return streamInvoicePdf(invoice, res);
 }
 
-module.exports = { list, get, create, update, remove, addPayment, downloadPdf };
+function taxConfig(_req, res) {
+  res.json({ companyStateCode: COMPANY_STATE_CODE });
+}
+
+module.exports = { list, get, create, update, remove, addPayment, downloadPdf, taxConfig };

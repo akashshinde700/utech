@@ -10,9 +10,19 @@ import EmptyState from '../../components/ui/EmptyState';
 import { styles } from '../../lib/formStyles';
 import { required, positiveNumber, validateAll } from '../../lib/validation';
 import { todayLocal } from '../../lib/format';
+import useRemoteOptions from '../../lib/useRemoteOptions';
 import toast from 'react-hot-toast';
 
-const emptyLine = () => ({ itemId: '', poLineId: '', qty: 0, qtyAccepted: 0, qtyRejected: 0, rate: '', notes: '' });
+const emptyLine = () => ({ itemId: '', description: '', poLineId: '', qty: 0, qtyAccepted: 0, qtyRejected: 0, rate: '', notes: '', _autoAccepted: true });
+
+const outstandingLines = (po) => po.lines
+  .filter((l) => Number(l.qty) > Number(l.qtyReceived))
+  .map((l) => ({
+    itemId: l.itemId || '', description: l.description || '', poLineId: l.id,
+    qty: Number(l.qty) - Number(l.qtyReceived),
+    qtyAccepted: Number(l.qty) - Number(l.qtyReceived), qtyRejected: 0,
+    rate: Number(l.rate), notes: '', _autoAccepted: true,
+  }));
 
 function focusFirstError(errors) {
   const key = Object.keys(errors)[0];
@@ -29,9 +39,9 @@ export default function GRNForm() {
   const [params] = useSearchParams();
   const poIdParam = params.get('poId');
 
-  const [parties, setParties] = useState([]);
-  const [items, setItems] = useState([]);
-  const [pos, setPos] = useState([]);
+  const { items: parties, search: searchParties, error: partyLookupError, include: includeParties } = useRemoteOptions('/parties', { type: 'VENDOR' });
+  const { items, search: searchItems, error: itemLookupError, include: includeItems } = useRemoteOptions('/items');
+  const { items: pos, search: searchPOs, error: poLookupError } = useRemoteOptions('/purchase-orders', { status: 'APPROVED,PARTIALLY_RECEIVED,RECEIVED' });
   const [urlPoOption, setUrlPoOption] = useState(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
@@ -42,36 +52,22 @@ export default function GRNForm() {
     lines: [emptyLine()],
   });
 
-  useEffect(() => {
-    api.get('/parties', { params: { type: 'VENDOR', pageSize: 100 } }).then((r) => setParties(r.data.items));
-    api.get('/items', { params: { pageSize: 200 } }).then((r) => setItems(r.data.items));
-    // POs open for receiving (mirrors the statuses the GRN endpoint accepts)
-    api.get('/purchase-orders', { params: { status: 'APPROVED,PARTIALLY_RECEIVED,RECEIVED', pageSize: 100 } })
-      .then((r) => setPos(r.data.items))
-      .catch(() => {});
-  }, []);
 
   // if poId given, prefill from PO
   useEffect(() => {
     if (!poIdParam) return;
     api.get(`/purchase-orders/${poIdParam}`).then((r) => {
       const po = r.data;
+      includeParties([po.party]);
+      includeItems(po.lines.map((line) => line.item));
       setUrlPoOption({ value: po.id, label: po.number ? `${po.number}` : `PO #${po.id}` });
       setForm((f) => ({
         ...f,
         partyId: po.partyId,
-        lines: po.lines.map((l) => ({
-          itemId: l.itemId,
-          poLineId: l.id,
-          qty: Number(l.qty) - Number(l.qtyReceived),
-          qtyAccepted: Number(l.qty) - Number(l.qtyReceived),
-          qtyRejected: 0,
-          rate: Number(l.rate),
-          notes: '',
-        })),
+        lines: outstandingLines(po),
       }));
     });
-  }, [poIdParam]);
+  }, [poIdParam, includeParties, includeItems]);
 
   function set(k, v) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -83,7 +79,13 @@ export default function GRNForm() {
   function setLine(i, patch) {
     setForm((f) => {
       const ls = [...f.lines];
-      ls[i] = { ...ls[i], ...patch };
+      const previous = ls[i];
+      const next = { ...previous, ...patch };
+      if ('qtyAccepted' in patch) next._autoAccepted = false;
+      if (previous._autoAccepted && ('qty' in patch || 'qtyRejected' in patch)) {
+        next.qtyAccepted = Math.max(0, Number(next.qty || 0) - Number(next.qtyRejected || 0));
+      }
+      ls[i] = next;
       return { ...f, lines: ls };
     });
     setErrors((e) => {
@@ -104,9 +106,15 @@ export default function GRNForm() {
       partyId: (v) => required(v, 'Vendor'),
     });
     const all = { ...headerErrors.errors };
+    if (!form.lines.length) all.lines = 'Add at least one outstanding item';
     form.lines.forEach((l, i) => {
+      if (!l.itemId && !l.description) all[`line-${i}-item`] = 'Select an item';
       const msg = positiveNumber(l.qty, 'Qty');
       if (msg) all[`line-${i}-qty`] = msg;
+      const accepted = Number(l.qtyAccepted), rejected = Number(l.qtyRejected), qty = Number(l.qty);
+      if (!Number.isFinite(accepted) || !Number.isFinite(rejected) || accepted < 0 || rejected < 0 || accepted + rejected > qty) {
+        all[`line-${i}-qty`] = 'Accepted + rejected must not exceed received quantity';
+      }
     });
     return all;
   }
@@ -128,12 +136,13 @@ export default function GRNForm() {
         poId: form.poId ? Number(form.poId) : null,
         partyId: form.partyId ? Number(form.partyId) : null,
         lines: form.lines.map((l) => ({
-          itemId: Number(l.itemId),
+          itemId: l.itemId ? Number(l.itemId) : null,
+          description: l.description || null,
           poLineId: l.poLineId ? Number(l.poLineId) : null,
           qty: Number(l.qty),
           qtyAccepted: Number(l.qtyAccepted),
           qtyRejected: Number(l.qtyRejected),
-          rate: l.rate ? Number(l.rate) : null,
+          rate: l.rate === '' || l.rate == null ? null : Number(l.rate),
           notes: l.notes || null,
         })),
       });
@@ -156,8 +165,9 @@ export default function GRNForm() {
 
   return (
     <div>
-      <PageHeader title="New GRN" subtitle="Stock will be added on save" />
+      <PageHeader title="New GRN" subtitle="Only the accepted quantity is added to company stock on save" />
       <form onSubmit={save} className="max-w-5xl space-y-5">
+        {(partyLookupError || itemLookupError || poLookupError) && <p role="alert" className="text-sm text-danger-700">Search could not be loaded. Check the connection and try searching again.</p>}
         <FormSection icon={PackageCheck} title="Receipt Details" description="Where the goods came from and when they arrived">
           <div className={styles.formGrid}>
             <FormField id="date" label="Date" required error={show('date')} htmlFor="date">
@@ -171,28 +181,25 @@ export default function GRNForm() {
               <SearchableSelect
                 id="poId"
                 value={form.poId}
+                onSearchChange={searchPOs}
                 onChange={(v) => {
                   set('poId', v);
                   if (v && !poIdParam) {
                     api.get(`/purchase-orders/${v}`).then((r) => {
                       const po = r.data;
+                      includeParties([po.party]);
+                      includeItems(po.lines.map((line) => line.item));
                       setForm((f) => ({
                         ...f,
                         poId: v,
-                        partyId: f.partyId || po.partyId,
-                        lines: po.lines.map((l) => ({
-                          itemId: l.itemId,
-                          poLineId: l.id,
-                          qty: Number(l.qty) - Number(l.qtyReceived),
-                          qtyAccepted: Number(l.qty) - Number(l.qtyReceived),
-                          qtyRejected: 0,
-                          rate: Number(l.rate),
-                          notes: '',
-                        })),
+                        partyId: po.partyId,
+                        lines: outstandingLines(po),
                       }));
                     }).catch(() => {});
                   }
+                  if (!v && !poIdParam) setForm((f) => ({ ...f, poId: '', lines: [emptyLine()] }));
                 }}
+                allowClear={!poIdParam}
                 options={poOptions}
                 placeholder="Select PO…"
                 disabled={!!poIdParam}
@@ -209,9 +216,11 @@ export default function GRNForm() {
               <SearchableSelect
                 id="partyId"
                 value={form.partyId}
+                onSearchChange={searchParties}
                 onChange={(v) => set('partyId', v)}
-                options={parties.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}`, subtitle: p.phone || undefined }))}
+                options={parties.map((p) => ({ value: p.id, label: p.code ? `${p.code} — ${p.name}` : p.name, subtitle: p.phone || undefined }))}
                 placeholder="Select vendor…"
+                disabled={!!form.poId}
                 error={show('partyId')}
                 emptyText="No vendors match"
               />
@@ -224,13 +233,13 @@ export default function GRNForm() {
             <EmptyState
               icon={ListPlus}
               title="No lines yet"
-              description="Add a line for each item received in this consignment."
-              action={{ label: 'Add line', onClick: () => setForm((f) => ({ ...f, lines: [...f.lines, emptyLine()] })), icon: Plus }}
+              description={form.poId ? 'No outstanding lines on this purchase order.' : 'Add a line for each item received in this consignment.'}
+              action={!form.poId ? { label: 'Add line', onClick: () => setForm((f) => ({ ...f, lines: [...f.lines, emptyLine()] })), icon: Plus } : undefined}
             />
           ) : (
             <div className="rounded-lg border border-slate-200">
-              <div className="rounded-t-lg">
-                <table className="min-w-full text-sm">
+              <div className="rounded-t-lg overflow-x-auto">
+                <table className="min-w-[720px] w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50/50">
                       <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Item</th>
@@ -248,14 +257,22 @@ export default function GRNForm() {
                       return (
                         <tr key={i} className="align-top">
                           <td className="px-2 py-2">
-                            <SearchableSelect
-                              id={`line-${i}-item`}
-                              value={l.itemId}
-                              onChange={(v) => setLine(i, { itemId: v })}
-                              options={items.map((it) => ({ value: it.id, label: `${it.code} — ${it.name}` }))}
-                              placeholder="Select item…"
-                              emptyText="No items match"
-                            />
+                            {l.poLineId && !l.itemId ? (
+                              <span className="block min-w-[150px] py-2 text-sm text-slate-700">{l.description || 'Vendor-made part'} <span className="block text-xs text-slate-500">No catalog stock</span></span>
+                            ) : (
+                              <SearchableSelect
+                                id={`line-${i}-item`}
+                                value={l.itemId}
+                                onChange={(v) => setLine(i, { itemId: v })}
+                                options={items.map((it) => ({ value: it.id, label: `${it.code} — ${it.name}` }))}
+                                onSearchChange={searchItems}
+                                placeholder="Select item…"
+                                disabled={!!l.poLineId}
+                                error={show(`line-${i}-item`)}
+                                emptyText="No items match"
+                              />
+                            )}
+                            {show(`line-${i}-item`) && <p role="alert" className={styles.errorText}>{show(`line-${i}-item`)}</p>}
                           </td>
                           <td className="px-2 py-2">
                             <input
@@ -312,15 +329,16 @@ export default function GRNForm() {
                   </tbody>
                 </table>
               </div>
-              <button
+              {!form.poId && <button
                 type="button"
                 className="flex w-full items-center justify-center gap-1.5 rounded-b-lg border-t border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-50 hover:text-brand-600"
                 onClick={() => setForm((f) => ({ ...f, lines: [...f.lines, emptyLine()] }))}
               >
                 <Plus className="h-4 w-4" /> Add line
-              </button>
+              </button>}
             </div>
           )}
+          {submitted && errors.lines && <p role="alert" className={styles.errorText}>{errors.lines}</p>}
         </FormSection>
 
         <div className={styles.actionsBar}>

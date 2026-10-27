@@ -19,7 +19,7 @@ export default function PageHeader({ title, subtitle, action, actions, icon: Ico
               <Icon className="h-4 w-4" />
             </span>
           )}
-          <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
+          <h1 className="break-words text-2xl sm:text-[28px] font-extrabold tracking-tight text-slate-900">{title}</h1>
         </div>
         {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
       </div>

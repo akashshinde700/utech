@@ -73,11 +73,15 @@ function buildLines(lines) {
 // quantity or re-pointed at another invoice's line.
 async function assertReturnableLines(prismaLike, lines, invoice, excludeReturnId = null) {
   const invoiceLineIds = new Set(invoice.lines.map((l) => l.id));
+  const seen = new Set();
   for (const l of lines) {
+    if (seen.has(Number(l.invoiceLineId))) throw new HttpError(400, 'Each source line may appear only once in a return');
+    seen.add(Number(l.invoiceLineId));
     if (!l.invoiceLineId || !invoiceLineIds.has(Number(l.invoiceLineId))) {
       throw new HttpError(400, `Line does not belong to invoice ${invoice.number}`);
     }
     const invoiceLine = invoice.lines.find((il) => il.id === Number(l.invoiceLineId));
+    if ((invoiceLine.itemId || null) !== (l.itemId || null)) throw new HttpError(400, 'Return item must match the original invoice line');
     const priorAgg = await prismaLike.salesReturnLine.aggregate({
       where: {
         invoiceLineId: Number(l.invoiceLineId),
@@ -105,6 +109,7 @@ async function create(req, res) {
     include: { party: true, lines: true }
   });
   if (!invoice) throw new HttpError(404, 'Invoice not found');
+  if (invoice.status === 'CANCELLED') throw new HttpError(400, 'Cannot return a cancelled invoice');
 
   // every returned line must anchor back to a line of THIS invoice, and the
   // cumulative quantity returned (this return + prior ones, ignoring

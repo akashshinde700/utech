@@ -11,6 +11,8 @@ import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
 import { gstRate, positiveNumber, required, validateAll } from '../../lib/validation';
 import { inr, todayLocal } from '../../lib/format';
+import { calculateInvoiceTotals } from '../../lib/invoiceTotals';
+import useRemoteOptions from '../../lib/useRemoteOptions';
 import toast from 'react-hot-toast';
 
 const newLine = () => ({
@@ -36,9 +38,11 @@ export default function InvoiceForm() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  const [parties, setParties] = useState([]);
-  const [items, setItems] = useState([]);
+  const { items: parties, search: searchParties, error: partyLookupError, include: includeParties } = useRemoteOptions('/parties', { type: 'CUSTOMER' });
+  const { items, search: searchItems, error: itemLookupError, include: includeItems } = useRemoteOptions('/items');
   const [saving, setSaving] = useState(false);
+  const [companyStateCode, setCompanyStateCode] = useState(null);
+  const [taxConfigError, setTaxConfigError] = useState(false);
   const [errors, setErrors] = useState({});
   const [lineErrors, setLineErrors] = useState([]);
   const [form, setForm] = useState({
@@ -48,19 +52,20 @@ export default function InvoiceForm() {
   });
 
   useEffect(() => {
-    api.get('/parties', { params: { pageSize: 100 } }).then((r) => setParties(r.data.items));
-    api.get('/items', { params: { pageSize: 200 } }).then((r) => setItems(r.data.items));
+    api.get('/invoices/tax-config').then((r) => setCompanyStateCode(r.data.companyStateCode)).catch(() => setTaxConfigError(true));
   }, []);
 
   useEffect(() => {
     if (!id) return;
     api.get(`/invoices/${id}`).then((r) => {
       const inv = r.data;
+      includeParties([inv.party]);
+      includeItems(inv.lines.map((line) => line.item));
       setForm({
         date: inv.date.slice(0, 10),
         dueDate: inv.dueDate ? inv.dueDate.slice(0, 10) : '',
         partyId: inv.partyId,
-        isIntraState: Number(inv.cgst) > 0,
+        isIntraState: !(Number(inv.igst) > 0),
         discount: Number(inv.discount || 0),
         notes: inv.notes || '',
         termsText: inv.termsText || '',
@@ -71,31 +76,17 @@ export default function InvoiceForm() {
         })),
       });
     });
-  }, [id]);
+  }, [id, includeParties, includeItems]);
 
-  // mirrors backend utils/gst.js: a header discount reduces the TAXABLE value
-  // (spread proportionally across lines); GST is charged on the net, and the
-  // grand total is rounded to the nearest rupee.
-  const totals = useMemo(() => {
-    let subtotal = 0;
-    for (const l of form.lines) subtotal += Number(l.qty || 0) * Number(l.rate || 0);
-    subtotal = Math.round(subtotal * 100) / 100;
-    const disc = Math.min(Number(form.discount || 0), subtotal);
-    const keep = subtotal > 0 ? (subtotal - disc) / subtotal : 1;
-    let gst = 0;
-    for (const l of form.lines) {
-      const net = Number(l.qty || 0) * Number(l.rate || 0) * keep;
-      gst += (net * Number(l.gstRate || 0)) / 100;
-    }
-    gst = Math.round(gst * 100) / 100;
-    const cgst = form.isIntraState ? Math.round((gst / 2) * 100) / 100 : 0;
-    const sgst = form.isIntraState ? Math.round((gst - cgst) * 100) / 100 : 0;
-    const igst = form.isIntraState ? 0 : gst;
-    const taxable = Math.round((subtotal - disc) * 100) / 100;
-    const exact = Math.round((taxable + cgst + sgst + igst) * 100) / 100;
-    const total = Math.round(exact);
-    return { subtotal, taxable, cgst, sgst, igst, roundOff: Math.round((total - exact) * 100) / 100, total };
-  }, [form]);
+  // When company and customer state codes are known, the server enforces the
+  // split. Show that same split before saving instead of a misleading preview.
+  const selectedParty = parties.find((p) => String(p.id) === String(form.partyId));
+  const partyCode = /^\d{2}/.test(selectedParty?.gstin || '') ? selectedParty.gstin.slice(0, 2) : null;
+  const forcedIntra = companyStateCode && partyCode ? companyStateCode === partyCode : null;
+  useEffect(() => {
+    if (forcedIntra !== null) setForm((f) => f.isIntraState === forcedIntra ? f : { ...f, isIntraState: forcedIntra });
+  }, [forcedIntra]);
+  const totals = useMemo(() => calculateInvoiceTotals(form.lines, forcedIntra ?? form.isIntraState, form.discount), [form, forcedIntra]);
 
   function setField(k, v) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -112,7 +103,7 @@ export default function InvoiceForm() {
         lines[i].description = it.name;
         lines[i].hsnCode = it.hsnCode || '';
         lines[i].rate = Number(it.saleRate || 0);
-        lines[i].gstRate = Number(it.gstRate || 18);
+        lines[i].gstRate = Number(it.gstRate ?? 18);
       }
     }
     setForm({ ...form, lines });
@@ -151,10 +142,11 @@ export default function InvoiceForm() {
     const lErrs = form.lines.map((l) => ({
       description: required(l.description, 'Description'),
       qty: positiveNumber(l.qty, 'Qty'),
-      rate: positiveNumber(l.rate, 'Rate'),
+      rate: required(l.rate, 'Rate') || nonNegative(l.rate, 'Rate'),
       gstRate: gstRate(l.gstRate),
     }));
-    if (!ok || lErrs.some((le) => le.description || le.qty || le.rate || le.gstRate)) {
+    if (Number(form.discount || 0) > totals.subtotal) errs.discount = 'Discount cannot exceed the subtotal';
+    if (!ok || errs.discount || lErrs.some((le) => le.description || le.qty || le.rate || le.gstRate)) {
       setErrors(errs);
       setLineErrors(lErrs);
       toast.error('Please fix the highlighted fields');
@@ -191,9 +183,10 @@ export default function InvoiceForm() {
 
   return (
     <div>
-      <PageHeader title={id ? 'Edit invoice' : 'New invoice'} />
+      <PageHeader title={id ? 'Edit invoice' : 'New invoice'} subtitle="Billing does not move stock. Create a dispatch when goods leave the store." />
 
       <form onSubmit={save} noValidate className="max-w-6xl space-y-5">
+        {(partyLookupError || itemLookupError) && <p role="alert" className="text-sm text-danger-700">Search could not be loaded. Check the connection and try searching again.</p>}
         <FormSection icon={ReceiptText} title="Invoice Details" description="Party, dates and GST treatment">
           <div className={styles.formGrid}>
             <FormField id="invoice-date" label="Date" required error={errors.date}>
@@ -221,16 +214,18 @@ export default function InvoiceForm() {
                 value={form.partyId}
                 onChange={(v) => setField('partyId', v)}
                 options={partyOptions}
+                onSearchChange={searchParties}
                 placeholder="Select party…"
                 emptyText="No matching parties"
               />
             </FormField>
-            <FormField id="invoice-gst-type" label="GST Type" className="sm:col-span-2" hint="Auto-set from the customer's GSTIN state when available; otherwise use this">
+            <FormField id="invoice-gst-type" label="GST Type" className="sm:col-span-2" hint={taxConfigError ? 'Tax settings could not be loaded; confirm the split after saving.' : forcedIntra !== null ? 'Automatically set from the company state and customer GSTIN.' : 'Choose the correct split; automatic selection requires a company state code and customer GSTIN.'}>
               <div className="flex flex-wrap gap-4 pt-1.5 text-sm">
                 <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="radio"
                     name="gst-type"
+                    disabled={forcedIntra !== null}
                     className="h-4 w-4 accent-brand-600"
                     checked={form.isIntraState}
                     onChange={() => setField('isIntraState', true)}
@@ -241,6 +236,7 @@ export default function InvoiceForm() {
                   <input
                     type="radio"
                     name="gst-type"
+                    disabled={forcedIntra !== null}
                     className="h-4 w-4 accent-brand-600"
                     checked={!form.isIntraState}
                     onChange={() => setField('isIntraState', false)}
@@ -284,7 +280,7 @@ export default function InvoiceForm() {
                   <th className="table-th w-24">HSN</th>
                   <th className="table-th w-24">Qty</th>
                   <th className="table-th w-28">Rate</th>
-                  <th className="table-th w-20">GST%</th>
+                  <th className="table-th min-w-[100px]">GST%</th>
                   <th className="table-th w-32 text-right">Amount</th>
                   <th className="table-th w-10 rounded-tr-lg"></th>
                 </tr>
@@ -300,6 +296,7 @@ export default function InvoiceForm() {
                             value={l.itemId}
                             onChange={(v) => setLine(i, 'itemId', v)}
                             options={itemOptions}
+                            onSearchChange={searchItems}
                             placeholder="— manual —"
                             emptyText="No matching items"
                             error={lineErrors[i]?.itemId}
@@ -310,6 +307,7 @@ export default function InvoiceForm() {
                         <FormField error={lineErrors[i]?.description}>
                           <input
                             className={`${styles.input} ${lineErrors[i]?.description ? styles.inputError : ''}`}
+                            aria-label={`Line ${i + 1} description`}
                             value={l.description}
                             onChange={(e) => setLine(i, 'description', e.target.value)}
                             aria-invalid={!!lineErrors[i]?.description}
@@ -317,7 +315,7 @@ export default function InvoiceForm() {
                         </FormField>
                       </td>
                       <td className="table-td">
-                        <input className={styles.input} value={l.hsnCode || ''} onChange={(e) => setLine(i, 'hsnCode', e.target.value)} />
+                        <input aria-label={`Line ${i + 1} HSN`} className={styles.input} value={l.hsnCode || ''} onChange={(e) => setLine(i, 'hsnCode', e.target.value)} />
                       </td>
                       <td className="table-td">
                         <FormField error={lineErrors[i]?.qty}>
@@ -325,6 +323,7 @@ export default function InvoiceForm() {
                             type="number"
                             step="0.001"
                             min="0"
+                            aria-label={`Line ${i + 1} quantity`}
                             className={`${styles.input} ${lineErrors[i]?.qty ? styles.inputError : ''}`}
                             value={l.qty}
                             onChange={(e) => setLine(i, 'qty', e.target.value)}
@@ -338,6 +337,7 @@ export default function InvoiceForm() {
                             type="number"
                             step="0.01"
                             min="0"
+                            aria-label={`Line ${i + 1} rate`}
                             className={`${styles.input} ${lineErrors[i]?.rate ? styles.inputError : ''}`}
                             value={l.rate}
                             onChange={(e) => setLine(i, 'rate', e.target.value)}
@@ -352,6 +352,7 @@ export default function InvoiceForm() {
                             step="0.01"
                             min="0"
                             max="28"
+                            aria-label={`Line ${i + 1} GST rate`}
                             className={`${styles.input} ${lineErrors[i]?.gstRate ? styles.inputError : ''}`}
                             value={l.gstRate}
                             onChange={(e) => setLine(i, 'gstRate', e.target.value)}
@@ -399,6 +400,7 @@ export default function InvoiceForm() {
                       value={l.itemId}
                       onChange={(v) => setLine(i, 'itemId', v)}
                       options={itemOptions}
+                      onSearchChange={searchItems}
                       placeholder="— manual —"
                       emptyText="No matching items"
                       error={lineErrors[i]?.itemId}
@@ -470,7 +472,7 @@ export default function InvoiceForm() {
             <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><span className="font-medium">{inr(totals.subtotal)}</span></div>
             {Number(form.discount) > 0 && (
               <>
-                <div className="flex justify-between"><span className="text-slate-500">Discount</span><span className="font-medium text-danger-600">- {inr(form.discount)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Discount</span><span className="font-medium text-danger-600">- {inr(totals.discount)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Taxable Value</span><span className="font-medium">{inr(totals.taxable)}</span></div>
               </>
             )}

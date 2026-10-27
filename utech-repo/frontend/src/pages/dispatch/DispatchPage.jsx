@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Truck, Send, CheckCircle2 } from 'lucide-react';
+import { Plus, Truck, Send, CheckCircle2, RotateCcw } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
 import DataTable from '../../components/ui/DataTable';
 import Pagination from '../../components/ui/Pagination';
 import Badge from '../../components/ui/Badge';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import { useAuth } from '../../store/auth';
+import { hasPermission } from '../../lib/permissions';
 import { date } from '../../lib/format';
 import toast from 'react-hot-toast';
 
@@ -15,6 +18,10 @@ export default function DispatchPage() {
   const [data, setData] = useState({ items: [], pagination: null });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+  const user = useAuth((s) => s.user);
+  const canUpdate = hasPermission(user, 'dispatch.update');
 
   async function load() {
     setLoading(true);
@@ -35,10 +42,12 @@ export default function DispatchPage() {
     try {
       await api.post(`/dispatch/${id}/status/${status}`);
       toast.success(`Challan marked ${status.toLowerCase()}`);
-      load();
+      await load();
+      return true;
     } catch (err) {
       console.error(err);
       toast.error(err.response?.data?.message || 'Failed to update challan status');
+      return false;
     }
   }
 
@@ -67,13 +76,27 @@ export default function DispatchPage() {
           { key: 'status', title: 'Status', render: (r) => <Badge status={r.status}>{r.status}</Badge> },
           { key: '__act', title: '', render: (r) => (
             <div className="flex gap-1 justify-end">
-              {r.status === 'DRAFT' && <button className="btn-secondary !px-2 !py-1" onClick={() => setStatus(r.id, 'DISPATCHED')}><Send className="w-3.5 h-3.5" /> Dispatch</button>}
-              {r.status === 'DISPATCHED' && <button className="btn-secondary !px-2 !py-1" onClick={() => setStatus(r.id, 'DELIVERED')}><CheckCircle2 className="w-3.5 h-3.5" /> Deliver</button>}
+              {canUpdate && r.status === 'DRAFT' && <button className="btn-secondary !px-2 !py-1" onClick={() => setStatus(r.id, 'DISPATCHED')}><Send className="w-3.5 h-3.5" /> Dispatch</button>}
+              {canUpdate && r.status === 'DISPATCHED' && <button className="btn-secondary !px-2 !py-1" onClick={() => setStatus(r.id, 'DELIVERED')}><CheckCircle2 className="w-3.5 h-3.5" /> Deliver</button>}
+              {canUpdate && ['DRAFT', 'DISPATCHED'].includes(r.status) && <button className="btn-secondary !px-2 !py-1 text-danger-700" onClick={() => setCancelTarget(r)}><RotateCcw className="w-3.5 h-3.5" /> Cancel dispatch</button>}
             </div>
           )},
         ]}
       />
       <Pagination pagination={data.pagination} onPage={setPage} />
+      <ConfirmDialog
+        open={!!cancelTarget}
+        title="Cancel dispatch?"
+        message={`Cancelling ${cancelTarget?.number || 'this dispatch'} restores its quantities to company stock. This cannot be undone.`}
+        confirmLabel="Cancel dispatch"
+        loading={cancelling}
+        onClose={() => setCancelTarget(null)}
+        onConfirm={async () => {
+          setCancelling(true);
+          if (await setStatus(cancelTarget.id, 'CANCELLED')) setCancelTarget(null);
+          setCancelling(false);
+        }}
+      />
     </div>
   );
 }

@@ -62,6 +62,8 @@ const NAV_TO_MOUNT = {
   '/dispatch': '/api/dispatch',
   '/items': '/api/items',
   '/boms': '/api/boms',
+  '/production/batches': '/api/production',
+  '/production/shifts': '/api/production',
   '/purchase-orders': '/api/purchase-orders',
   '/grns': '/api/grns',
   '/purchase-returns': '/api/purchase-returns',

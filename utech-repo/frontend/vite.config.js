@@ -6,14 +6,14 @@ import react from '@vitejs/plugin-react';
 // patient than the client.
 const proxy = {
   '/api': {
-    target: 'http://127.0.0.1:4000',
+    target: process.env.API_PROXY_TARGET || 'http://127.0.0.1:4000',
     changeOrigin: true,
     secure: false,
     ws: false,
     timeout: 60000,
   },
   '/uploads': {
-    target: 'http://127.0.0.1:4000',
+    target: process.env.API_PROXY_TARGET || 'http://127.0.0.1:4000',
     changeOrigin: true,
     secure: false,
     ws: false,

@@ -41,6 +41,7 @@ describe('Invoice lifecycle', () => {
   beforeEach(() => {
     getDb().when('party.findUnique', { id: 1, name: 'Acme', stateCode: '27' });
     getDb().when('invoice.create', (args) => ({ id: 11, number: 'INV-26-00001', ...args[0].data }));
+    getDb().when('invoice.updateMany', { count: 1 });
   });
 
   it('creates an invoice with server-computed GST across mixed rates', async () => {
@@ -85,7 +86,7 @@ describe('Invoice lifecycle', () => {
     getDb().when('invoicePayment.aggregate', { _sum: { amount: 0 } });
     const res = await auth(request(app).delete('/api/invoices/11'));
     expect(res.status).toBe(200);
-    expect(getDb().calls('invoice.update')[0][0].data.status).toBe('CANCELLED');
+    expect(getDb().calls('invoice.updateMany')[0][0].data.status).toBe('CANCELLED');
     expect(getDb().calls('partyLedger.deleteMany')).toHaveLength(1);
     expect(getDb().calls('invoice.delete')).toHaveLength(0);
   });
@@ -104,6 +105,7 @@ describe('Invoice payments', () => {
     getDb().when('invoice.findUnique', { id: 11, status: 'ISSUED', total: 1000, amountPaid: 0, partyId: 1, number: 'INV-26-00001' });
     getDb().when('invoicePayment.aggregate', { _sum: { amount: 0 } });
     getDb().when('invoicePayment.create', (args) => ({ id: 1, ...args[0].data }));
+    getDb().when('invoice.updateMany', { count: 1 });
   });
 
   it('rejects an overpayment', async () => {
@@ -120,14 +122,14 @@ describe('Invoice payments', () => {
       date: '2026-01-20', amount: 1000, mode: 'BANK',
     });
     expect(res.status).toBe(200);
-    const upd = getDb().calls('invoice.update')[0][0].data;
+    const upd = getDb().calls('invoice.updateMany')[0][0].data;
     expect(upd.status).toBe('PAID');
     expect(Number(upd.amountPaid)).toBe(1000);
   });
 
   it('marks a partial payment PARTIALLY_PAID', async () => {
     await auth(request(app).post('/api/invoices/11/payments')).send({ date: '2026-01-20', amount: 400, mode: 'CASH' });
-    expect(getDb().calls('invoice.update')[0][0].data.status).toBe('PARTIALLY_PAID');
+    expect(getDb().calls('invoice.updateMany')[0][0].data.status).toBe('PARTIALLY_PAID');
   });
 
   it('refuses a payment on a cancelled invoice', async () => {
@@ -147,6 +149,7 @@ describe('Dispatch challan — stock in / stock out', () => {
   };
 
   beforeEach(() => {
+    getDb().when('party.findUnique', { id: 1, type: 'CUSTOMER' });
     getDb().when('dispatchChallan.create', (args) => ({ id: 21, number: 'DC-26-00001', ...args[0].data }));
     getDb().when('item.findUnique', { id: 5, name: 'Widget', currentStock: 50 });
     // the conditional decrement only "succeeds" when the row matched
@@ -164,6 +167,13 @@ describe('Dispatch challan — stock in / stock out', () => {
     expect(ledger.ownerType).toBe('COMPANY');
   });
 
+  it('refuses to dispatch customer goods to a vendor-only party', async () => {
+    getDb().when('party.findUnique', { id: 1, type: 'VENDOR' });
+    const res = await auth(request(app).post('/api/dispatch')).send(dispatchBody);
+    expect(res.status).toBe(400);
+    expect(getDb().calls('dispatchChallan.create')).toHaveLength(0);
+  });
+
   it('refuses to dispatch more than the stock on hand', async () => {
     getDb().when('item.findUnique', { id: 5, name: 'Widget', currentStock: 3 });
     getDb().when('item.updateMany', { count: 0 });
@@ -177,6 +187,7 @@ describe('Dispatch challan — stock in / stock out', () => {
       id: 21, number: 'DC-26-00001', status: 'DISPATCHED',
       lines: [{ id: 1, itemId: 5, qty: 10 }],
     });
+    getDb().when('dispatchChallan.updateMany', { count: 1 });
     getDb().when('dispatchChallan.update', (args) => ({
       id: 21, number: 'DC-26-00001', ...args[0].data,
       lines: [{ id: 1, itemId: 5, qty: 10 }], // the real update() includes lines
@@ -276,7 +287,7 @@ describe('Sales return — cannot return more than was sold', () => {
     number: 'INV-26-00007',
     partyId: 1,
     party: { id: 1, name: 'Acme' },
-    lines: [{ id: 100, qty: 10, rate: 100, gstRate: 18 }],
+    lines: [{ id: 100, itemId: 5, qty: 10, rate: 100, gstRate: 18 }],
   };
 
   beforeEach(() => {

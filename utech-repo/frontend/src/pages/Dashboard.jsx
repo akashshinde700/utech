@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   TrendingUp, ClipboardCheck, Factory, AlertTriangle,
-  UsersRound, Package, ArrowUpRight, IndianRupee, BarChart3,
-  PieChart, FileText, FilePlus2, Building2
+  UsersRound, Package, IndianRupee, BarChart3,
+  PieChart, FileText, FilePlus2, Building2, CalendarDays, ArrowRight
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar,
@@ -13,7 +13,7 @@ import {
 import api from '../lib/api';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
-import { inr } from '../lib/format';
+import { inr, quantity } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { hasPermission } from '../lib/permissions';
 
@@ -46,19 +46,15 @@ function StatCard({ meta, value, hint }) {
   const Icon = meta.icon;
   const isCurrency = meta.key === 'salesLast30Days';
   return (
-    <div className="card p-5 sm:p-6 hover:shadow-lg transition-all duration-300 animate-slide-up">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">{meta.label}</div>
-          <div className="text-2xl font-bold text-slate-900 tracking-tight tabular-nums">
-            {isCurrency ? inr(value) : Number(value ?? 0).toLocaleString('en-IN')}
-          </div>
-          {hint && <div className="mt-2 text-xs text-slate-400 flex items-center gap-1"><ArrowUpRight className="w-3 h-3" aria-hidden="true" />{hint}</div>}
-        </div>
-        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-full ${meta.color} shadow-sm`} aria-hidden="true">
-          <Icon className="w-5 h-5" />
-        </span>
+    <div className="card-flat p-4 sm:p-5 min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-slate-500">{meta.label}</span>
+        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${meta.color}`} aria-hidden="true"><Icon className="w-4 h-4" /></span>
       </div>
+      <div className="mt-4 text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight tabular-nums break-words">
+        {isCurrency ? inr(value) : Number(value ?? 0).toLocaleString('en-IN')}
+      </div>
+      <div className="mt-1 text-xs text-slate-500 min-h-[1rem]">{hint || '\u00a0'}</div>
     </div>
   );
 }
@@ -67,7 +63,7 @@ function StatCard({ meta, value, hint }) {
 // soft brand circle, small semibold title, muted description line.
 function ChartCard({ title, description, children, icon: Icon }) {
   return (
-    <div className="card-flat p-5 sm:p-6 hover:shadow-lg transition-all duration-300">
+    <div className="card-flat p-5 sm:p-6">
       <div className="flex items-start gap-3 mb-4">
         {Icon && (
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600" aria-hidden="true">
@@ -88,7 +84,7 @@ function ChartCard({ title, description, children, icon: Icon }) {
 
 // slate-400 replaces the old sky-blue fifth slice — chart series stick to the
 // violet/amber/pink/green/slate family the rest of the app uses.
-const PIE_COLORS = ['#8b5cf6', '#fb923c', '#ec4899', '#22c55e', '#94a3b8'];
+const PIE_COLORS = ['#0f766e', '#60a5a0', '#d9a441', '#637a94', '#a9bec7'];
 
 // No-data placeholder inside a chart card's fixed-height body — the shared
 // EmptyState, vertically centered and with slimmer padding than the page-level
@@ -123,9 +119,9 @@ function SalesChart({ data }) {
         <Area
           type="monotone"
           dataKey="sales"
-          stroke="#7c3aed"
-          fill="#8b5cf6"
-          fillOpacity={0.3}
+          stroke="#0f766e"
+          fill="#42b6a1"
+          fillOpacity={0.16}
         />
       </AreaChart>
     </ResponsiveContainer>
@@ -150,8 +146,8 @@ function ProductionChart({ data }) {
             boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
           }}
         />
-        <Bar dataKey="completed" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="planned" fill="#fb923c" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="completed" fill="#42b6a1" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="planned" fill="#d9a441" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -210,13 +206,19 @@ function SkeletonGrid() {
 export default function Dashboard() {
   const user = useAuth((s) => s.user);
   const [data, setData] = useState(null);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    api.get('/dashboard/summary').then((r) => setData(r.data)).catch(() => {});
-  }, []);
+    setError(false);
+    api.get('/dashboard/summary').then((r) => setData(r.data)).catch(() => setError(true));
+  }, [attempt]);
 
   const quickActions = QUICK_ACTIONS.filter((a) => hasPermission(user, a.perm));
 
+  if (error) {
+    return <div><PageHeader title="Smart Dashboard" subtitle="Manufacturing overview" /><div role="alert" className="card-flat p-6 text-sm text-slate-700">Could not load the dashboard. <button type="button" className="ml-2 font-bold text-brand-700 underline" onClick={() => setAttempt((n) => n + 1)}>Try again</button></div></div>;
+  }
   if (!data) {
     return (
       <div>
@@ -237,32 +239,37 @@ export default function Dashboard() {
     );
   }
 
+  const today = new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date());
+  const lowStockItems = data.lowStockItems || [];
+
   return (
-    <div className="animate-fade-in space-y-8">
-      <PageHeader title="Smart Dashboard" subtitle="Real-time manufacturing insights & analytics" />
+    <div className="animate-fade-in space-y-7">
+      <PageHeader title="Smart Dashboard" subtitle="Your manufacturing workspace, at a glance"
+        action={<div className="flex items-center gap-2 text-xs font-semibold text-slate-500"><CalendarDays className="h-4 w-4" aria-hidden="true" />{today}</div>} />
 
-      {/* Quick actions — existing routes, hidden when the role can't create */}
-      {quickActions.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {quickActions.map((a) => (
-            <Link key={a.to} to={a.to} className="btn-primary">
-              <a.icon className="w-4 h-4" aria-hidden="true" /> {a.label}
-            </Link>
-          ))}
+      <section className="relative overflow-hidden rounded-2xl bg-[#153443] px-6 py-6 sm:px-8 sm:py-7 text-white">
+        <div className="relative z-10 flex flex-wrap items-end justify-between gap-5">
+          <div>
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.13em] text-[#8bd8c9]"><span className="h-2 w-2 rounded-full bg-[#5fd3b6]" /> Operations overview</div>
+            <h2 className="mt-3 text-xl sm:text-2xl font-bold tracking-tight">Welcome back, {user?.name?.split(' ')[0] || 'there'}.</h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">Keep an eye on sales, production and inventory — all in one place.</p>
+          </div>
+          {hasPermission(user, 'stock.read') && <Link to="/stock" className="inline-flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-white/20">View stock overview <ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>}
         </div>
-      )}
+        <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-24 h-64 w-64 rounded-full border-[36px] border-white/[0.035]" />
+      </section>
 
-      {/* Key Metrics — collapses to a single column on mobile */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {STAT_META.map((meta) => (
-          <StatCard
-            key={meta.key}
-            meta={meta}
-            value={data[meta.key]}
-            hint={meta.hintKey ? meta.hintFmt(data[meta.hintKey]) : meta.hint}
-          />
-        ))}
-      </div>
+      <section>
+        <div className="mb-3 flex items-end justify-between gap-3"><div><h2 className="text-base font-bold text-slate-900">At a glance</h2><p className="mt-1 text-xs text-slate-500">A snapshot of your business today</p></div></div>
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          {STAT_META.map((meta) => <StatCard key={meta.key} meta={meta} value={data[meta.key]} hint={meta.hintKey ? meta.hintFmt(data[meta.hintKey]) : meta.hint} />)}
+        </div>
+      </section>
+
+      {quickActions.length > 0 && <section className="flex flex-wrap items-center gap-2">
+        <span className="mr-2 text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Quick actions</span>
+        {quickActions.map((a, index) => <Link key={a.to} to={a.to} className={index === 0 ? 'btn-primary' : 'btn-secondary'}><a.icon className="w-4 h-4" aria-hidden="true" /> {a.label}</Link>)}
+      </section>}
 
       {/* Analytics Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -280,7 +287,7 @@ export default function Dashboard() {
       </div>
 
       {/* Low Stock Alert */}
-      <div className="card p-6">
+      <div className="card-flat p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-xl bg-danger-50 text-danger-600 flex items-center justify-center" aria-hidden="true">
             <AlertTriangle className="w-5 h-5" />
@@ -290,12 +297,12 @@ export default function Dashboard() {
             <div className="text-sm text-slate-500">Items below minimum stock levels</div>
           </div>
           <div className="text-right">
-            <div className="text-2xl font-bold text-danger-600 tabular-nums">{data.lowStockItems.length}</div>
+            <div className="text-2xl font-bold text-danger-600 tabular-nums">{lowStockItems.length}</div>
             <div className="text-xs text-slate-500">items need attention</div>
           </div>
         </div>
 
-        {data.lowStockItems.length === 0 ? (
+        {lowStockItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-slate-400">
             <Package className="w-12 h-12 mb-3 opacity-30" aria-hidden="true" />
             <p className="text-sm font-medium">All inventory levels are optimal</p>
@@ -313,12 +320,12 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {data.lowStockItems.map((it) => (
+                {lowStockItems.map((it) => (
                   <tr key={it.id} className="hover:bg-danger-50/30 transition-colors">
                     <td className="table-td font-semibold text-slate-800">{it.code}</td>
                     <td className="table-td">{it.name}</td>
-                    <td className="table-td text-right font-semibold text-danger-600 tabular-nums">{Number(it.currentStock).toFixed(2)}</td>
-                    <td className="table-td text-right text-slate-500 tabular-nums">{Number(it.minStock).toFixed(2)}</td>
+                    <td className="table-td text-right font-semibold text-danger-600 tabular-nums">{quantity(it.currentStock)}</td>
+                    <td className="table-td text-right text-slate-500 tabular-nums">{quantity(it.minStock)}</td>
                   </tr>
                 ))}
               </tbody>

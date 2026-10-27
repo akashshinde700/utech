@@ -120,22 +120,22 @@ async function receive(req, res) {
     // material and company stock inflates out of thin air
     for (const upd of lines) {
       const line = challan.lines.find((l) => l.id === upd.id);
-      const newReceived = Number(line.qtyReceived) + Number(upd.qtyReceived || 0);
-      const newRejected = Number(line.qtyRejected) + Number(upd.qtyRejected || 0);
-      if (newReceived + newRejected > Number(line.qtySent)) {
+      const newReceived = stockService.roundQuantity(Number(line.qtyReceived) + Number(upd.qtyReceived || 0));
+      const newRejected = stockService.roundQuantity(Number(line.qtyRejected) + Number(upd.qtyRejected || 0));
+      if (stockService.roundQuantity(newReceived + newRejected) > Number(line.qtySent)) {
         throw new HttpError(400, `Line ${line.id}: received (${newReceived}) + rejected (${newRejected}) exceeds the qty sent (${Number(line.qtySent)})`);
       }
     }
 
     let allResolved = true;
-    let anyRejected = false;
+    let anyRejected = challan.lines.some((line) => Number(line.qtyRejected) > 0);
     const applied = new Map(); // lineId -> { qtyReceived, qtyRejected } after this batch
     for (const upd of lines) {
       const line = challan.lines.find((l) => l.id === upd.id);
       const qtyReceived = Number(upd.qtyReceived || 0);
       const qtyRejected = Number(upd.qtyRejected || 0);
-      const newReceived = Number(line.qtyReceived) + qtyReceived;
-      const newRejected = Number(line.qtyRejected) + qtyRejected;
+      const newReceived = stockService.roundQuantity(Number(line.qtyReceived) + qtyReceived);
+      const newRejected = stockService.roundQuantity(Number(line.qtyRejected) + qtyRejected);
       await tx.jobworkLine.update({
         where: { id: line.id },
         data: { qtyReceived: newReceived, qtyRejected: newRejected },
@@ -195,7 +195,7 @@ async function receive(req, res) {
       const a = applied.get(l.id);
       const received = a ? a.qtyReceived : Number(l.qtyReceived);
       const rejected = a ? a.qtyRejected : Number(l.qtyRejected);
-      return received + rejected >= Number(l.qtySent);
+      return stockService.roundQuantity(received + rejected) >= Number(l.qtySent);
     });
 
     const newStatus = allResolved ? (anyRejected ? 'REJECTED' : 'RECEIVED') : 'PARTIAL_RECEIVED';
@@ -229,7 +229,7 @@ async function remove(req, res) {
 
     // reverse whatever is still outstanding (sent but not yet received/rejected)
     for (const line of challan.lines) {
-      const outstanding = Number(line.qtySent) - Number(line.qtyReceived) - Number(line.qtyRejected);
+      const outstanding = stockService.roundQuantity(Number(line.qtySent) - Number(line.qtyReceived) - Number(line.qtyRejected));
       if (outstanding <= 0) continue;
       if (isCustomerOwned) {
         await stockService.moveCustomerMaterial({

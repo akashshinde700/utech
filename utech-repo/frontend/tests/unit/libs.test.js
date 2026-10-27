@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { quantity } from '../../src/lib/format';
 import { hasPermission, allowedKinds, writablePartyTypes } from '../../src/lib/permissions';
 import {
   required, email, phone10, normalizePhone, gstin, pincode,
@@ -163,5 +164,14 @@ describe('validation.validateAll', () => {
     };
     expect(validateAll({ password: 'x', confirm: 'y' }, schema).ok).toBe(false);
     expect(validateAll({ password: 'x', confirm: 'x' }, schema).ok).toBe(true);
+  });
+});
+
+
+describe('inventory quantity formatting', () => {
+  it('keeps millesimal balances visible', () => {
+    expect(quantity(0.001)).toBe('0.001');
+    expect(quantity(12.345)).toBe('12.345');
+    expect(quantity(10)).toBe('10');
   });
 });

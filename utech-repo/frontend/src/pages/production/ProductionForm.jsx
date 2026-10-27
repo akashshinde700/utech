@@ -98,7 +98,8 @@ export default function ProductionForm() {
     setMaterials(response.items.map((i) => ({
       itemId: i.itemId,
       qtyPlanned: i.qty,
-      qtyConsumed: 0,
+      qtyConsumed: Number(i.qty),
+      _autoConsumed: true,
       uomCode: i.uomCode,
       notes: i.notes,
     })));
@@ -129,12 +130,14 @@ export default function ProductionForm() {
   }
 
   function addMaterial() {
-    setMaterials([...materials, { itemId: '', qtyPlanned: 0, qtyConsumed: 0, uomCode: '', notes: '' }]);
+    setMaterials([...materials, { itemId: '', qtyPlanned: 0, qtyConsumed: 0, _autoConsumed: true, uomCode: '', notes: '' }]);
   }
 
   function updateMaterial(index, field, value) {
     const updated = [...materials];
-    updated[index][field] = value;
+    updated[index] = { ...updated[index], [field]: value };
+    if (field === 'qtyPlanned' && updated[index]._autoConsumed) updated[index].qtyConsumed = value;
+    if (field === 'qtyConsumed') updated[index]._autoConsumed = false;
     setMaterials(updated);
     setRowErrors((errs) => {
       const key = `m${index}_${field}`;
@@ -285,6 +288,10 @@ export default function ProductionForm() {
   }
 
   const rowError = (idx, field) => rowErrors[`m${idx}_${field}`] || null;
+  const unsavedConsumption = isEdit && materials.some((m) => {
+    const saved = data?.materialConsumptions?.find((row) => row.id === m.id);
+    return saved && String(m.qtyConsumed) !== String(saved.qtyConsumed);
+  });
 
   return (
     <div>
@@ -428,7 +435,7 @@ export default function ProductionForm() {
         <FormSection
           icon={Package}
           title="Material Consumption"
-          description={isEdit ? 'Only consumed quantities can be edited after creation' : 'Select a BOM to auto-load materials, or add rows manually'}
+          description={isEdit ? 'Save each actual consumed quantity before completing. Completion deducts it from stock; zero means none.' : 'Select a BOM or add materials. Consumed defaults to planned; enter the actual quantity used.'}
           actions={
             !isEdit && (
               <button type="button" onClick={addMaterial} className={styles.secondaryBtn}>
@@ -493,7 +500,7 @@ export default function ProductionForm() {
                       aria-label={`UoM for material ${idx + 1}`}
                       className={styles.input}
                       placeholder="UoM"
-                      value={material.uomCode}
+                      value={material.uomCode ?? ''}
                       onChange={(e) => updateMaterial(idx, 'uomCode', e.target.value)}
                       readOnly={isEdit}
                     />
@@ -503,7 +510,7 @@ export default function ProductionForm() {
                       aria-label={`Notes for material ${idx + 1}`}
                       className={styles.input}
                       placeholder="Notes"
-                      value={material.notes}
+                      value={material.notes ?? ''}
                       onChange={(e) => updateMaterial(idx, 'notes', e.target.value)}
                       readOnly={isEdit}
                     />
@@ -525,6 +532,7 @@ export default function ProductionForm() {
             </div>
           )}
 
+          {unsavedConsumption && <p role="status" className="mt-3 text-sm text-warning-700">Save each changed consumed quantity before completing the batch.</p>}
           <div className={styles.actionsBar}>
             <div className="flex gap-2 sm:mr-auto">
               {isEdit && data?.status === 'PLANNED' && (
@@ -533,7 +541,8 @@ export default function ProductionForm() {
                 </button>
               )}
               {isEdit && data?.status === 'IN_PROGRESS' && (
-                <button type="button" onClick={openComplete} className={styles.secondaryBtn}>
+                <button type="button" onClick={openComplete} className={styles.secondaryBtn} disabled={unsavedConsumption}
+                  title={unsavedConsumption ? 'Save each changed consumed quantity first' : undefined}>
                   <Check className="h-4 w-4" aria-hidden="true" /> Complete
                 </button>
               )}

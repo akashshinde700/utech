@@ -27,7 +27,7 @@ const updateInvoiceSchema = z.object({ ...baseInvoice }).partial();
 
 const paymentSchema = z.object({
   date: z.coerce.date(),
-  amount: z.number().positive(),
+  amount: z.number().positive().refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-7, 'Amount must have at most two decimal places'),
   mode: z.enum(['CASH', 'BANK', 'UPI', 'CHEQUE']).default('CASH'),
   reference: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),

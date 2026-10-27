@@ -30,7 +30,7 @@ beforeEach(() => {
   token = signInAs(makeUser({ id: 1, role: 'SUPERADMIN' }));
   getDb().when('party.findUnique', { id: 1, name: 'Acme', gstin: '27AAAAA0000A1Z5' });
   getDb().when('invoice.create', (args) => ({ id: 11, number: 'INV-26-00001', ...args[0].data }));
-  getDb().when('invoice.update', (args) => ({ id: 11, ...args[0].data }));
+  getDb().when('invoice.updateMany', { count: 1 });
   getDb().when('invoice.findUnique', {
     id: 11, number: 'INV-26-00001', status: 'ISSUED', partyId: 1, amountPaid: 0, total: 0,
     igst: 0, discount: 0,
@@ -118,7 +118,7 @@ describe('invoice totals — pieces, weight and lot charge in one document', () 
       date: '2026-04-02', partyId: 1, isIntraState: true, lines: MIXED,
     });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    const d = getDb().calls('invoice.update')[0][0].data;
+    const d = getDb().calls('invoice.updateMany')[0][0].data;
     expect(Number(d.subtotal)).toBe(7456);
     expect(Number(d.cgst)).toBe(671.04);
     expect(Number(d.sgst)).toBe(671.04);

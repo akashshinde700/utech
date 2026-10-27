@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import App from './App.jsx';
+import '@fontsource-variable/manrope';
 import './styles.css';
 
 // Last line of defense: a render-time exception anywhere in the tree would

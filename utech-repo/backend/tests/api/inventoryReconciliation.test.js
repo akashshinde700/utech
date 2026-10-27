@@ -213,6 +213,15 @@ describe('company stock ledger reconciliation (independent calculation)', () => 
 // ---------------------------------------------------------------------------
 
 describe('inward lot remaining quantity across multiple job cards/challans', () => {
+  it('handles three-decimal balances without floating-point shortages', async () => {
+    const { tx } = makeStatefulTx({ lotQtyIn: { 77: 0.3 } });
+    await stockService.moveCustomerMaterial({ tx, lotId: 77, refType: 'CUSTOMER_CONSUMPTION', qtyOut: 0.1 });
+    expect(await stockService.getCustomerLotAvailableQty(tx, 77)).toBe(0.2);
+    const movement = await stockService.moveCustomerMaterial({ tx, lotId: 77, refType: 'CUSTOMER_CONSUMPTION', qtyOut: 0.2 });
+    expect(movement.balance).toBe(0);
+    await expect(stockService.moveCustomerMaterial({ tx, lotId: 77, refType: 'CUSTOMER_CONSUMPTION', qtyOut: 0.001 })).rejects.toThrow(/Insufficient quantity/);
+  });
+
   it('two challans + partial receives + disposition keep lot balance exact', async () => {
     // CML lot 77 received 100 pcs
     const { tx, ledger } = makeStatefulTx({ lotQtyIn: { 77: 0 } });

@@ -2,6 +2,20 @@
 const HttpError = require('../utils/httpError');
 const { audit } = require('../utils/audit');
 
+// Stock columns store three decimal places. Use scaled rounding to avoid binary
+// floating-point artifacts in derived balances (e.g. 0.3 - 0.1).
+const roundQuantity = (n) => Math.round(Number(n) * 1000) / 1000;
+
+// Stock columns store three decimal places. Reject silent database rounding or
+// malformed quantities rather than making the ledger disagree with the action.
+function validateMovement(qtyIn, qtyOut) {
+  for (const qty of [qtyIn, qtyOut]) {
+    if (!Number.isFinite(qty) || qty < 0 || Math.abs(qty * 1000 - Math.round(qty * 1000)) > 1e-7) {
+      throw new HttpError(400, 'Stock quantities must be non-negative and have at most three decimal places');
+    }
+  }
+}
+
 // The single place that reads/writes Item.currentStock and writes StockLedger
 // rows for company-owned stock. Every company-stock movement in the app must
 // go through here — this is what makes "company stock never mixes with
@@ -12,8 +26,9 @@ async function moveCompanyStock({
   tx, itemId, date = new Date(), refType, refId = null, qtyIn = 0, qtyOut = 0,
   notes = null, allowNegative = false, req = null, auditAction = null, auditEntity = null, skipAudit = false,
 }) {
-  const inQty = Number(qtyIn) || 0;
-  const outQty = Number(qtyOut) || 0;
+  const inQty = Number(qtyIn);
+  const outQty = Number(qtyOut);
+  validateMovement(inQty, outQty);
 
   // The pre-read is only for the 404 / error message — the stock mutation below
   // is a conditional atomic updateMany, so two concurrent moves can never both
@@ -43,7 +58,7 @@ async function moveCompanyStock({
   const fresh = inQty > 0 || outQty > 0
     ? await tx.item.findUnique({ where: { id: itemId }, select: { currentStock: true } })
     : item;
-  const balance = Number(fresh.currentStock);
+  const balance = roundQuantity(fresh.currentStock);
 
   const ledger = await tx.stockLedger.create({
     data: {
@@ -67,7 +82,7 @@ async function getCustomerLotAvailableQty(tx, lotId) {
     where: { customerMaterialLotId: lotId },
     _sum: { qtyIn: true, qtyOut: true },
   });
-  return Number(agg._sum.qtyIn || 0) - Number(agg._sum.qtyOut || 0);
+  return roundQuantity(Number(agg._sum.qtyIn || 0) - Number(agg._sum.qtyOut || 0));
 }
 
 // The customer-material analog of moveCompanyStock — never touches
@@ -75,11 +90,12 @@ async function getCustomerLotAvailableQty(tx, lotId) {
 async function moveCustomerMaterial({
   tx, lotId, date = new Date(), refType, refId = null, qtyIn = 0, qtyOut = 0, notes = null,
 }) {
+  validateMovement(Number(qtyIn), Number(qtyOut));
   const lot = await tx.customerMaterialLot.findUnique({ where: { id: lotId } });
   if (!lot) throw new HttpError(404, `Customer material lot ${lotId} not found`);
 
   const available = await getCustomerLotAvailableQty(tx, lotId);
-  const balance = available + Number(qtyIn) - Number(qtyOut);
+  const balance = roundQuantity(available + Number(qtyIn) - Number(qtyOut));
   if (balance < 0) {
     throw new HttpError(400, `Insufficient quantity on lot ${lot.inwardNumber} (available ${available}, needed ${qtyOut})`);
   }
@@ -104,4 +120,4 @@ async function getLowStockItems(db, { take } = {}) {
   return take ? low.slice(0, take) : low;
 }
 
-module.exports = { moveCompanyStock, moveCustomerMaterial, getCustomerLotAvailableQty, getLowStockItems };
+module.exports = { moveCompanyStock, moveCustomerMaterial, getCustomerLotAvailableQty, getLowStockItems, roundQuantity };

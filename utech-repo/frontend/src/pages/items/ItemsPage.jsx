@@ -7,7 +7,7 @@ import DataTable from '../../components/ui/DataTable';
 import Pagination from '../../components/ui/Pagination';
 import EmptyState from '../../components/ui/EmptyState';
 import { styles } from '../../lib/formStyles';
-import { inr } from '../../lib/format';
+import { inr, quantity } from '../../lib/format';
 import toast from 'react-hot-toast';
 
 export default function ItemsPage() {
@@ -91,7 +91,7 @@ export default function ItemsPage() {
             { key: 'type', title: 'Type' },
             { key: 'hsnCode', title: 'HSN' },
             { key: 'uom', title: 'UOM', render: (r) => r.uom?.code || '—' },
-            { key: 'currentStock', title: 'Stock', render: (r) => `${Number(r.currentStock).toFixed(2)} (min ${Number(r.minStock).toFixed(2)})` },
+            { key: 'currentStock', title: 'Stock', render: (r) => `${quantity(r.currentStock)} (min ${quantity(r.minStock)})` },
             { key: 'saleRate', title: 'Sale Rate', render: (r) => inr(r.saleRate) },
             { key: 'gstRate', title: 'GST%', render: (r) => `${Number(r.gstRate || 0).toFixed(0)}%` },
           ]}

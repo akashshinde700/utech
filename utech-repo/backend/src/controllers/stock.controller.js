@@ -38,7 +38,7 @@ async function summary(_req, res) {
     }),
     prisma.productionBatch.count({ where: { status: 'IN_PROGRESS' } }),
     prisma.customerMaterialLot.count({ where: { status: 'IN_PROCESS' } }),
-    stockService.getLowStockItems(prisma, { take: 10 }),
+    stockService.getLowStockItems(prisma),
     prisma.gRN.count({ where: { createdAt: { gte: startOfDay } } }),
     prisma.customerMaterialLot.count({ where: { createdAt: { gte: startOfDay } } }),
     prisma.dispatchChallan.count({ where: { createdAt: { gte: startOfDay } } }),
@@ -84,7 +84,7 @@ async function summary(_req, res) {
     },
     materialAtVendor,
     materialInProcess: productionInProgress + customerInProcessLots,
-    lowStockItems,
+    lowStockItems: lowStockItems.slice(0, 10),
     todayInward: todayGrnCount + todayCustomerInwardCount,
     todayOutward: todayDispatchCount + todayVendorDispatchCount,
     // No allocation/reservation flow exists anywhere in the app today (no sales
@@ -101,8 +101,20 @@ async function ledger(req, res) {
   if (req.query.customerMaterialLotId) where.customerMaterialLotId = parseInt(req.query.customerMaterialLotId, 10);
   if (req.query.from || req.query.to) {
     where.date = {};
-    if (req.query.from) where.date.gte = new Date(req.query.from);
-    if (req.query.to) where.date.lte = new Date(req.query.to);
+    if (req.query.from) {
+      const from = new Date(req.query.from);
+      if (!Number.isFinite(from.getTime())) throw new HttpError(400, 'Invalid start date');
+      where.date.gte = from;
+    }
+    if (req.query.to) {
+      const to = new Date(req.query.to);
+      if (!Number.isFinite(to.getTime())) throw new HttpError(400, 'Invalid end date');
+      // HTML date inputs specify a whole day; include the end date's times too.
+      if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.to)) {
+        to.setUTCDate(to.getUTCDate() + 1);
+        where.date.lt = to;
+      } else where.date.lte = to;
+    }
   }
   const rows = await prisma.stockLedger.findMany({
     where,
@@ -110,7 +122,8 @@ async function ledger(req, res) {
       item: { select: { id: true, name: true, code: true } },
       customerMaterialLot: { select: { id: true, inwardNumber: true, materialDescription: true } },
     },
-    orderBy: { date: 'desc' },
+    // The balance is calculated when posted, not by the document's date.
+    orderBy: { id: 'desc' },
     take: 500,
   });
   res.json(rows);
