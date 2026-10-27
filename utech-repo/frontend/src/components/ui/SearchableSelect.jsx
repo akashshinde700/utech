@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Loader2, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Plus, Search, X } from 'lucide-react';
 import { styles } from '../../lib/formStyles';
 import useClickOutside from '../../lib/useClickOutside';
 
@@ -19,6 +19,9 @@ const same = (a, b) => String(a) === String(b);
 //   loading               shows a spinner row while options load
 //   allowClear            show the × clear button (default true)
 //   emptyText             text when the filter matches nothing
+//   onCreate(query)       optional footer action to create a new option from
+//                         the current filter text (e.g. quick-add an item)
+//   createLabel           label for that action when the filter is empty
 //   className / id        wrapper class + ARIA/id wiring
 export default function SearchableSelect({
   value,
@@ -33,6 +36,8 @@ export default function SearchableSelect({
   className = '',
   id,
   onSearchChange,
+  onCreate,
+  createLabel = 'Add new',
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -42,6 +47,7 @@ export default function SearchableSelect({
   const menuRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
+  const createButtonRef = useRef(null);
   const optionRefs = useRef([]);
   const reactId = useId();
   const baseId = id || `sselect-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -173,9 +179,19 @@ export default function SearchableSelect({
     }
   }, [activeIndex, open]);
 
+  const showCreate = !disabled && typeof onCreate === 'function';
+
   const commit = (option) => {
     onChange(option.value);
     setOpen(false);
+  };
+
+  // Hand the unmatched search text to the owning form so it can prefill a
+  // quick-create dialog. Closing first also removes the table-portaled menu
+  // before a modal (with a higher focus layer) is mounted.
+  const openCreate = () => {
+    setOpen(false);
+    onCreate(query.trim());
   };
 
   const clear = (e) => {
@@ -207,12 +223,21 @@ export default function SearchableSelect({
         openPopover();
       } else if (filtered[activeIndex]) {
         commit(filtered[activeIndex]);
+      } else if (showCreate) {
+        openCreate();
       }
     } else if (e.key === 'Escape') {
       // normally handled (and stopped) by the capture listener above while open
       if (open) setOpen(false);
     } else if (e.key === 'Tab') {
-      setOpen(false);
+      // Keep the create action reachable from the filter input. Without this,
+      // unmounting the menu on Tab makes the footer button keyboard-inaccessible.
+      if (open && !e.shiftKey && showCreate && document.activeElement === inputRef.current) {
+        e.preventDefault();
+        createButtonRef.current?.focus();
+      } else {
+        setOpen(false);
+      }
     }
   };
 
@@ -293,6 +318,30 @@ export default function SearchableSelect({
               })
             )}
           </ul>
+          {showCreate && (
+            <button
+              ref={createButtonRef}
+              type="button"
+              className="flex w-full items-center gap-2 rounded-b-lg border-t border-slate-100 px-3 py-2.5 text-left text-sm font-medium text-brand-700 transition hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500/30"
+              // prevent the filter input from blurring before the click lands
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={openCreate}
+              onKeyDown={(e) => {
+                if (e.key !== 'Tab') return;
+                if (e.shiftKey) {
+                  e.preventDefault();
+                  inputRef.current?.focus({ preventScroll: true });
+                } else {
+                  setOpen(false);
+                }
+              }}
+            >
+              <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">
+                {query.trim() ? `Create "${query.trim()}"` : createLabel}
+              </span>
+            </button>
+          )}
         </div>
   ) : null;
 
