@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 const lineSchema = z.object({
   id: z.number().int().optional(),
@@ -36,12 +37,16 @@ const baseJobcard = {
 };
 
 const createJobcardSchema = z.object(baseJobcard);
-const updateJobcardSchema = z.object({
+// partialNoDefaults, NOT .partial(): Zod v4 would otherwise re-inject
+// `lines: []` / `operations: []` for keys the form did not send, and a sent
+// `operations` array means "replace all" downstream — the exact AUD-201
+// data-loss path. Omitted keys must stay undefined.
+const updateJobcardSchema = partialNoDefaults(z.object({
   ...baseJobcard,
   status: z.enum(['DRAFT', 'IN_PROGRESS', 'ON_HOLD', 'REVERTED', 'COMPLETED', 'CANCELLED']).optional(),
   qtyProduced: z.number().nonnegative().optional(),
   qtyRejected: z.number().nonnegative().optional(),
-}).partial();
+}));
 
 const revertSchema = z.object({ reason: z.string().min(2) });
 

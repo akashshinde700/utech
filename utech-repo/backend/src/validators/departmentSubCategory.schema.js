@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 const subCategoryBase = {
   departmentId: z.number().int(),
@@ -10,6 +11,6 @@ const subCategoryBase = {
 };
 
 const createSubCategorySchema = z.object(subCategoryBase);
-const updateSubCategorySchema = z.object(subCategoryBase).partial();
+const updateSubCategorySchema = partialNoDefaults(z.object(subCategoryBase));
 
 module.exports = { createSubCategorySchema, updateSubCategorySchema };

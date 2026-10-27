@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 const partyBase = {
   name: z.string().min(2),
@@ -30,6 +31,6 @@ const partyBase = {
 };
 
 const createPartySchema = z.object(partyBase);
-const updatePartySchema = z.object(partyBase).partial();
+const updatePartySchema = partialNoDefaults(z.object(partyBase));
 
 module.exports = { createPartySchema, updatePartySchema };

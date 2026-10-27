@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 // the controller calls name.trim() — a non-string name used to throw a 500
 const templateBase = {
@@ -14,6 +15,6 @@ const templateBase = {
 };
 
 const createTemplateSchema = z.object(templateBase);
-const updateTemplateSchema = z.object(templateBase).partial();
+const updateTemplateSchema = partialNoDefaults(z.object(templateBase));
 
 module.exports = { createTemplateSchema, updateTemplateSchema };

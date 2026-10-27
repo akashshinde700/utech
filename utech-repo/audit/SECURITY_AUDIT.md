@@ -1,6 +1,6 @@
 # UTech ERP — Security Audit
 
-**Date:** 2026-10-17 · **Reference:** OWASP Top 10 (2021), OWASP ASVS v4.0 level 1–2
+**Date:** 2026-10-17 (A06 updated 2026-10-27) · **Reference:** OWASP Top 10 (2021), OWASP ASVS v4.0 level 1–2
 **Method:** executed authorization matrix (233 endpoints) + source review. Where a
 statement comes from reading code rather than running it, it is marked **static review**.
 
@@ -113,9 +113,9 @@ a live database.
 | A03 | Injection | **Pass.** Every data access goes through Prisma parameterised queries. The only raw SQL is in `utils/numbering.js` and uses tagged templates (`tx.$queryRaw\`… ${key}\``), which are parameterised. Sort columns are whitelisted per route (`parseListQuery`), asserted with `sortBy=;DROP`. No `dangerouslySetInnerHTML`/`eval`/`innerHTML` in the frontend. Tally XML escapes every interpolated value |
 | A04 | Insecure design | **Pass with note.** Money and stock are recomputed server-side and client-supplied totals are ignored (executed). Stock moves go through one service that writes a ledger row in the same transaction. Note: 28 write routes still take an unvalidated body (AUD-115) |
 | A05 | Security misconfiguration | **Pass.** Helmet defaults confirmed by measuring real response headers — see §6. `NODE_ENV=production` disables debug output and switches morgan to `combined`. No debug endpoints. `/health` is trivial |
-| A06 | Vulnerable components | **NOT ASSESSED.** `npm audit` needs the registry advisory endpoint, which is unreachable from this sandbox; semgrep/CodeQL are not installed and cannot be fetched |
+| A06 | Vulnerable components | **Pass (2026-10-27).** The registry scan was executed: backend 16 advisories (3 critical / 8 high / 5 moderate) and frontend 21 (2 critical / 10 high / 8 moderate / 1 low) were found and all resolved — 0 / 0 today, on prod and dev dependency trees. `xlsx` (no registry fix exists) and the unused `nodemailer` were removed; zod 4, vitest 5, vite 8, axios, react-router 7 and targeted overrides bring the rest onto patched lines. Full table: [`HARDENING_2026-10-27.md`](./HARDENING_2026-10-27.md) |
 | A07 | Authentication failures | **Pass.** See §2 |
-| A08 | Integrity failures | **Pass.** No `eval`, no deserialisation of untrusted input, no dynamic `require`. `xlsx` 0.18.5 is the SheetJS npm build — note the upstream project now publishes to its own CDN and the npm copy has known advisories; **verify against a real advisory scan** |
+| A08 | Integrity failures | **Pass.** No `eval`, no deserialisation of untrusted input, no dynamic `require`. `xlsx` 0.18.5 has been **removed** — the abandoned npm build carried two unfixable high advisories, and the ERP only writes workbooks (now exceljs) |
 | A09 | Logging & monitoring | **Partial.** `utils/audit.js` writes an `AuditLog` row for sensitive actions and never breaks the request. `morgan` logs HTTP. **Gaps:** no error-reporting service (Sentry or similar) is configured, so a 500 in production is only visible in stdout; audit coverage is uneven — the newer controllers call `audit()`, several older ones do not |
 | A10 | SSRF | **Pass.** `POST /api/tally/sync` accepts a URL, and `assertAllowedTallyEndpoint` restricts it to http/https on a private-LAN host or the configured `TALLY_ENDPOINT` — reviewed and unit-reasonable. `GET /api/parties/lookup/ifsc/:code` validates the IFSC format and interpolates only into a fixed host |
 

@@ -49,7 +49,10 @@ module.exports = function errorHandler(err, _req, res, _next) {
 
   // Zod
   if (err && err.name === 'ZodError') {
-    const details = err.errors.map((e) => ({
+    // Zod v4 dropped the `.errors` alias in favour of `.issues`; read both so a
+    // library bump can never turn every validation failure into a 500.
+    const issues = err.issues || err.errors || [];
+    const details = issues.map((e) => ({
       path: e.path.join('.'),
       label: prettifyPath(e.path),
       message: e.message,

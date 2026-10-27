@@ -2,6 +2,11 @@
 
 **Date:** 2026-10-17 · **Branch:** `arena/f79889ce-utech`
 
+> **2026-10-27 pass (`arena/2b90aa02-utech`):** AUD-210 (GRN cancel could go negative),
+> AUD-211 (no physical-receipt proof for sales returns), AUD-212 (zod v4 update payloads)
+> and AUD-213 (dependency advisories, now 0/0) are FIXED — see
+> [`HARDENING_2026-10-27.md`](./HARDENING_2026-10-27.md).
+
 **Severity key:** P0 = data loss / security breach / production down · P1 = core workflow
 broken for users · P2 = degraded or risky, workaround exists · P3 = hygiene / hardening
 

@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 // a line is either a catalog item or a free-text/drawing-identified part — the
 // whole point of the module is that outsourced parts often aren't in the Item
@@ -34,7 +35,7 @@ const baseSchema = z.object({
 });
 
 const createVendorWorkOrderSchema = baseSchema;
-const updateVendorWorkOrderSchema = baseSchema.partial();
+const updateVendorWorkOrderSchema = partialNoDefaults(baseSchema);
 
 // material physically issued to the vendor must be catalog stock — you can only
 // issue what the company actually tracks a quantity for

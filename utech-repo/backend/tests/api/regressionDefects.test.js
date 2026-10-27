@@ -214,6 +214,9 @@ describe('AUD-203 — description-only return lines never touch stock', () => {
   it('sales return process skips stock for null-itemId lines but still credits the party', async () => {
     getDb().when('salesReturn.findUnique', {
       id: 51, number: 'SR-26-00001', status: 'APPROVED', partyId: 1, refundAmount: 590,
+      // AUD-211: stock may only be restored once the physical return receipt
+      // (challan no. + received date) is on the document
+      returnChallanNo: 'RC-77', receivedAt: new Date('2026-03-05T00:00:00Z'), dispatchChallanId: null,
       lines: [
         { id: 1, itemId: null, qty: 1, description: 'Design service' },
         { id: 2, itemId: 5, qty: 2, description: 'Widget' },

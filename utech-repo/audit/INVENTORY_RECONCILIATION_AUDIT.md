@@ -32,7 +32,11 @@ sales return in, purchase return out, manual adjustment.
 1. **One ledger row per movement** — the 11-move scenario produces exactly 11 rows with matching refTypes (traceable source transaction).
 2. **No double movement** — dispatch cancel twice is rejected (400); process endpoints are status-gated; jobwork receive is capped at `qtySent`; a race-lost decrement writes nothing.
 3. **No half-writes on failure** — an over-issue throws before any ledger row exists; conditional `updateMany` makes concurrent issues safe (second issue of 8 against stock 10 fails cleanly; closing 2).
-4. **Negative stock is explicit** — only `allowNegative` moves (GRN-cancel reversal of consumed goods) may go below zero, and the negative is visible in the ledger rather than hidden.
+4. **Negative stock is explicit and must be asked for** — a GRN cancellation is refused
+   (400) when the received quantity is no longer on hand (AUD-210). Only an explicit
+   `force: true` from a holder of `stock.adjust` (or Super Admin) may reverse into negative
+   stock; that path is audited, noted in the ledger as a forced reversal, and stays visible
+   in the balance rather than being clamped away.
 5. **Customer lots reconcile independently** — inward 100 consumed by two challans (40+30), receives (35+5), consumption 10, dispatch 55 → remaining **5** at every step; a third challan cannot over-issue (400).
 6. **Company vs customer isolation** — all customer-lot rows are `ownerType: 'CUSTOMER'`; `Item.currentStock` is never touched by lot movements.
 

@@ -1,5 +1,6 @@
 'use strict';
 const { z } = require('zod');
+const { partialNoDefaults } = require('./partial');
 
 const itemBase = {
   name: z.string().min(2),
@@ -19,6 +20,6 @@ const itemBase = {
 };
 
 const createItemSchema = z.object(itemBase);
-const updateItemSchema = z.object(itemBase).partial();
+const updateItemSchema = partialNoDefaults(z.object(itemBase));
 
 module.exports = { createItemSchema, updateItemSchema };
