@@ -174,6 +174,9 @@ export default function MetalCalculatorPage() {
   function setField(key, value) {
     setValues((v) => ({ ...v, [key]: value }));
     setErrors((e) => (e[key] ? { ...e, [key]: undefined } : e));
+    // a result computed from the previous numbers must never look like the
+    // answer to the numbers currently on screen
+    setResult(null);
   }
 
   function isFieldRequired(field) {
