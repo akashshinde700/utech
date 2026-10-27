@@ -7,6 +7,8 @@ const itemBase = {
   description: z.string().optional().nullable(),
   type: z.enum(['RAW_MATERIAL', 'SEMI_FINISHED', 'FINISHED', 'CONSUMABLE', 'SERVICE']).default('RAW_MATERIAL'),
   size: z.string().max(191).optional().nullable(),
+  // weightKg is derived from the size server-side and is not accepted here
+  ratePerKg: z.number().nonnegative().optional().nullable(),
   hsnCode: z.string().optional().nullable(),
   projectNumber: z.string().optional().nullable(),
   projectId: z.number().int().optional().nullable(),

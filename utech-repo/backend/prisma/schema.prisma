@@ -308,6 +308,12 @@ model Item {
   // "OD 60 X 5 mtr." or "1500 x 3000 x 12 th" — free text on purpose, the
   // register uses a different convention per material family
   size          String?
+  // weight derived from `size` with the plant's own formulas
+  // (utils/materialWeight.js); null when the size cannot be read or the
+  // material family has no agreed formula (pipe, flange, bought-out parts)
+  weightKg      Decimal?      @db.Decimal(14, 3)
+  // what a kilogram of this material costs — purchaseRate = weightKg × ratePerKg
+  ratePerKg     Decimal?      @db.Decimal(14, 2)
   hsnCode       String?
   projectNumber String? // legacy free-text label — kept for items tagged before the real link existed
   // real link to a Project (replaces the free-text projectNumber above)

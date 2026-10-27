@@ -9,10 +9,11 @@ import SearchableSelect from '../../components/ui/SearchableSelect';
 import { styles } from '../../lib/formStyles';
 import { gstRate, hsn, positiveNumber, required, validateAll } from '../../lib/validation';
 import toast from 'react-hot-toast';
+import { kindFor, weightFromSize } from '../../lib/materialWeight';
 
 const empty = {
   name: '', description: '', type: 'RAW_MATERIAL', size: '', hsnCode: '', projectNumber: '', projectId: '',
-  purchaseRate: '', saleRate: '', gstRate: 18,
+  purchaseRate: '', ratePerKg: '', saleRate: '', gstRate: 18,
   openingStock: 0, minStock: 0,
   uomId: '', categoryId: '',
 };
@@ -20,7 +21,7 @@ const empty = {
 const FIELD_IDS = {
   name: 'item-name', description: 'item-description', type: 'item-type', size: 'item-size', hsnCode: 'item-hsn',
   projectNumber: 'item-project', projectId: 'item-project-link', uomId: 'item-uom', categoryId: 'item-category',
-  purchaseRate: 'item-purchase-rate', saleRate: 'item-sale-rate', gstRate: 'item-gst-rate',
+  purchaseRate: 'item-purchase-rate', ratePerKg: 'item-rate-per-kg', saleRate: 'item-sale-rate', gstRate: 'item-gst-rate',
   openingStock: 'item-opening-stock', minStock: 'item-min-stock',
 };
 
@@ -104,7 +105,7 @@ export default function ItemForm() {
     setSaving(true);
     try {
       const payload = { ...form };
-      ['purchaseRate', 'saleRate', 'gstRate', 'openingStock', 'minStock'].forEach((k) => {
+      ['purchaseRate', 'ratePerKg', 'saleRate', 'gstRate', 'openingStock', 'minStock'].forEach((k) => {
         payload[k] = payload[k] === '' || payload[k] == null ? null : Number(payload[k]);
       });
       ['uomId', 'categoryId', 'projectId'].forEach((k) => {
@@ -125,6 +126,15 @@ export default function ItemForm() {
   }
 
   const err = (k) => errors[k] ? `${styles.inputError}` : '';
+  // live weight from the size typed above, using the plant's formulas
+  const weight = (() => {
+    const kind = kindFor({ size: form.size, name: form.name });
+    return kind ? weightFromSize(form.size, kind) : null;
+  })();
+  const computedRate = weight && form.ratePerKg !== '' && form.ratePerKg != null && Number(form.ratePerKg) > 0
+    ? weight.kg * Number(form.ratePerKg)
+    : null;
+
   const errCls = (k) => `${styles.input} ${err(k)}`;
 
   return (
@@ -192,7 +202,42 @@ export default function ItemForm() {
         </FormSection>
 
         <FormSection icon={Tag} title="Pricing & Stock" description="Default rates pulled into documents, plus stock thresholds">
+          {/* weight comes from the size with the plant's own formulas; rate per
+              kg then gives the purchase rate — one tap, never silently */}
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+            {weight ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span className="text-slate-700">
+                  Weight <span className="font-semibold tabular-nums">{weight.kg} kg</span>
+                  <span className="ml-1 text-xs text-slate-400">({weight.formula})</span>
+                </span>
+                {computedRate != null && (
+                  <>
+                    <span className="text-slate-700">
+                      × ₹{form.ratePerKg}/kg = <span className="font-semibold tabular-nums">₹{computedRate.toFixed(2)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className={`${styles.secondaryBtn} !h-8 !px-3 text-xs`}
+                      onClick={() => set('purchaseRate', String(computedRate.toFixed(2)))}
+                    >
+                      Use as purchase rate
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : (
+              <span className="text-slate-500">
+                {form.size
+                  ? 'No weight formula for this material — only plate (W × L × T × 0.0000085) and round/hex (Ø × Ø × L × 0.0000065) are calculated.'
+                  : 'Enter a material size above to calculate the weight.'}
+              </span>
+            )}
+          </div>
           <div className={styles.formGrid3}>
+            <FormField id="item-rate-per-kg" label="Rate per kg" hint="₹ — used with the weight above" error={errors.ratePerKg}>
+              <input id="item-rate-per-kg" type="number" step="0.01" min="0" className={errCls('ratePerKg')} value={form.ratePerKg ?? ''} onChange={(e) => set('ratePerKg', e.target.value)} />
+            </FormField>
             <FormField id="item-purchase-rate" label="Purchase Rate" hint="₹ per unit" error={errors.purchaseRate}>
               <input id="item-purchase-rate" type="number" step="0.01" min="0" className={errCls('purchaseRate')} value={form.purchaseRate ?? ''} onChange={(e) => set('purchaseRate', e.target.value)} onBlur={() => blur('purchaseRate')} aria-invalid={!!errors.purchaseRate} />
             </FormField>

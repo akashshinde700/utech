@@ -1,6 +1,7 @@
 'use strict';
 const prisma = require('../config/prisma');
 const HttpError = require('../utils/httpError');
+const { weightFromSize, kindFor } = require('../utils/materialWeight');
 const { parseListQuery, paginated } = require('../utils/pagination');
 const { nextCode } = require('../utils/numbering');
 const { audit } = require('../utils/audit');
@@ -53,9 +54,20 @@ async function get(req, res) {
   res.json(item);
 }
 
+// Weight always follows the size with the plant's formulas, so the two can
+// never disagree: a client may send a weight, it is recomputed anyway.
+// Unknown size or a family with no agreed formula (pipe, flange) -> null.
+function withDerivedWeight(data, existing = {}) {
+  const size = data.size !== undefined ? data.size : existing.size;
+  const name = data.name !== undefined ? data.name : existing.name;
+  const kind = kindFor({ size, name });
+  const weight = kind ? weightFromSize(size, kind) : null;
+  return { ...data, weightKg: weight ? weight.kg : null };
+}
+
 async function create(req, res) {
   const code = await nextCode('item', 'item');
-  const data = { ...req.body, code };
+  const data = withDerivedWeight({ ...req.body, code });
   if (data.openingStock != null) data.currentStock = data.openingStock;
   const item = await prisma.$transaction(async (tx) => {
     const created = await tx.item.create({ data });
@@ -88,7 +100,10 @@ async function update(req, res) {
   // openingStock is set once at creation (it writes an OPENING ledger row and
   // seeds currentStock) — changing it later would desync the ledger, so it is
   // never editable through a plain item edit.
-  const { openingStock, ...data } = req.body;
+  const { openingStock, ...rest } = req.body;
+  const existing = await prisma.item.findUnique({ where: { id }, select: { size: true, name: true } });
+  if (!existing) throw new HttpError(404, 'Item not found');
+  const data = withDerivedWeight(rest, existing);
   const item = await prisma.item.update({ where: { id }, data });
   await audit(req, 'update', 'Item', id, { code: item.code, name: item.name });
   res.json(item);
