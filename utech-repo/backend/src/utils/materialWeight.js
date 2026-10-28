@@ -14,7 +14,7 @@
  * guessed from an average steel.
  */
 
-const { calculate, metalByName } = require('../services/metalCalculator');
+const { calculate, metalByName, shapeById, UNIT_TO_MM } = require('../services/metalCalculator');
 
 // the register writes millimetres, metres and feet in the same column
 const MM_PER = {
@@ -46,7 +46,27 @@ function parseDimensions(size) {
  * @returns {{ shape: string, values: object, note: string } | null}
  */
 function shapeFromSize(size, name = '') {
-  const text = `${name} ${size || ''}`.toLowerCase();
+  // Structured sizes from the item calculator retain every shape and dimension
+  // in the same order as the shared calculator catalogue.
+  const structured = /^Calculator ([a-z]+): (.+)$/i.exec(String(size || '').trim());
+  if (structured) {
+    const shape = shapeById(structured[1].toLowerCase());
+    const parts = structured[2].split(' X ');
+    if (!shape || parts.length !== shape.fields.length) return null;
+    const dims = parts.map((part) => {
+      const m = /^(\d+(?:\.\d+)?) (mm|cm|m|in|ft|yd)$/i.exec(part);
+      if (!m || !UNIT_TO_MM[m[2].toLowerCase()]) return null;
+      const value = Number(m[1]) * UNIT_TO_MM[m[2].toLowerCase()];
+      return Number.isFinite(value) && value > 0 ? value : null;
+    });
+    if (dims.some((v) => v === null)) return null;
+    return { shape: shape.id, values: Object.fromEntries(shape.fields.map((f, i) => [f.id, dims[i]])), note: '' };
+  }
+
+  // Explicit calculator-generated shape takes precedence over the item name.
+  // Existing free-text sizes retain the register's name-based interpretation.
+  const explicit = /^(round bar|pipe|hex|sheet):/i.test(String(size || '').trim());
+  const text = (explicit ? size : `${name} ${size || ''}`).toLowerCase();
   const d = parseDimensions(size);
   if (!d.length) return null;
 

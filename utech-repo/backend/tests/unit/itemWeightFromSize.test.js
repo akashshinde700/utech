@@ -25,6 +25,13 @@ describe('reading the register size', () => {
     expect(shapeFromSize('OD 340 x ID 85 X 14 TH', 'Flange')).toMatchObject({ shape: 'pipe', values: { od: 340, t: 127.5, L: 14 } });
   });
 
+  it('honours an explicit calculator shape even when the item name conflicts', () => {
+    expect(shapeFromSize('Round bar: OD 60 mm X 5000 mm', 'Pipe').shape).toBe('roundbar');
+    expect(shapeFromSize('Pipe: OD 60 mm X ID 50 mm X 5000 mm', 'Flange').shape).toBe('pipe');
+    expect(shapeFromSize('Sheet: 1500 mm X 3000 mm X 12 mm', 'Pipe').shape).toBe('sheet');
+    expect(weightForItem({ size: 'Hex: 38 mm X 5000 mm', name: 'Plate', metal: 'Steel' })).not.toBeNull();
+  });
+
   it('turns a pipe OD/ID into the wall thickness the engine wants', () => {
     expect(shapeFromSize('OD 60.3 X ID 54 X 6 MTR', 'Pipe').values).toEqual({ od: 60.3, t: 3.15, L: 6000 });
   });
@@ -44,6 +51,25 @@ describe('weighing the item', () => {
       values: { d: 60, L: 5000 },
     });
     expect(viaItem.kg).toBe(viaCalculator.pieceWeightKg);
+  });
+
+  it('reads calculator dimensions for every shape and matches the calculator', () => {
+    const { SHAPES } = require('../../src/services/metalCalculator');
+    const samples = {
+      roundbar: [10, 100], pipe: [20, 2, 100], squarebar: [10, 100],
+      squaretube: [20, 2, 100], flatbar: [20, 2, 100], hexagon: [10, 100],
+      sheet: [20, 100, 2], angle: [20, 20, 2, 100],
+      beam: [20, 20, 2, 2, 100], channel: [20, 20, 2, 2, 100],
+      tprofile: [20, 20, 2, 2, 100],
+    };
+    for (const shape of SHAPES) {
+      const dimensions = samples[shape.id];
+      const size = `Calculator ${shape.id}: ${dimensions.map((n) => `${n} cm`).join(' X ')}`;
+      const item = weightForItem({ size, name: 'Pipe', metal: 'Steel' });
+      const values = Object.fromEntries(shape.fields.map((f, i) => [f.id, dimensions[i]]));
+      expect(item?.kg).toBe(calculate({ shape: shape.id, metal: 'Steel', unit: 'cm', weightUnit: 'kg', pieces: 1, values }).pieceWeightKg);
+    }
+    expect(shapeFromSize('Calculator pipe: 20 mm X 2 mm', '')).toBeNull();
   });
 
   it('weighs the same size differently for different metals', () => {

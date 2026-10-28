@@ -381,6 +381,23 @@ function calculate(input) {
     mm[f.id] = value * factor;
   }
 
+  // Reject impossible hollow/profile sections instead of calculating a
+  // plausible-looking weight from overlapping or negative geometry.
+  if (!profile) {
+    if ((shape.id === 'pipe' && 2 * mm.t >= mm.od) || (shape.id === 'squaretube' && 2 * mm.t >= mm.a)) {
+      throw new HttpError(400, 'Wall thickness must be less than half the outer dimension');
+    }
+    if (shape.id === 'angle' && (mm.t >= mm.a || mm.t >= mm.b)) {
+      throw new HttpError(400, 'Thickness must be less than both angle sides');
+    }
+    if (shape.id === 'beam' && (2 * mm.tf >= mm.h || mm.tw >= mm.b)) {
+      throw new HttpError(400, 'Beam flange or web thickness is too large for its dimensions');
+    }
+    if ((shape.id === 'channel' || shape.id === 'tprofile') && (mm.tf >= mm.h || mm.tw >= mm.b)) {
+      throw new HttpError(400, 'Flange or web thickness is too large for its dimensions');
+    }
+  }
+
   const lengthMm = lengthField ? mm[lengthField.id] : null;
   const pieces = mode === 'length' ? 1 : Math.max(1, Math.trunc(Number(input.pieces) || 1));
 
