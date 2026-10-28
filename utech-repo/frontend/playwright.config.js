@@ -4,7 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.VERCEL = '1';
-const executablePath = await chromiumPkg.executablePath();
+// @sparticuz/chromium ships a Linux/Lambda build. On a developer machine or a
+// CI runner that already has a browser, point at that one instead:
+//   E2E_CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
+// Without it nothing changes — the Lambda binary is still used.
+const localBrowser = process.env.E2E_CHROME_PATH || '';
+const executablePath = localBrowser || (await chromiumPkg.executablePath());
 const useDemo = process.env.E2E_USE_DEMO === '1';
 if (!useDemo && process.env.E2E_CONFIRM_DISPOSABLE !== '1') {
   throw new Error('Playwright tests modify data. Use npm run test:e2e or explicitly confirm a disposable external environment.');
@@ -43,8 +48,11 @@ export default defineConfig({
     launchOptions: {
       executablePath,
       // The Lambda single-process flags can hang the headless renderer after
-      // modal/navigation workflows in a long-lived Linux test session.
-      args: chromiumPkg.args.filter((arg) => !['--single-process', '--no-zygote', '--in-process-gpu'].includes(arg)),
+      // modal/navigation workflows in a long-lived Linux test session. A local
+      // browser needs none of those flags at all.
+      args: localBrowser
+        ? []
+        : chromiumPkg.args.filter((arg) => !['--single-process', '--no-zygote', '--in-process-gpu'].includes(arg)),
     },
   },
 });

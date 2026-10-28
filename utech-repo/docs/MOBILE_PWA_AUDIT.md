@@ -75,3 +75,51 @@ version bump (`v2`) purges old shell caches on activate. First load after
 deploy may show the "New version — Reload" toast once; accepting it loads
 the new shell. Rollback = redeploy the previous `dist`; old workers are
 replaced the same way. No DB changes in this work.
+
+## Browser verification (28 Oct 2026, Windows + Chrome 141)
+
+The suites above were run in a real browser on a developer machine, which the
+authoring sandbox could not do (no Chromium system libraries there).
+
+| Suite | Result |
+|---|---|
+| `e2e/mobile-viewports.spec.js` (8 viewports x 10 routes, drawer, cards, desktop regression) | 12/12 pass |
+| Whole `e2e/` suite | 41 pass, 1 skipped |
+| `e2e/pwa-offline.spec.js` (new) | pass, 3 runs in a row |
+
+Two things had to change to get there:
+
+* `playwright.config.js` now honours `E2E_CHROME_PATH`. It launched
+  `@sparticuz/chromium` unconditionally — a Linux/Lambda build that cannot
+  start on a developer machine, so "run it on your machine" was not actually
+  possible. Without the variable nothing changes.
+* The drawer test looked for an `Items` link straight after opening the
+  drawer. Nav sections start collapsed, and `Items` lives under COMPANY
+  INVENTORY, not MASTERS, so it could never have passed. It now opens the
+  section first, and asserts the drawer has left the viewport after navigating
+  rather than that its button is gone from the DOM (the drawer slides out, it
+  does not unmount).
+
+### PWA, verified against a production build
+
+The service worker only registers when `import.meta.env.PROD` is true, so the
+dev-server demo stack cannot exercise it; this ran against `vite preview`
+serving `dist/`.
+
+* `manifest.webmanifest` parses, `display: standalone`, and all four icons
+  (192, 512, 512 maskable, 180 apple-touch) return 200.
+* The worker registers and activates; after it controls the page the cache
+  holds the shell and the hashed build assets.
+* **No `/api/` or `/uploads/` entry ever enters the cache** — the one
+  property that matters, since a stale stock or billing figure would be worse
+  than none.
+* Offline, the app renders its real login screen (form included), not the
+  browser's error page.
+
+Worth knowing: offline works from the **second** visit. The first visit
+installs the worker, but the files that page already fetched went out before
+the worker could see them, so they are cached only on the next load it serves.
+
+Still not done here: a real Android/iOS device — installing to the home
+screen, the update toast on a genuine deploy, and touch behaviour on physical
+hardware. Emulated viewports are not the same as a phone.

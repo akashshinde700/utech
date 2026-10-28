@@ -55,8 +55,16 @@ test.describe('mobile shell (390x844)', () => {
     await page.keyboard.press('Escape');
     expect(await page.evaluate(() => document.body.style.overflow)).toBe('');
     await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: /items/i }).first().click();
+    // nav sections start collapsed in the drawer, so a deep page is two taps:
+    // open its section, then the page itself
+    await page.getByRole('button', { name: 'COMPANY INVENTORY' }).click();
+    await page.getByRole('link', { name: /^items$/i }).first().click();
     await expect(page).toHaveURL(/\/items/);
+    // navigating must also close the drawer and give the page its scroll back.
+    // The drawer slides out of view rather than unmounting, so assert it has
+    // left the viewport — not that its button is gone from the DOM.
+    await expect(page.getByRole('button', { name: 'Close navigation' }).first()).not.toBeInViewport();
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe('');
   });
 
   test('list pages render record cards, not a table, on phones', async ({ page }) => {
