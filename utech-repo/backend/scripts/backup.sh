@@ -50,10 +50,15 @@ SQL_FILE="$TARGET_DIR/utech-$STAMP.sql.gz"
 # keeps working, because Prisma's own driver handles that handshake. The first
 # version of this script was missing the flag, and the empty archive it left
 # behind still looked like a backup.
+#
+# --no-tablespaces because the site's database account has no PROCESS privilege:
+# without it mysqldump prints a line beginning "Error:" that nobody should have
+# to interpret in a backup log. This schema has no tablespaces to dump, so
+# nothing is lost.
 MYSQL_PWD="$DB_PASS" mysqldump \
   --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" \
   --get-server-public-key \
-  --single-transaction --quick --routines --triggers --events \
+  --single-transaction --quick --routines --triggers --events --no-tablespaces \
   --default-character-set=utf8mb4 \
   --databases "$DB_NAME" | gzip -9 > "$SQL_FILE"
 
