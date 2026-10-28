@@ -13,8 +13,28 @@ import {
   ShoppingCart, PackageCheck, Briefcase, Wallet, FileSpreadsheet, Cog,
   RotateCcw, ArrowLeftToLine, FileDown, BarChart3, ChevronRight, Home,
   Boxes, SlidersHorizontal, Building2, ListChecks, CheckSquare, Layers, Menu, X, KeyRound,
-  Calculator,
+  Calculator, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
+
+const SIDEBAR_COLLAPSED_KEY = 'utech.sidebar.collapsed';
+const SIDEBAR_SECTIONS_KEY = 'utech.sidebar.sections';
+
+function readStored(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw == null ? null : JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function storeValue(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // storage full / private mode — the sidebar simply won't persist
+  }
+}
 
 // perm = the permission key the backend actually requires for that page's GET
 // route (verified against src/routes/*.js + prisma/seed.js). Links without a
@@ -251,28 +271,50 @@ export default function AppLayout() {
     document.addEventListener('keydown', onAppKeyDown, true);
     return () => document.removeEventListener('keydown', onAppKeyDown, true);
   }, []);
-  const [expandedSections, setExpandedSections] = useState({
+  // Desktop sidebar collapse (icon rail) — persisted so the choice survives
+  // navigation and reloads. Mobile always gets the full labelled drawer.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readStored(SIDEBAR_COLLAPSED_KEY) === true);
+  const toggleSidebar = () => {
+    setSidebarCollapsed((current) => {
+      storeValue(SIDEBAR_COLLAPSED_KEY, !current);
+      return !current;
+    });
+  };
+
+  const [expandedSections, setExpandedSections] = useState(() => ({
     dashboard: true,
     'my-projects': true,
     masters: false,
+    'task-management': false,
     sales: false,
-    purchase: false,
+    'company-inventory': false,
+    'customer-inventory': false,
+    'stock-management': false,
     analytics: false,
     admin: false,
-  });
+    ...(readStored(SIDEBAR_SECTIONS_KEY) || {}),
+  }));
 
   const toggleSection = (sectionId) => {
-    setExpandedSections(prev => ({
-      ...prev,
-      [sectionId]: !prev[sectionId]
-    }));
+    setExpandedSections((prev) => {
+      const next = { ...prev, [sectionId]: !prev[sectionId] };
+      storeValue(SIDEBAR_SECTIONS_KEY, next);
+      return next;
+    });
   };
 
   // Deep links open the relevant section, while route changes close the mobile drawer.
   useEffect(() => {
     setMobileNavOpen(false);
     const activeSection = navSections.find((section) => section.items.some(matchesLocation));
-    if (activeSection) setExpandedSections((prev) => ({ ...prev, [activeSection.id]: true }));
+    if (activeSection) {
+      setExpandedSections((prev) => {
+        if (prev[activeSection.id]) return prev;
+        const next = { ...prev, [activeSection.id]: true };
+        storeValue(SIDEBAR_SECTIONS_KEY, next);
+        return next;
+      });
+    }
   }, [location.pathname, location.search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -283,47 +325,99 @@ export default function AppLayout() {
   }, [mobileNavOpen]);
 
   return (
-    <div className="min-h-screen w-full max-w-full flex bg-[#f4f7f7]">
+    <div className="min-h-dvh w-full max-w-full flex bg-[#f6f5fa]">
       {mobileNavOpen && (
         <div className="no-print fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setMobileNavOpen(false)} />
       )}
 
-      {/* sidebar — fixed slide-in drawer below lg, static column at lg+ */}
-      <aside className={`no-print fixed inset-y-0 left-0 z-50 w-[264px] max-w-[85vw] bg-[#132b3a] text-white flex flex-col border-r border-white/5 transform transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:z-auto ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="px-5 py-6 border-b border-white/10">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 shrink-0 rounded-xl bg-[#36b5a0] flex items-center justify-center">
-                <Box className="w-5 h-5 text-[#102b35]" aria-hidden="true" />
+      {/* sidebar — fixed slide-in drawer below lg, static column at lg+.
+          Desktop collapse swaps the 248px labelled column for a 64px icon
+          rail (labels become tooltips); the mobile drawer always shows
+          labels, so `sidebarCollapsed` only applies at lg+. The rail is
+          sticky at exactly one viewport height and the page — not the
+          shell — scrolls, so no dead space is reserved below content. */}
+      <aside
+        data-collapsed={sidebarCollapsed ? 'true' : 'false'}
+        className={`no-print fixed inset-y-0 left-0 z-50 w-[248px] max-w-[85vw] bg-[#1d1437] text-white flex flex-col border-r border-white/5 transform transition-[transform,width] duration-200 lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0 lg:z-auto ${sidebarCollapsed ? 'lg:w-16' : 'lg:w-[248px]'} ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}
+      >
+        <div className={`border-b border-white/10 px-4 py-4 ${sidebarCollapsed ? 'lg:px-2' : ''}`}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 shrink-0 rounded-[10px] bg-brand-600 flex items-center justify-center">
+                <Box className="w-5 h-5 text-white" aria-hidden="true" />
               </div>
-              <div className="min-w-0">
-                <div className="text-base font-bold tracking-tight text-white truncate">
-                  U-Tech <span className="text-[#80d7c9]">ERP</span>
+              <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                <div className="text-[15px] font-bold tracking-tight text-white truncate">
+                  U-Tech <span className="text-brand-300">ERP</span>
                 </div>
-                <div className="text-[10px] text-slate-400 font-semibold tracking-[0.12em] uppercase truncate">
+                <div className="text-[9px] text-slate-400 font-semibold tracking-[0.12em] uppercase truncate">
                   Manufacturing workspace
                 </div>
               </div>
             </div>
-            <button type="button" className="lg:hidden shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-white/80 hover:bg-white/10" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)}>
+            <button type="button" className="lg:hidden shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-white/80 hover:bg-white/10" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)}>
               <X className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              className="hidden lg:flex shrink-0 w-8 h-8 rounded-lg items-center justify-center text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/60"
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-expanded={!sidebarCollapsed}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              onClick={toggleSidebar}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" aria-hidden="true" /> : <PanelLeftClose className="w-4 h-4" aria-hidden="true" />}
             </button>
           </div>
         </div>
 
-        <nav aria-label="Main navigation" className="flex-1 py-4 overflow-y-auto scrollbar-thin scrollbar-thumb-brand-500/70 scrollbar-track-transparent">
+        {/* icon rail — desktop only, shown when collapsed. Every entry is a
+            direct link (no submenu step) with a native tooltip + aria-label,
+            so collapsing never hides a destination behind a second click. */}
+        {sidebarCollapsed && (
+          <nav aria-label="Main navigation (collapsed)" className="hidden lg:flex flex-1 flex-col items-center gap-0.5 overflow-y-auto py-3">
+            {navSections.map((section) => (
+              <div key={section.id} className="flex flex-col items-center gap-0.5">
+                <span className="sr-only">{section.label}</span>
+                {section.items.map((item) => {
+                  const ItemIcon = item.icon;
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === '/'}
+                      title={item.label}
+                      aria-label={item.label}
+                      className={({ isActive }) =>
+                        'grid h-9 w-9 place-items-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/60 ' +
+                        (linkActive(item, isActive)
+                          ? 'bg-brand-600 text-white shadow-sm shadow-brand-950/30'
+                          : 'text-slate-300 hover:bg-white/10 hover:text-white')
+                      }
+                    >
+                      <ItemIcon className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+                    </NavLink>
+                  );
+                })}
+                <span className="my-1.5 h-px w-6 bg-white/10" aria-hidden="true" />
+              </div>
+            ))}
+          </nav>
+        )}
+
+        <nav aria-label="Main navigation" className={`flex-1 py-3 overflow-y-auto scrollbar-thin scrollbar-thumb-brand-500/70 scrollbar-track-transparent ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
           {navSections.map((section) => {
             const SectionIcon = section.icon;
             const isExpanded = expandedSections[section.id];
 
             return (
-              <div key={section.id} className="mb-1.5 px-3">
+              <div key={section.id} className="mb-1 px-2.5">
                 <button
                   type="button"
                   onClick={() => toggleSection(section.id)}
                   aria-expanded={!!isExpanded}
                   aria-controls={`nav-${section.id}`}
-                  className="group w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-[11px] font-bold uppercase tracking-[0.09em] text-slate-300 transition-colors duration-200 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/50"
+                  className="group w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-[11px] font-bold uppercase tracking-[0.09em] text-slate-300 transition-colors duration-200 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/50"
                 >
                   <span className="flex items-center gap-2.5">
                     <SectionIcon className="h-4 w-4 text-slate-400 group-hover:text-white transition-colors" aria-hidden="true" />
@@ -342,9 +436,9 @@ export default function AppLayout() {
                           to={item.to}
                           end={item.to === '/'}
                           className={({ isActive }) =>
-                            'relative flex items-center gap-3 rounded-lg py-2 pl-4 pr-3 ml-4 text-sm font-medium transition-all duration-200 ' +
+                            'relative flex items-center gap-2.5 rounded-lg py-1.5 pl-3 pr-2.5 ml-4 text-[13px] font-medium transition-all duration-200 ' +
                             (linkActive(item, isActive)
-                              ? 'bg-[#24524f] text-white ring-1 ring-[#43877b]/40'
+                              ? 'bg-brand-600 text-white shadow-sm shadow-brand-950/30'
                               : 'text-slate-300 hover:bg-white/5 hover:text-white')
                           }
                         >
@@ -352,10 +446,10 @@ export default function AppLayout() {
                             <>
                               {/* active left accent bar */}
                               <span
-                                className={`absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full transition-opacity ${linkActive(item, isActive) ? 'bg-[#7dd8c6] opacity-100' : 'opacity-0'}`}
+                                className={`absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full transition-opacity ${linkActive(item, isActive) ? 'bg-brand-300 opacity-100' : 'opacity-0'}`}
                                 aria-hidden="true"
                               />
-                              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/5 text-slate-300 transition-colors duration-200">
+                              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-white/5 text-slate-300 transition-colors duration-200">
                                 <ItemIcon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
                               </span>
                               <span className="truncate">{item.label}</span>
@@ -371,14 +465,14 @@ export default function AppLayout() {
           })}
         </nav>
 
-        <div className="px-6 py-4 text-[10px] text-slate-400 border-t border-white/10">
-          <span className="font-medium">U-TECH AUTOMATION INDUSTRIES</span>
+        <div className={`px-4 py-3 text-[9px] text-slate-400 border-t border-white/10 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+          <span className="font-medium tracking-wide">U-TECH AUTOMATION INDUSTRIES</span>
         </div>
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* topbar */}
-        <header className="no-print relative z-30 min-h-16 bg-white border-b border-slate-200 px-3 sm:px-8 flex items-center justify-between">
+        <header className="no-print relative z-30 h-14 bg-white border-b border-slate-200 px-3 sm:px-5 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
             <button type="button" className="lg:hidden shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-slate-700 hover:bg-slate-100" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}>
               <Menu className="w-5 h-5" />
@@ -437,7 +531,7 @@ export default function AppLayout() {
 
         {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
 
-        <main className="flex-1 min-w-0 p-4 sm:p-6 xl:p-8">
+        <main className="flex-1 min-w-0 p-3 sm:p-5 xl:p-6">
           <div className="mx-auto max-w-[1600px]"><Outlet /></div>
         </main>
       </div>

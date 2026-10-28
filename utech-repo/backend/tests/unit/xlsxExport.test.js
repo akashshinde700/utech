@@ -10,7 +10,8 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const { buildXlsx } = require('../../src/utils/xlsx');
+const { buildXlsx, sanitizeCellString } = require('../../src/utils/xlsx');
+const ExcelJS = require('exceljs');
 
 describe('AUD-213 — audit-clean XLSX export', () => {
   it('builds a real .xlsx (zip container, not an error page)', async () => {
@@ -40,6 +41,28 @@ describe('AUD-213 — audit-clean XLSX export', () => {
     const text = buffer.toString('binary');
     expect(text).not.toContain('NaN');
     expect(text).not.toContain('undefined');
+  });
+
+  it('neutralises spreadsheet formula injection in user-entered text', async () => {
+    expect(sanitizeCellString('=HYPERLINK("https://evil.example","x")')).toMatch(/^'/);
+    expect(sanitizeCellString('+2+3')).toMatch(/^'/);
+    expect(sanitizeCellString('-2+3')).toMatch(/^'/);
+    expect(sanitizeCellString('@SUM(A1:A9)')).toMatch(/^'/);
+    expect(sanitizeCellString('  =2+3')).toMatch(/^'/);
+    // legitimate text and identifiers are untouched
+    expect(sanitizeCellString('INV-2026-001')).toBe('INV-2026-001');
+    expect(sanitizeCellString('Acme (Pune)')).toBe('Acme (Pune)');
+
+    const buffer = await buildXlsx([{
+      name: 'Parties',
+      rows: [{ Party: '=2+3', Note: 'plain' }],
+    }]);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+    const cell = workbook.getWorksheet('Parties').getCell('A2');
+    // stored as text, never as a formula object exceljs would flag with .formula
+    expect(cell.value).toBe("'=2+3");
+    expect(cell.formula).toBeUndefined();
   });
 
   it('the source tree no longer imports the abandoned xlsx package', () => {

@@ -68,7 +68,7 @@ async function invoices(req, res) {
 async function jobcards(req, res) {
   const where = {};
   if (req.query.status) where.status = req.query.status;
-  const rows = await prisma.jobcard.findMany({
+  const { rows, truncated } = await fetchCapped(prisma.jobcard, {
     where, include: { party: true }, orderBy: { date: 'desc' },
   });
   const data = rows.map((r) => ({
@@ -81,12 +81,12 @@ async function jobcards(req, res) {
     Rejected: Number(r.qtyRejected),
     Status: r.status,
   }));
-  audit(req, 'export', 'Jobcard', null, { count: rows.length });
-  await send(res, data, 'Jobcards', 'jobcards');
+  audit(req, 'export', 'Jobcard', null, { count: rows.length, truncated });
+  await send(res, data, 'Jobcards', 'jobcards', { truncated });
 }
 
 async function items(req, res) {
-  const rows = await prisma.item.findMany({
+  const { rows, truncated } = await fetchCapped(prisma.item, {
     where: { isActive: true },
     include: { uom: true, category: true },
     orderBy: { name: 'asc' },
@@ -104,8 +104,8 @@ async function items(req, res) {
     'Current Stock': Number(r.currentStock),
     'Min Stock': Number(r.minStock),
   }));
-  audit(req, 'export', 'Item', null, { count: rows.length });
-  await send(res, data, 'Items', 'items');
+  audit(req, 'export', 'Item', null, { count: rows.length, truncated });
+  await send(res, data, 'Items', 'items', { truncated });
 }
 
 async function expenses(req, res) {
@@ -114,7 +114,7 @@ async function expenses(req, res) {
   if (dateRange) where.date = dateRange;
   if (req.query.category) where.category = req.query.category;
 
-  const rows = await prisma.expense.findMany({
+  const { rows, truncated } = await fetchCapped(prisma.expense, {
     where, include: { party: true }, orderBy: { date: 'desc' },
   });
   const data = rows.map((r) => ({
@@ -128,8 +128,8 @@ async function expenses(req, res) {
     Mode: r.paymentMode,
     Reference: r.reference || '',
   }));
-  audit(req, 'export', 'Expense', null, { count: rows.length });
-  await send(res, data, 'Expenses', 'expenses');
+  audit(req, 'export', 'Expense', null, { count: rows.length, truncated });
+  await send(res, data, 'Expenses', 'expenses', { truncated });
 }
 
 async function partyLedger(req, res) {
@@ -138,11 +138,13 @@ async function partyLedger(req, res) {
     prisma.party.findUnique({ where: { id: partyId } }),
     // date + id: two entries posted on the same date used to come back in an
     // arbitrary order, so the running balance column could differ run to run
-    prisma.partyLedger.findMany({ where: { partyId }, orderBy: [{ date: 'asc' }, { id: 'asc' }] }),
+    prisma.partyLedger.findMany({ where: { partyId }, orderBy: [{ date: 'asc' }, { id: 'asc' }], take: EXPORT_LIMIT + 1 }),
   ]);
   if (!party) return res.status(404).json({ error: 'NotFound' });
+  const truncated = entries.length > EXPORT_LIMIT;
+  const cappedEntries = truncated ? entries.slice(0, EXPORT_LIMIT) : entries;
   let bal = Number(party.openingBalance || 0);
-  const data = entries.map((e) => {
+  const data = cappedEntries.map((e) => {
     bal += Number(e.debit) - Number(e.credit);
     return {
       Date: dayjs(e.date).format('DD-MM-YYYY'),
@@ -154,7 +156,8 @@ async function partyLedger(req, res) {
       Notes: e.notes || '',
     };
   });
-  await send(res, data, 'Ledger', `${party.code}-ledger`);
+  audit(req, 'export', 'PartyLedger', party.id, { count: data.length, truncated });
+  await send(res, data, 'Ledger', `${party.code}-ledger`, { truncated });
 }
 
 async function customerStock(req, res) {
@@ -188,13 +191,16 @@ async function vendorStock(req, res) {
   const where = { challan: { status: { in: ['ISSUED', 'PARTIAL_RECEIVED'] } } };
   if (req.query.ownerType) where.challan.materialOwnerType = req.query.ownerType;
   if (req.query.partyId) where.challan.partyId = parseInt(req.query.partyId, 10);
-  const lines = await prisma.jobworkLine.findMany({
+  const cappedLines = await prisma.jobworkLine.findMany({
     where,
     include: {
       item: true,
       challan: { include: { party: true, customerMaterialLot: true } },
     },
+    take: EXPORT_LIMIT + 1,
   });
+  const truncated = cappedLines.length > EXPORT_LIMIT;
+  const lines = truncated ? cappedLines.slice(0, EXPORT_LIMIT) : cappedLines;
   const data = lines
     .map((l) => ({
       Vendor: l.challan?.party?.name || '',
@@ -210,8 +216,8 @@ async function vendorStock(req, res) {
       Status: l.challan.status,
     }))
     .filter((r) => r.Outstanding > 0);
-  audit(req, 'export', 'JobworkChallan', null, { count: data.length });
-  await send(res, data, 'Vendor Stock', 'vendor-stock');
+  audit(req, 'export', 'JobworkChallan', null, { count: data.length, truncated });
+  await send(res, data, 'Vendor Stock', 'vendor-stock', { truncated });
 }
 
 async function stockLedgerReport(req, res) {

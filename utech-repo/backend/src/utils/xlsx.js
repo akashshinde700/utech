@@ -14,13 +14,28 @@
 
 const ExcelJS = require('exceljs');
 
+// Spreadsheet formula injection: a text cell whose first non-space character
+// is =, +, - or @ is evaluated as a formula by Excel/Sheets when the file is
+// opened. Party names, descriptions and notes are user-entered, so an export
+// is an exfiltration/calc-injection vector (e.g. a party named
+// `=HYPERLINK(...)`). Prefixing with a single quote forces text treatment —
+// spreadsheet apps hide the quote and show the original string.
+function sanitizeCellString(value) {
+  if (typeof value !== 'string') return value;
+  const first = value.trimStart().charAt(0);
+  if (first === '=' || first === '+' || first === '-' || first === '@') {
+    return `'${value}`;
+  }
+  return value;
+}
+
 // A cell must never receive `undefined`/`NaN` — exceljs would emit an invalid
 // cell, and Excel then refuses to open the whole workbook.
 function toCellValue(value) {
   if (value === null || value === undefined) return '';
   if (value instanceof Date) return value;
   if (typeof value === 'number') return Number.isFinite(value) ? value : '';
-  return value;
+  return sanitizeCellString(value);
 }
 
 function sheetName(name) {
@@ -79,4 +94,4 @@ async function sendXlsx(res, { filename, sheets, headers = {} }) {
   return buffer.length;
 }
 
-module.exports = { buildXlsx, sendXlsx };
+module.exports = { buildXlsx, sendXlsx, sanitizeCellString };

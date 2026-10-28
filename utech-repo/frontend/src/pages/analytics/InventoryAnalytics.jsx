@@ -9,7 +9,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 
 // Chart colors match the industrial teal / amber / slate dashboard palette.
-const COLORS = ['#0f766e', '#60a5a0', '#d9a441', '#637a94', '#a9bec7'];
+const COLORS = ['#7c3aed', '#a78bfa', '#d9a441', '#637a94', '#a9bec7'];
 
 function MetricCard({ title, value, subtitle, icon: Icon }) {
   return (

@@ -70,8 +70,12 @@ export default function ReportsPage() {
     if (downloading) return;
     setDownloading(report.key);
     try {
-      await downloadFile(report.endpoint, report.file);
-      toast.success(`${report.name} downloaded`);
+      const result = await downloadFile(report.endpoint, report.file);
+      if (result?.truncated) {
+        toast.error(`${report.name} downloaded but is incomplete — capped at ${result.rowLimit ?? 5000} rows. Narrow the date range and export again.`, { duration: 8000 });
+      } else {
+        toast.success(`${report.name} downloaded`);
+      }
     } catch (err) {
       // 401/403 already surfaced by the axios interceptor; anything else gets
       // a readable message instead of a silent no-op
@@ -85,7 +89,7 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="animate-fade-in space-y-8">
+    <div className="animate-fade-in space-y-5">
       <div>
         <PageHeader title="Reports & Exports" subtitle="Download data as XLSX" />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
