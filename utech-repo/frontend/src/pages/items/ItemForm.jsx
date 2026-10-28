@@ -7,6 +7,7 @@ import FormField from '../../components/ui/FormField';
 import FormSection from '../../components/ui/FormSection';
 import SearchableSelect from '../../components/ui/SearchableSelect';
 import MetalCalculatorPage from '../calculator/MetalCalculatorPage';
+import { categoryIdForShape } from '../../lib/itemCategory';
 import { styles } from '../../lib/formStyles';
 import { gstRate, hsn, positiveNumber, required, validateAll } from '../../lib/validation';
 import toast from 'react-hot-toast';
@@ -56,6 +57,9 @@ export default function ItemForm() {
   const [projects, setProjects] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showSizeCalculator, setShowSizeCalculator] = useState(false);
+  // true when the calculator filled the category, so the field can say where it
+  // came from instead of appearing to have been set by magic
+  const [categoryFromShape, setCategoryFromShape] = useState(false);
   const [autoPrice, setAutoPrice] = useState(false);
   const [calculatorSeed, setCalculatorSeed] = useState(null);
   const appliedPreview = useRef(null);
@@ -237,11 +241,11 @@ export default function ItemForm() {
                 emptyText="No matching units"
               />
             </FormField>
-            <FormField id="item-category" label="Category">
+            <FormField id="item-category" label="Category" hint={categoryFromShape ? 'Set from the material shape you calculated — change it if that is wrong' : undefined}>
               <SearchableSelect
                 id="item-category"
                 value={form.categoryId}
-                onChange={(v) => set('categoryId', v)}
+                onChange={(v) => { setCategoryFromShape(false); set('categoryId', v); }}
                 options={categoryOptions}
                 placeholder="Select category…"
                 emptyText="No matching categories"
@@ -256,7 +260,13 @@ export default function ItemForm() {
               const purchaseRate = validRate && preview.weightKg != null
                 ? new Decimal(preview.weightKg).times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)
                 : f.purchaseRate;
-              return { ...f, size, metal, ratePerKg: rate, purchaseRate };
+              // The shape already says what kind of material this is, and this
+              // plant's categories are those kinds. Fill it only when empty --
+              // a category someone chose is theirs -- and only with one that
+              // exists here.
+              const suggested = f.categoryId ? null : categoryIdForShape(preview.shape, lookups.categories);
+              if (suggested) setCategoryFromShape(true);
+              return { ...f, size, metal, ratePerKg: rate, purchaseRate, categoryId: suggested || f.categoryId };
             });
             setErrors((e) => ({ ...e, size: undefined, metal: undefined, ratePerKg: undefined, purchaseRate: undefined }));
             setWeight(preview);
@@ -298,15 +308,29 @@ export default function ItemForm() {
             )}
           </div>
           <div className={styles.formGrid3}>
-            <FormField id="item-metal" label="Metal" hint="Density for the weight — same catalogue as the Metal Calculator">
-              <select id="item-metal" className={errCls('metal')} value={form.metal || ''} onChange={(e) => set('metal', e.target.value)}>
-                <option value="">— not set —</option>
-                {metals.map((m) => <option key={m.name} value={m.name}>{m.name} ({m.density} g/cm³)</option>)}
-              </select>
-            </FormField>
-            <FormField id="item-rate-per-kg" label="Rate per kg" hint="₹ — used with the weight above" error={errors.ratePerKg}>
-              <input id="item-rate-per-kg" type="number" step="0.01" min="0" className={errCls('ratePerKg')} value={form.ratePerKg ?? ''} onChange={(e) => set('ratePerKg', e.target.value)} onBlur={() => blur('ratePerKg')} aria-invalid={!!errors.ratePerKg} />
-            </FormField>
+            {/* While the calculator is open it owns the metal and the rate —
+                it needs both to compute, and it writes them back on Calculate.
+                Showing a second pair here put two controls for one value on the
+                same screen, and they disagreed: the calculator read "Steel"
+                while this field still said "not set". */}
+            {!showSizeCalculator && (
+              <FormField id="item-metal" label="Metal" hint="Density for the weight — same catalogue as the Metal Calculator">
+                <select id="item-metal" className={errCls('metal')} value={form.metal || ''} onChange={(e) => set('metal', e.target.value)}>
+                  <option value="">— not set —</option>
+                  {metals.map((m) => <option key={m.name} value={m.name}>{m.name} ({m.density} g/cm³)</option>)}
+                </select>
+              </FormField>
+            )}
+            {!showSizeCalculator && (
+              <FormField id="item-rate-per-kg" label="Rate per kg" hint="₹ — used with the weight above" error={errors.ratePerKg}>
+                <input id="item-rate-per-kg" type="number" step="0.01" min="0" className={errCls('ratePerKg')} value={form.ratePerKg ?? ''} onChange={(e) => set('ratePerKg', e.target.value)} onBlur={() => blur('ratePerKg')} aria-invalid={!!errors.ratePerKg} />
+              </FormField>
+            )}
+            {showSizeCalculator && (
+              <div className="sm:col-span-2 self-center rounded-lg border border-dashed border-brand-200 bg-brand-50/60 px-3 py-2.5 text-sm text-slate-600">
+                Metal and rate per kg are set in the material size calculator above.
+              </div>
+            )}
             <FormField id="item-purchase-rate" label="Purchase Rate" hint={autoPrice ? "₹ per piece — calculated from weight × rate/kg; edit to override" : "₹ per unit — enter manually or use the calculated rate above"} error={errors.purchaseRate}>
               <input id="item-purchase-rate" type="number" step="0.01" min="0" className={errCls('purchaseRate')} value={form.purchaseRate ?? ''} onChange={(e) => { setAutoPrice(false); set('purchaseRate', e.target.value); }} onBlur={() => blur('purchaseRate')} aria-invalid={!!errors.purchaseRate} />
             </FormField>
