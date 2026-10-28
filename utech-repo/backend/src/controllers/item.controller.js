@@ -72,6 +72,7 @@ async function weightPreview(req, res) {
   const weight = weightForItem({ size, name: name || '', metal });
   res.json({
     shape: parsed ? parsed.shape : null,
+    dimensionsMm: parsed ? parsed.values : null,
     note: parsed ? parsed.note : null,
     weightKg: weight ? weight.kg : null,
     reason: weight ? null
