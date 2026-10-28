@@ -38,7 +38,7 @@ async function list(req, res) {
   }
   const [items, total] = await Promise.all([
     prisma.purchaseReturn.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { 
         party: { select: { id: true, name: true } }, 
         grn: { select: { id: true, number: true } },

@@ -105,7 +105,7 @@ async function list(req, res) {
   }
 
   const [items, total] = await Promise.all([
-    prisma.vendorWorkOrder.findMany({ where, skip, take, orderBy: { [sortBy]: sortDir }, include: INCLUDE }),
+    prisma.vendorWorkOrder.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }], include: INCLUDE }),
     prisma.vendorWorkOrder.count({ where }),
   ]);
   res.json(paginated(items, total, page, pageSize));

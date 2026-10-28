@@ -39,7 +39,7 @@ async function list(req, res) {
   // grouped aggregates avoid one extra query per lot.
   const result = await prisma.$transaction(async (tx) => {
     const [items, total] = await Promise.all([
-      tx.customerMaterialLot.findMany({ where, skip, take, orderBy: { [sortBy]: sortDir }, include: INCLUDE }),
+      tx.customerMaterialLot.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }], include: INCLUDE }),
       tx.customerMaterialLot.count({ where }),
     ]);
     const lotIds = items.map((l) => l.id);

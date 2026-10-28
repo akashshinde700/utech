@@ -18,7 +18,7 @@ async function list(req, res) {
   if (search) where.OR = [{ number: { contains: search } }, { description: { contains: search } }];
   const [items, total] = await Promise.all([
     prisma.expense.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { party: { select: { id: true, name: true } } },
     }),
     prisma.expense.count({ where }),

@@ -32,7 +32,7 @@ async function list(req, res) {
   if (req.user.scopeToDepartment) where.departmentId = req.user.departmentId;
 
   const [items, total] = await Promise.all([
-    prisma.user.findMany({ where, skip, take, orderBy: { [sortBy]: sortDir }, select: SAFE_USER }),
+    prisma.user.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }], select: SAFE_USER }),
     prisma.user.count({ where }),
   ]);
   res.json(paginated(items, total, page, pageSize));

@@ -26,7 +26,7 @@ async function list(req, res) {
 
   const [items, total] = await Promise.all([
     prisma.departmentSubCategory.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { department: { select: { id: true, name: true } }, _count: { select: { users: true } } },
     }),
     prisma.departmentSubCategory.count({ where }),

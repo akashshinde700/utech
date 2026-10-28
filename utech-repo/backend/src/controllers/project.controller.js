@@ -14,7 +14,7 @@ async function list(req, res) {
   if (req.query.status) where.status = req.query.status;
   if (search) where.OR = [{ name: { contains: search } }, { code: { contains: search } }];
   const [items, total] = await Promise.all([
-    prisma.project.findMany({ where, skip, take, orderBy: { [sortBy]: sortDir } }),
+    prisma.project.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }] }),
     prisma.project.count({ where }),
   ]);
   res.json(paginated(items, total, page, pageSize));

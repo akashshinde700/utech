@@ -39,7 +39,7 @@ async function list(req, res) {
   const where = { AND: and };
 
   const [items, total] = await Promise.all([
-    prisma.process.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }], include: INCLUDE }),
+    prisma.process.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }], include: INCLUDE }),
     prisma.process.count({ where }),
   ]);
   res.json(paginated(items.map((p) => ({ ...p, type: p.departmentId ? 'DEPARTMENT_SPECIFIC' : 'GLOBAL' })), total, page, pageSize));

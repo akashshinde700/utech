@@ -143,7 +143,7 @@ async function list(req, res) {
   }
   const [items, total] = await Promise.all([
     prisma.jobcardOperation.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir }, include: TASK_INCLUDE,
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }], include: TASK_INCLUDE,
     }),
     prisma.jobcardOperation.count({ where }),
   ]);

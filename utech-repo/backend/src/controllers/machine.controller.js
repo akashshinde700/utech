@@ -12,7 +12,7 @@ async function list(req, res) {
     ? { OR: [{ name: { contains: search } }, { code: { contains: search } }] }
     : {};
   const [items, total] = await Promise.all([
-    prisma.machine.findMany({ where, skip, take, orderBy: { [sortBy]: sortDir } }),
+    prisma.machine.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }] }),
     prisma.machine.count({ where }),
   ]);
   res.json(paginated(items, total, page, pageSize));

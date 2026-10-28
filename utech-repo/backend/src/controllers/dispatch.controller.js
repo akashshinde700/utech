@@ -20,7 +20,7 @@ async function list(req, res) {
   if (req.query.partyId) where.partyId = parseInt(req.query.partyId, 10);
   if (search) where.OR = [{ number: { contains: search } }, { party: { name: { contains: search } } }];
   const [items, total] = await Promise.all([
-    prisma.dispatchChallan.findMany({ where, skip, take, orderBy: { [sortBy]: sortDir }, include: { party: true } }),
+    prisma.dispatchChallan.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }], include: { party: true } }),
     prisma.dispatchChallan.count({ where }),
   ]);
   res.json(paginated(items, total, page, pageSize));

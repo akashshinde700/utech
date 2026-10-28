@@ -247,10 +247,10 @@ export default function Dashboard() {
       <PageHeader title="Smart Dashboard" subtitle="Your manufacturing workspace, at a glance"
         action={<div className="flex items-center gap-2 text-xs font-semibold text-slate-500"><CalendarDays className="h-4 w-4" aria-hidden="true" />{today}</div>} />
 
-      <section className="relative overflow-hidden rounded-2xl bg-[#153443] px-6 py-6 sm:px-8 sm:py-7 text-white">
+      <section className="relative overflow-hidden rounded-2xl bg-[#2a1656] px-6 py-6 sm:px-8 sm:py-7 text-white">
         <div className="relative z-10 flex flex-wrap items-end justify-between gap-5">
           <div>
-            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.13em] text-[#8bd8c9]"><span className="h-2 w-2 rounded-full bg-[#5fd3b6]" /> Operations overview</div>
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.13em] text-brand-200"><span className="h-2 w-2 rounded-full bg-brand-400" /> Operations overview</div>
             <h2 className="mt-3 text-xl sm:text-2xl font-bold tracking-tight">Welcome back, {user?.name?.split(' ')[0] || 'there'}.</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">Keep an eye on sales, production and inventory — all in one place.</p>
           </div>

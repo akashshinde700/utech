@@ -76,7 +76,7 @@ async function list(req, res) {
   const where = andConditions.length ? { AND: andConditions } : {};
   const [items, total] = await Promise.all([
     prisma.jobcard.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: {
         party: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
