@@ -4,6 +4,7 @@ import { useAuth } from '../../store/auth';
 import { hasPermission } from '../../lib/permissions';
 import NotificationBell from './NotificationBell';
 import ChangePasswordModal from './ChangePasswordModal';
+import QuickActions from './QuickActions';
 import useClickOutside from '../../lib/useClickOutside';
 import { roleLabel } from '../../lib/roleLabel';
 import {
@@ -185,6 +186,7 @@ export default function AppLayout() {
   const [userOpen, setUserOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   // topbar user dropdown: closes on outside click AND Escape (shared hook)
   const userMenuRef = useRef(null);
   useClickOutside(userMenuRef, () => setUserOpen(false), { active: userOpen });
@@ -206,6 +208,49 @@ export default function AppLayout() {
   };
   const pageTitle = navSections.flatMap((s) => s.items)
     .filter(matchesLocation).sort((a, b) => b.to.length - a.to.length)[0]?.label || 'Workspace';
+  const quickItems = navSections.flatMap((section) => section.items.map((item) => ({
+    label: item.label,
+    to: item.to,
+    description: `${section.label} · Go to page`,
+    keywords: section.label,
+  })));
+  if (!isRestricted) {
+    const createActions = [
+      { label: 'New Jobcard', to: '/jobcards/new', description: 'Create a manufacturing jobcard', permission: 'jobcard.create', keywords: 'project manufacturing create' },
+      { label: 'New Invoice', to: '/invoices/new', description: 'Create a customer invoice', permission: 'invoice.create', keywords: 'sales billing create' },
+      { label: 'New Customer Quotation', to: '/quotations/new?type=CUSTOMER', description: 'Prepare a customer quotation', permission: 'customerQuotation.create', keywords: 'sales estimate quotation create' },
+      { label: 'New Vendor Quotation', to: '/quotations/new?type=VENDOR', description: 'Record a vendor quotation', permission: 'vendorQuotation.create', keywords: 'purchase procurement estimate create' },
+      { label: 'New Purchase Order', to: '/purchase-orders/new', description: 'Create a purchase order', permission: 'purchase.create', keywords: 'procurement vendor create' },
+      { label: 'New Customer', to: '/parties/new?type=CUSTOMER', description: 'Add a customer record', permission: 'customerParty.create', keywords: 'party customer create' },
+      { label: 'New Vendor', to: '/parties/new?type=VENDOR', description: 'Add a vendor record', permission: 'vendorParty.create', keywords: 'party vendor supplier create' },
+      { label: 'New Item', to: '/items/new', description: 'Add an inventory item', permission: 'item.create', keywords: 'stock material create' },
+      { label: 'New GRN', to: '/grns/new', description: 'Receive purchased stock into inventory', permission: 'grn.create', keywords: 'goods receipt stock purchase create' },
+      { label: 'New Dispatch', to: '/dispatch/new', description: 'Create a customer dispatch', permission: 'dispatch.create', keywords: 'delivery shipment sales create' },
+      { label: 'New Jobwork', to: '/jobwork/new', description: 'Send material to a vendor for jobwork', permission: 'jobwork.create', keywords: 'outsourcing vendor material create' },
+    ];
+    quickItems.push(...createActions.filter((action) => can(action.permission)));
+  }
+  useEffect(() => {
+    const onAppKeyDown = (event) => {
+      const isCommandK = (event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'k';
+      if (isCommandK) {
+        event.preventDefault();
+        setQuickActionsOpen((current) => !current);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      const typing = target instanceof HTMLElement && (
+        target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
+      );
+      if (!typing && (event.key === '/' || event.key === '?')) {
+        event.preventDefault();
+        setQuickActionsOpen(true);
+      }
+    };
+    document.addEventListener('keydown', onAppKeyDown, true);
+    return () => document.removeEventListener('keydown', onAppKeyDown, true);
+  }, []);
   const [expandedSections, setExpandedSections] = useState({
     dashboard: true,
     'my-projects': true,
@@ -342,7 +387,8 @@ export default function AppLayout() {
             <div className="h-5 w-px bg-slate-200 hidden sm:block"></div>
             <div className="text-xs text-slate-500 font-medium hidden sm:block truncate">Manufacturing workspace</div>
           </div>
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-3 shrink-0">
+            <QuickActions items={quickItems} open={quickActionsOpen} onOpenChange={setQuickActionsOpen} />
             <NotificationBell />
             <div className="relative" ref={userMenuRef}>
               <button
