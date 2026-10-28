@@ -64,7 +64,11 @@ async function check(label, url) {
   }
   await open.click();
 
-  const shapeVisible = await page.locator('#mc-shape').isVisible().catch(() => false);
+  // the embedded calculator fetches the shape/metal catalogue on mount, so the
+  // shape picker appears a moment after the panel does -- wait for it instead
+  // of reading the DOM in the same tick
+  const shapeVisible = await page.waitForSelector('#mc-shape', { timeout: 20000 })
+    .then(() => true).catch(() => false);
 
   // Drive it the whole way: a 100 mm round bar, 1 m long, in the default metal.
   // /api/metal-calculator/calculate only computes -- it writes nothing -- so the
@@ -77,8 +81,10 @@ async function check(label, url) {
     await page.locator('#mc-L').fill('1000').catch(() => {});
     await page.getByRole('button', { name: 'Calculate', exact: true }).click().catch(() => {});
     const kg = page.getByText(/\d+\.\d+ kg/).first();
+    await kg.waitFor({ timeout: 20000 }).catch(() => {});
     weightShown = await kg.innerText().catch(() => '(not calculated)');
-    applyPresent = await page.getByRole('button', { name: 'Use this material size' }).isVisible().catch(() => false);
+    const apply = page.getByRole('button', { name: 'Use this material size' });
+    applyPresent = await apply.waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
   }
 
   const closes = await page.getByRole('button', { name: 'Close calculator' }).isVisible().catch(() => false);
