@@ -262,6 +262,31 @@ database-only backup restores an ERP whose drawings all 404.
 | `prisma migrate diff` against the data model | empty |
 | `db:check-integrity` on the restored data | reported the two drifts injected before the dump, proving the copy is faithful |
 
+### The first production run of this found two faults in it
+
+The deploy on 28 Oct took the pre-migration dump and **reported success on a
+20-byte empty archive**. Both causes are now fixed in `scripts/backup.sh` and in
+the deploy script, and the dump is verified before anything is migrated:
+
+- `mysqldump | gzip > file` exits with **gzip's** status. gzip compresses an
+  empty stream without complaint, so a failed dump passed the gate.
+- mysqldump could not authenticate: `2061: Authentication plugin
+  'caching_sha2_password' reported error: Authentication requires secure
+  connection`. Over a plain TCP connection the client must ask the server for
+  its RSA public key first (`--get-server-public-key`). Prisma's driver does
+  that handshake itself, which is why migrations ran while the dump did not —
+  and why the local drill passed.
+
+The migration itself applied cleanly and `prisma migrate diff` on production
+reports **"No difference detected"**, so the production schema now matches the
+data model. But it was migrated without a usable backup, which is the one thing
+this section exists to prevent. A verified dump must be taken before the next
+migration.
+
+The dump is also now verified by reading it back — `gzip -t`, a `CREATE TABLE`
+count, and mysqldump's `Dump completed` marker — because an archive that has
+not been read back is a guess.
+
 On down-migrations (AUD-126): the documented answer is deliberately that there
 are none. A hand-written `DROP COLUMN` run under pressure destroys the data the
 column held. The procedure is to take a backup before `migrate deploy` — one
@@ -298,6 +323,21 @@ command, and the whole rollback plan — and otherwise to roll *forward*.
 - `tests/helpers/routeInventory.js` threw on any `app.use('/api/...', x)` whose
   second argument was not a router, which the new rate limiter is. It now skips
   middleware mounts.
+- **Line endings.** `core.autocrlf` is on, so git checked `scripts/backup.sh`
+  and `scripts/restore.sh` out with CRLF — and a shell script with CRLF is
+  unusable on the server: the carriage return becomes part of the interpreter
+  path and the kernel answers `bad interpreter: no such file or directory`.
+  `.gitattributes` now pins `*.sh` to LF.
+
+  Migration `.sql` files are deliberately **not** pinned. Prisma records a
+  checksum of every applied migration, and production holds the checksums of the
+  CRLF copies this working tree uploaded; re-encoding them to LF made the next
+  `prisma migrate deploy` reject all 43 as "modified after they were applied".
+  That was caught before it shipped and reverted. **Latent hazard worth knowing:**
+  deploying from a Linux machine or from CI would upload LF copies and hit
+  exactly that error. The one-time fix if it ever happens is to normalise both
+  sides and re-point the checksums with `prisma migrate resolve`, not to edit the
+  migrations.
 
 ## 9. Verified, not changed
 

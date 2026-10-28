@@ -46,6 +46,26 @@ locking the plant out of the ERP while it runs. `_prisma_migrations` is an
 ordinary table and is included, which is what lets a restored database know
 which migrations it already has.
 
+The script then **reads the archive back** — `gzip -t`, a count of `CREATE TABLE`
+statements, and mysqldump's own `Dump completed` marker — and fails if any of
+those is wrong. That check exists because the first version of this script
+produced a 20-byte empty archive and reported success:
+
+- `mysqldump | gzip > file` exits with **gzip's** status, and gzip compresses an
+  empty stream without complaint, so a failed dump looked like a backup.
+  `set -euo pipefail` at the top of the script is what makes the pipeline fail
+  with mysqldump.
+- mysqldump could not authenticate at all on this server:
+  `2061: Authentication plugin 'caching_sha2_password' reported error:
+  Authentication requires secure connection`. The database account uses
+  `caching_sha2_password`, and over a plain TCP connection the client must ask
+  the server for its RSA public key first — hence `--get-server-public-key`.
+  The application never showed this, because Prisma's own driver handles that
+  handshake; only mysqldump needed the flag.
+
+A backup you have not read back is a guess, so neither the script nor the
+deploy trusts one.
+
 The script deletes its own files older than 14 days. That is the entire
 retention policy — change the `-mtime +14` in `scripts/backup.sh` deliberately,
 not by accident.
@@ -148,6 +168,10 @@ an empty schema and the company-inventory seed loaded:
 | `prisma migrate status` on the restored database | **Database schema is up to date!** |
 | `prisma migrate diff` against `schema.prisma` | empty — no drift |
 | `db:check-integrity` | reported the two drifts that had been injected on purpose before the dump, proving the copy is faithful and the check works on restored data |
+
+That drill was run with a local MySQL where the client authenticates without
+the extra flag, which is exactly why the two faults above survived to the first
+production run. Re-run the drill **on the server** after any change to it.
 
 ## What to do when the numbers look wrong
 

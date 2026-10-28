@@ -1,0 +1,11 @@
+# Shell scripts run on the Linux server. Git was checking them out with CRLF
+# on this Windows machine, which makes a committed script unusable there: the
+# carriage return becomes part of the interpreter path and the kernel answers
+# 'bad interpreter: no such file or directory'. Pin them to LF.
+*.sh text eol=lf
+
+# Migration .sql files are deliberately NOT pinned here. Prisma stores a
+# checksum of each applied migration, and production already holds the
+# checksums of the CRLF copies this working tree uploaded. Re-encoding them
+# would make the next `prisma migrate deploy` reject every applied migration
+# as modified. See audit/AUDIT_2026-10-28_FULL_PASS.md.
