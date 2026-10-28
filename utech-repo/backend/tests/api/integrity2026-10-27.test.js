@@ -94,12 +94,19 @@ describe('AUD-215 — date-range upper bound includes the whole end day', () => 
     const item = await db.item.create({ data: { code: 'INT-I1', name: 'Ledger item', currentStock: 0 } });
     await post('/api/stock/adjust', { itemId: item.id, qty: 10, notes: 'late movement' });
 
-    const ledger = await auth(request(app).get('/api/stock/ledger?to=2026-10-27'));
+    // the movement is stamped now, so the end day under test has to be today's
+    // — a hard-coded date turns this into a test that passes only on the day it
+    // was written
+    const today = new Date();
+    const endDay = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const nextMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+
+    const ledger = await auth(request(app).get(`/api/stock/ledger?to=${endDay}`));
     expect(ledger.status).toBe(200);
     expect(ledger.body.length).toBeGreaterThan(0);
-    expect(ledger.body.every((r) => new Date(r.createdAt || r.date) < new Date('2026-10-28T00:00:00.000Z'))).toBe(true);
+    expect(ledger.body.every((r) => new Date(r.createdAt || r.date) < nextMidnight)).toBe(true);
 
-    const report = await auth(request(app).get('/api/reports/stock-ledger.xlsx?to=2026-10-27'));
+    const report = await auth(request(app).get(`/api/reports/stock-ledger.xlsx?to=${endDay}`));
     expect(report.status).toBe(200);
     expect(report.headers['x-export-truncated']).toBe('false');
   });
