@@ -61,7 +61,9 @@ async function renderAt(user, path, expectedHeading) {
       <App />
     </MemoryRouter>,
   );
-  await screen.findByRole('heading', { level: 1, name: expectedHeading });
+  // A lazily-loaded page arrives over an import(), and these 21 test files run
+  // in parallel -- the default 1s was enough in isolation and not under load.
+  await screen.findByRole('heading', { level: 1, name: expectedHeading }, { timeout: 15000 });
   return screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent);
 }
 

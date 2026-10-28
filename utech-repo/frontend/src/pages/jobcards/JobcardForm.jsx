@@ -11,6 +11,7 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import { styles } from '../../lib/formStyles';
 import { positiveNumber, required } from '../../lib/validation';
 import { todayLocal } from '../../lib/format';
+import { lineHasContent, linesToSave } from '../../lib/jobcardLines';
 import toast from 'react-hot-toast';
 
 const newLine = () => ({ itemId: '', itemName: '', qty: 1, uomCode: '', notes: '' });
@@ -23,9 +24,6 @@ const DOC_CATEGORIES = [
 
 // a line the user actually started filling — untouched rows are ignored by
 // validation (they still go out in the payload exactly as before)
-const lineInPlay = (l) =>
-  !!(l.itemId || (l.itemName || '').trim() || String(l.qty ?? '').trim() === '' ||
-    (l.uomCode || '').trim() || (l.notes || '').trim());
 
 export default function JobcardForm() {
   const { id } = useParams();
@@ -274,7 +272,7 @@ export default function JobcardForm() {
     if (qtyErr) nextErrors.qtyOrdered = qtyErr;
     const lineErrs = {};
     form.lines.forEach((l, i) => {
-      if (!lineInPlay(l)) return;
+      if (!lineHasContent(l)) return;
       const lq = positiveNumber(l.qty, 'Line qty');
       if (lq) lineErrs[i] = { qty: lq };
     });
@@ -303,7 +301,9 @@ export default function JobcardForm() {
         qtyOrdered: Number(form.qtyOrdered),
         startDate: form.startDate || null,
         endDate: form.endDate || null,
-        lines: form.lines.map((l) => {
+        // linesToSave drops rows nobody filled in, so adding a line by
+        // accident cannot send a quantity-less line the API has to refuse
+        lines: linesToSave(form.lines).map((l) => {
           const { _pendingFiles, ...rest } = l;
           return { ...rest, itemId: l.itemId ? Number(l.itemId) : null, qty: Number(l.qty) };
         }),
