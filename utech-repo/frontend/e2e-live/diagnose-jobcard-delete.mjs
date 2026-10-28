@@ -94,9 +94,9 @@ console.log(`  3. allocation history while CANCELLED  : ${jc.body.status === 'CA
 
 let verdict;
 if (openReservations.length) {
-  verdict = '400 — "Release customer-material reservations before cancelling this job card"';
+  verdict = `400 — "Release the ${openReservations} customer-material reservation${openReservations === 1 ? '' : 's'} on this job card before cancelling it"`;
 } else if (openAssignments.length) {
-  verdict = '400 — "Finish or cancel open drawing assignments before cancelling this job card"';
+  verdict = `400 — "Finish or cancel the ${openAssignments} open drawing assignment${openAssignments === 1 ? '' : 's'} on this job card before cancelling it"`;
 } else if (jc.body.status === 'CANCELLED' && reservations.length) {
   verdict = '400 — "Job card has allocation history and cannot be permanently deleted"';
 } else if (jc.body.status === 'CANCELLED') {

@@ -339,6 +339,42 @@ command, and the whole rollback plan — and otherwise to roll *forward*.
   sides and re-point the checksums with `prisma migrate resolve`, not to edit the
   migrations.
 
+## 8b. Found by testing the live site (28 Oct, after the first deploy)
+
+The browser console reported `api/jobcards/1 400` twice. A read-only sweep of
+the live site — 41 screens, every non-GET request aborted in the network layer
+so nothing could be written — came back with **zero findings**, including
+`/jobcards/1` and its edit page. So the 400 was not a page load.
+
+A read-only diagnostic then answered it from live data without issuing the
+DELETE it was reasoning about: **job card JC-26-00001 has two drawing
+assignments still `ASSIGNED`**, so `DELETE /api/jobcards/1` is refused. The API
+is right — cancelling the card would leave assigned work pointing at nothing.
+
+What was wrong was the answer the user got: the reason arrived as a toast and
+faded, the dialog stayed open still offering "Mark as cancelled" (so the obvious
+next move was to press it again and get the same 400 — which is exactly the pair
+of console lines reported), nothing said how much was in the way or where to
+clear it, and the page toasted the message itself while `api.js` already toasts
+every 4xx, so it appeared twice.
+
+Fixed: the API names the count ("Finish or cancel the 2 open drawing assignments
+on this job card before cancelling it"), and the dialog keeps the refusal, links
+to `/assignments` or `/customer-material`, states the job card was not changed,
+and relabels its button "Try again". Six new tests; the frontend ones fail
+against the previous page.
+
+Separately, a latent defect in the same area: `JobcardForm`'s `lineInPlay`
+predicate had its quantity clause inverted (`String(l.qty ?? '').trim() === ''`
+— "in play if the quantity is EMPTY"), so it decided what to validate while the
+payload sent every row. Confirmed against production that a line with a
+quantity of 0, a negative quantity, or a non-numeric one is refused with 400
+(the probe cannot write: validation runs before the controller and the id used
+does not exist). The rule now lives in `src/lib/jobcardLines.js` with the two
+questions answered separately — what to validate, and what to send.
+
+The live scripts are in `frontend/e2e-live/` and are read-only by construction.
+
 ## 9. Verified, not changed
 
 - **Authorization.** `requireAuth` then `requirePermission` on every route, the
