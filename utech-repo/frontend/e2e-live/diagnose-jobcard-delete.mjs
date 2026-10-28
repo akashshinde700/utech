@@ -92,19 +92,41 @@ console.log(`  2. open drawing assignments            : ${openAssignments.length
   + (openAssignments.length ? ` -> ${JSON.stringify(openAssignments.map((a) => ({ id: a.id, status: a.status })))}` : ''));
 console.log(`  3. allocation history while CANCELLED  : ${jc.body.status === 'CANCELLED' ? `${reservations.length} allocation(s) ever` : 'not applicable (status is not CANCELLED)'}`);
 
-let verdict;
+// A SUPERADMIN is not refused: the cancel releases open reservations and
+// cancels open assignments itself. Every other role is stopped. So the honest
+// answer is two answers.
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+let others;
 if (openReservations.length) {
-  verdict = `400 — "Release the ${openReservations} customer-material reservation${openReservations === 1 ? '' : 's'} on this job card before cancelling it"`;
+  others = `400 — "Release the ${plural(openReservations.length, 'customer-material reservation')} on this job card before cancelling it"`;
 } else if (openAssignments.length) {
-  verdict = `400 — "Finish or cancel the ${openAssignments} open drawing assignment${openAssignments === 1 ? '' : 's'} on this job card before cancelling it"`;
+  others = `400 — "Finish or cancel the ${plural(openAssignments.length, 'open drawing assignment')} on this job card before cancelling it"`;
 } else if (jc.body.status === 'CANCELLED' && reservations.length) {
-  verdict = '400 — "Job card has allocation history and cannot be permanently deleted"';
+  others = '400 — "Job card has allocation history and cannot be permanently deleted"';
 } else if (jc.body.status === 'CANCELLED') {
-  verdict = '200 — a delete would PERMANENTLY remove this job card';
+  others = '200 — permanently removes this job card';
 } else {
-  verdict = '200 — a delete would mark this job card CANCELLED';
+  others = '200 — marks this job card CANCELLED';
 }
-console.log(`\na DELETE right now would answer: ${verdict}`);
+
+let owner;
+if (jc.body.status === 'CANCELLED') {
+  const extra = reservations.length
+    ? `, ${plural(reservations.length, 'reservation record')} removed (written to the audit log first)`
+    : '';
+  owner = `200 — permanently removes this job card${extra}`;
+} else {
+  const clears = [
+    openReservations.length && `${plural(openReservations.length, 'reservation')} released`,
+    openAssignments.length && `${plural(openAssignments.length, 'open assignment')} cancelled`,
+  ].filter(Boolean);
+  owner = `200 — marks it CANCELLED${clears.length ? `, ${clears.join(' and ')}` : ''}`;
+}
+
+console.log('\na DELETE right now would answer:');
+console.log(`  any other role : ${others}`);
+console.log(`  a SUPERADMIN   : ${owner}`);
 console.log('(no DELETE was issued by this script)');
 
 await browser.close();

@@ -60,6 +60,15 @@ const which = await deleteButton.getAttribute('aria-label');
 console.log(`signed in as ${EMAIL}\ntarget: ${which} (the DELETE is answered locally, never sent)\n`);
 
 await deleteButton.click();
+
+// Before anything is clicked: a SUPERADMIN is never refused, so the dialog has
+// to say what the cancel will clear. Reading this costs no request at all.
+const dialogBefore = page.getByRole('dialog');
+const ownerWarning = await dialogBefore
+  .getByText(/reservations on it will be released and open drawing/i)
+  .isVisible().catch(() => false);
+console.log(`owner warned before the click : ${ownerWarning}`);
+
 await page.getByRole('button', { name: 'Mark as cancelled' }).click();
 
 const dialog = page.getByRole('dialog');
@@ -77,7 +86,7 @@ console.log(`link to clear the blocker   : ${linkHref || '(none)'}`);
 console.log(`button now says Try again   : ${retryShown}`);
 console.log(`no longer re-offers cancel  : ${oldButtonGone}`);
 
-const ok = deleteIntercepted === 1 && refusalShown && unchangedShown
+const ok = ownerWarning && deleteIntercepted === 1 && refusalShown && unchangedShown
   && linkHref === '/assignments' && retryShown && oldButtonGone;
 console.log(`\n${ok ? 'PASS' : 'FAIL'}: the deployed app ${ok ? 'turns the refusal into a next step' : 'does not show the refusal properly'}`);
 
