@@ -40,15 +40,42 @@ export default function JobcardsPage() {
   }
   useEffect(() => { load(); }, [page, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Why the last delete was refused. The API protects a job card that still
+  // has open drawing assignments or customer-material reservations, and the
+  // reason used to arrive as a toast that vanished — leaving the dialog sitting
+  // there as a dead end. Keep it on screen, with a way to go and clear it.
+  const [deleteBlocked, setDeleteBlocked] = useState(null);
+
   const isCancelledDelete = confirmDelete?.status === 'CANCELLED';
-  const deleteMessage = confirmDelete
-    ? isCancelledDelete
-      ? `Permanently delete jobcard ${confirmDelete.number}? This cannot be undone.`
-      : `Delete jobcard ${confirmDelete.number}? This will mark it as CANCELLED — delete again to remove it for good.`
-    : '';
+  // Where to go to clear each blocker, keyed off what the API said
+  const blockerLink = deleteBlocked && /drawing assignment/i.test(deleteBlocked)
+    ? { to: '/assignments', label: 'Open Drawing Assignments' }
+    : deleteBlocked && /customer-material|reservation/i.test(deleteBlocked)
+      ? { to: '/customer-material', label: 'Open Customer Material' }
+      : null;
+
+  const deleteMessage = !confirmDelete ? '' : deleteBlocked ? (
+    <>
+      <span className="font-medium text-danger-700">{deleteBlocked}</span>
+      {blockerLink && (
+        <>
+          {' '}
+          <Link to={blockerLink.to} className="text-brand-600 underline underline-offset-2">
+            {blockerLink.label}
+          </Link>
+        </>
+      )}
+      <span className="mt-2 block text-slate-500">
+        Jobcard {confirmDelete.number} has not been changed.
+      </span>
+    </>
+  ) : isCancelledDelete
+    ? `Permanently delete jobcard ${confirmDelete.number}? This cannot be undone.`
+    : `Delete jobcard ${confirmDelete.number}? This will mark it as CANCELLED — delete again to remove it for good.`;
 
   async function doDelete() {
     if (!confirmDelete) return;
+    setDeleteBlocked(null);
     setDeleting(true);
     try {
       const { data: res } = await api.delete(`/jobcards/${confirmDelete.id}`);
@@ -56,8 +83,9 @@ export default function JobcardsPage() {
       setConfirmDelete(null);
       load();
     } catch (err) {
-      console.error(err);
-      toast.error(err.response?.data?.message || 'Failed to delete jobcard');
+      // the API's refusal is the useful part — keep it on screen rather than
+      // letting a toast carry it away (api.js already toasts it once)
+      setDeleteBlocked(err.response?.data?.message || 'This jobcard could not be deleted.');
     } finally {
       setDeleting(false);
     }
@@ -113,11 +141,11 @@ export default function JobcardsPage() {
 
       <ConfirmDialog
         open={!!confirmDelete}
-        onClose={() => setConfirmDelete(null)}
+        onClose={() => { setConfirmDelete(null); setDeleteBlocked(null); }}
         onConfirm={doDelete}
         title={isCancelledDelete ? 'Delete jobcard permanently?' : 'Delete jobcard?'}
         message={deleteMessage}
-        confirmLabel={isCancelledDelete ? 'Delete permanently' : 'Mark as cancelled'}
+        confirmLabel={deleteBlocked ? 'Try again' : isCancelledDelete ? 'Delete permanently' : 'Mark as cancelled'}
         variant="destructive"
         loading={deleting}
       />

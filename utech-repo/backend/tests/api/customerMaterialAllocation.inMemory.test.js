@@ -170,7 +170,11 @@ it('requires release before cancelling, completing or changing a reserved job ca
   const allocation = await reserve(lot.id, cards[0].id, 10, 5);
   expect(allocation.status).toBe(201);
   const id = cards[0].id;
-  expect((await auth(request(app).delete(`/api/jobcards/${id}`))).status).toBe(400);
+  const refused = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(refused.status).toBe(400);
+  // the refusal has to say HOW MUCH is in the way: "something is reserved" does
+  // not tell anyone whether this is one stale row or live work
+  expect(refused.body.message).toBe('Release the 1 customer-material reservation on this job card before cancelling it');
   expect((await auth(request(app).put(`/api/jobcards/${id}`)).send({ status: 'COMPLETED' })).status).toBe(400);
   expect((await auth(request(app).post(`/api/jobcards/${id}/complete`))).status).toBe(400);
   expect((await auth(request(app).put(`/api/jobcards/${id}`)).send({ partyId: null })).status).toBe(400);
@@ -267,4 +271,37 @@ it('cannot reserve the same quantity twice in concurrent demo transactions', asy
   expect(responses.map((r) => r.status).sort()).toEqual([201, 400]);
   const saved = (await get(lot.id)).body;
   expect([saved.reservedQty, saved.unallocatedQty, saved.reservedWeight, saved.unallocatedWeight]).toEqual([60, 40, 20, 30]);
+});
+
+it('names how many open drawing assignments are blocking a job-card cancellation', async () => {
+  const { cards } = await setupLot();
+  const id = cards[0].id;
+  const assignee = await db.user.findUnique({ where: { email: 'allocation@example.invalid' } });
+  const attachment = await db.attachment.create({ data: {
+    refType: 'JOBCARD', refId: id, filename: 'drawing.pdf', storedName: 'drawing.pdf',
+    mimeType: 'application/pdf', size: 1,
+  } });
+  for (const page of [1, 2]) {
+    const created = await auth(request(app).post('/api/assignments'))
+      .send({ attachmentId: attachment.id, assignedToId: assignee.id, pageNumbers: [page] });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+  }
+
+  const refused = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(refused.status).toBe(400);
+  expect(refused.body.message).toBe('Finish or cancel the 2 open drawing assignments on this job card before cancelling it');
+
+  // one down, and the message follows the count rather than repeating itself
+  const open = await db.assignment.findMany({ where: { attachmentId: attachment.id } });
+  await db.assignment.update({ where: { id: open[0].id }, data: { status: 'CANCELLED' } });
+  const stillRefused = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(stillRefused.status).toBe(400);
+  expect(stillRefused.body.message).toBe('Finish or cancel the 1 open drawing assignment on this job card before cancelling it');
+
+  // with none open the cancellation goes through, and the job card is kept
+  await db.assignment.update({ where: { id: open[1].id }, data: { status: 'CANCELLED' } });
+  const cancelled = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+  expect(cancelled.body.deleted).toBe(false);
+  expect((await db.jobcard.findUnique({ where: { id } })).status).toBe('CANCELLED');
 });

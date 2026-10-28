@@ -308,12 +308,23 @@ async function remove(req, res) {
     const jc = await tx.jobcard.findUnique({ where: { id } });
     if (!jc) throw new HttpError(404, 'Jobcard not found');
     await assertJobcardAccess(req.user, jc, tx);
-    if (await tx.customerMaterialAllocation.count({ where: { jobcardId: id, releasedAt: null } })) {
-      throw new HttpError(400, 'Release customer-material reservations before cancelling this job card');
+    // Both refusals below are the system protecting records that are still in
+    // use, and both used to say only that something was in the way. Someone
+    // looking at a job card they cannot cancel needs to know HOW MUCH is in the
+    // way to judge whether it is a stale leftover or live work, so the count
+    // goes in the message.
+    const openReservations = await tx.customerMaterialAllocation.count({
+      where: { jobcardId: id, releasedAt: null },
+    });
+    if (openReservations) {
+      throw new HttpError(400, `Release the ${openReservations} customer-material reservation${openReservations === 1 ? '' : 's'} on this job card before cancelling it`);
     }
-    if (await tx.assignment.count({ where: {
+    const openAssignments = await tx.assignment.count({ where: {
       status: { notIn: ['COMPLETED', 'CANCELLED'] }, attachment: { refType: 'JOBCARD', refId: id },
-    } })) throw new HttpError(400, 'Finish or cancel open drawing assignments before cancelling this job card');
+    } });
+    if (openAssignments) {
+      throw new HttpError(400, `Finish or cancel the ${openAssignments} open drawing assignment${openAssignments === 1 ? '' : 's'} on this job card before cancelling it`);
+    }
     if (jc.status === 'CANCELLED') {
       if (await tx.customerMaterialAllocation.count({ where: { jobcardId: id } })) {
         throw new HttpError(400, 'Job card has allocation history and cannot be permanently deleted');
