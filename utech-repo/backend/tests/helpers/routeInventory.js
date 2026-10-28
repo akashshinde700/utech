@@ -41,7 +41,10 @@ function loadInventory() {
 
   for (const { mount, varName } of mounts) {
     const file = varToFile[varName];
-    if (!file) throw new Error(`no require() found for router variable ${varName}`);
+    // Not every app.use('/api/...', x) mounts a router — the export rate
+    // limiter is mounted the same way. Anything with no require('./routes/...')
+    // behind it is middleware, and has no routes to inventory.
+    if (!file) continue;
     const rel = path.join('src/routes', `${file}.js`);
     const src = fs.readFileSync(path.join(BACKEND, rel), 'utf8');
 

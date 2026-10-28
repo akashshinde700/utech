@@ -101,6 +101,36 @@ app.use(['/api/auth/login', '/api/auth/otp/request', '/api/auth/otp/verify'], au
 // quotation-image APIs, which check authentication and document permissions.
 // Never mount UPLOAD_DIR as a public static directory.
 
+// This is a private business system on a public domain. robots.txt
+// (frontend/public/robots.txt) asks crawlers to stay out; this header tells
+// the ones that fetched a URL anyway not to index or follow it, which is the
+// part robots.txt cannot do. It costs nothing and keeps the login page and
+// /health out of search results.
+app.use((_req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  next();
+});
+
+// Exports and generated documents are the expensive endpoints: each one runs a
+// wide query (capped at 5,000 rows) or renders a PDF, so they are the obvious
+// way to tie up the single API process. A human runs a handful of reports in a
+// sitting; a script runs thousands. This is the only global limit — an IP-wide
+// cap on the whole API would be an outage waiting to happen, because the
+// entire plant reaches the server from one NAT address.
+const exportLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: env.NODE_ENV === 'production' ? 60 : 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => env.NODE_ENV === 'test',
+  handler: (_req, res) =>
+    res.status(429).json({
+      error: 'TooManyRequests',
+      message: 'Too many exports in a short time. Please wait a few minutes before downloading more.',
+    }),
+});
+app.use('/api/reports', exportLimiter);
+
 // health
 app.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 

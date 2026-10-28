@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { stubApi } from '../helpers/apiStubs';
 
@@ -47,7 +47,11 @@ function seedSession(user) {
   localStorage.setItem('utech.user', JSON.stringify(user));
 }
 
-async function renderAt(user, path) {
+// Routes are lazy (App.jsx), so a page arrives after a tick -- wait for the
+// heading the caller is actually asking about rather than for "some h1", which
+// a previous render in the same test would satisfy immediately.
+async function renderAt(user, path, expectedHeading) {
+  cleanup(); // these tests render twice in one case; start from an empty DOM
   vi.resetModules();
   seedSession(user);
   stubApi(user); // /auth/me must echo the same profile or Protected's refresh overwrites it
@@ -57,7 +61,7 @@ async function renderAt(user, path) {
       <App />
     </MemoryRouter>,
   );
-  await waitFor(() => expect(screen.getAllByRole('heading', { level: 1 }).length).toBeGreaterThan(0));
+  await screen.findByRole('heading', { level: 1, name: expectedHeading });
   return screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent);
 }
 
@@ -65,30 +69,30 @@ describe('restricted users: every visible sidebar link opens a real page', () =>
   beforeEach(() => localStorage.clear());
 
   it('AUD-101: an OPERATOR can open /my-tasks (the sidebar offers it)', async () => {
-    expect(await renderAt(OPERATOR, '/my-tasks')).toContain('My Tasks');
+    expect(await renderAt(OPERATOR, '/my-tasks', 'My Tasks')).toContain('My Tasks');
   });
 
   it('an OPERATOR can open their dashboard and their assignments', async () => {
-    expect(await renderAt(OPERATOR, '/')).toContain('My Projects');
-    expect(await renderAt(OPERATOR, '/assignments')).toContain('Assignments');
+    expect(await renderAt(OPERATOR, '/', 'My Projects')).toContain('My Projects');
+    expect(await renderAt(OPERATOR, '/assignments', 'Assignments')).toContain('Assignments');
   });
 
   it('AUD-101: a Department Head can open /tasks (the sidebar offers it)', async () => {
-    expect(await renderAt(DEPT_HEAD, '/tasks')).toContain('Task Progress');
+    expect(await renderAt(DEPT_HEAD, '/tasks', 'Task Progress')).toContain('Task Progress');
   });
 
   it('AUD-101: a Department Head can open /processes (the sidebar offers it)', async () => {
-    expect(await renderAt(DEPT_HEAD, '/processes')).toContain('Process Master');
+    expect(await renderAt(DEPT_HEAD, '/processes', 'Process Master')).toContain('Process Master');
   });
 
   it('still blocks a restricted user from modules they have no business in', async () => {
-    const headings = await renderAt(OPERATOR, '/invoices');
+    const headings = await renderAt(OPERATOR, '/invoices', 'My Projects');
     expect(headings).not.toContain('Invoices');
     expect(headings).toContain('My Projects');
   });
 
   it('does not restrict a normal manager role', async () => {
-    expect(await renderAt(MANAGER, '/invoices')).toContain('Invoices');
+    expect(await renderAt(MANAGER, '/invoices', 'Invoices')).toContain('Invoices');
   });
 });
 

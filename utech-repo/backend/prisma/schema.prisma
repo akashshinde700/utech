@@ -1280,7 +1280,7 @@ model Expense {
   id          Int      @id @default(autoincrement())
   number      String   @unique
   date        DateTime
-  category    String // "Travel" | "Salary" | "Material" | "Utility" | "Other"
+  category    String // the list the expense form offers, enforced by validators/expense.schema.js: Material | Travel | Salary | Utility | Office | Tax | Other
   partyId     Int?
   party       Party?   @relation("PartyExpenses", fields: [partyId], references: [id])
   description String
@@ -1533,6 +1533,8 @@ model SalesReturnLine {
   gstRate       Decimal     @default(18.00) @db.Decimal(5, 2)
   amount        Decimal     @db.Decimal(14, 2)
   reason        String?
+
+  @@index([invoiceLineId])
 }
 
 model PurchaseReturn {
@@ -1580,6 +1582,8 @@ model PurchaseReturnLine {
   gstRate          Decimal        @default(18.00) @db.Decimal(5, 2)
   amount           Decimal        @db.Decimal(14, 2)
   reason           String?
+
+  @@index([grnLineId])
 }
 
 enum BackOrderStatus {

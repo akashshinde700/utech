@@ -39,21 +39,17 @@ export default defineConfig({
     proxy,
   },
   build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('pdfjs-dist')) return 'pdfjs';
-            if (id.includes('recharts') || id.includes('d3-') || id.includes('victory-vendor')) return 'charts';
-            if (id.includes('lucide-react')) return 'icons';
-            return 'vendor';
-          }
-          if (id.includes('/src/pages/')) {
-            const match = id.match(/\/src\/pages\/([^/]+)\//);
-            if (match) return `page-${match[1]}`;
-          }
-        },
-      },
-    },
+    // No manualChunks. Routes are loaded with lazy(import(...)) (see
+    // src/App.jsx) and Rollup splits on those boundaries by itself.
+    //
+    // Hand-grouping used to work against that. Grouping application code per
+    // page folder meant a module shared between the shell and a page landed in
+    // that page's chunk, so the entry depended on it and index.html preloaded
+    // the page regardless. Grouping node_modules into a "vendor" chunk had the
+    // same effect one level down: vendor ended up importing the "charts" chunk,
+    // which pulled 526 kB of charting code into the first load of the login
+    // screen. Letting the bundler follow the real import graph keeps the
+    // initial download to the shell.
+    chunkSizeWarningLimit: 700,
   },
 });

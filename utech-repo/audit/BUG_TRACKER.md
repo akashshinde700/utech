@@ -7,6 +7,25 @@
 > and AUD-213 (dependency advisories, now 0/0) are FIXED — see
 > [`HARDENING_2026-10-27.md`](./HARDENING_2026-10-27.md).
 
+> **2026-10-28 pass (`audit/full-erp-2026-10-28`) — see
+> [`AUDIT_2026-10-28_FULL_PASS.md`](./AUDIT_2026-10-28_FULL_PASS.md).** First pass run
+> against a real MySQL, which found **schema drift that has been in production since the
+> init migration**: two declared foreign keys (`BomItem.itemId`, `Bom.finishedItemId`) were
+> never created, and five item relations were `RESTRICT` where the data model says
+> `SET NULL`. Fixed in one migration, now guarded by a CI job that replays every migration
+> and fails on any diff.
+>
+> Also FIXED this pass: **AUD-129** (nothing re-derived `Item.currentStock` /
+> `Invoice.amountPaid` — added `npm run db:check-integrity`), **AUD-130** (confirmed real:
+> UTC day bounds vs server-local printed dates dropped every night-shift movement from its
+> own day's report), **AUD-108** (first load 36 files / 1.74 MB -> 2 files / 334 kB),
+> **AUD-127** + **AUD-126** (backup/restore scripts and runbook, drilled end to end),
+> **AUD-110**, **AUD-111**, **AUD-109**, **AUD-128**, and the money half of **AUD-115**
+> (`POST`/`PUT /api/expenses` accepted a non-numeric amount, and `PUT` accepted a negative
+> one). **AUD-124** was found to be 2 real missing indexes, not 7. **AUD-113** is pinned by
+> a test with the reason for each of the 17 dead keys; two of them need a decision from the
+> owner.
+
 **Severity key:** P0 = data loss / security breach / production down · P1 = core workflow
 broken for users · P2 = degraded or risky, workaround exists · P3 = hygiene / hardening
 

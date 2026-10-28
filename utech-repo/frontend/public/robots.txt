@@ -1,0 +1,7 @@
+# U-Tech ERP is a private business system. Nothing here is meant for a search
+# index: the only publicly reachable pages are the login screen and /health,
+# and an indexed login page is an invitation to credential stuffing. The API
+# also sends X-Robots-Tag: noindex, nofollow (see backend/src/server.js), so a
+# crawler that ignores this file is still told not to index.
+User-agent: *
+Disallow: /

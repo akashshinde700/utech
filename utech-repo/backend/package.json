@@ -17,6 +17,7 @@
     "lint": "eslint src --ext .js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "db:check-integrity": "node prisma/checkIntegrity.js",
     "items:recompute-weights": "node prisma/recomputeItemWeights.js"
   },
   "prisma": {

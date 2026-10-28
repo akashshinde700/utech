@@ -47,8 +47,11 @@ afterAll(() => vi.restoreAllMocks());
 describe('AUD-215 — date-range upper bound includes the whole end day', () => {
   it('treats a bare to= as an exclusive next-midnight bound and a timestamp as an instant', () => {
     const day = dateRangeFilter('2026-10-01', '2026-10-27');
-    expect(day.gte.toISOString()).toBe('2026-10-01T00:00:00.000Z');
-    expect(day.lt.toISOString()).toBe('2026-10-28T00:00:00.000Z');
+    // a bare YYYY-MM-DD names a day in the plant's calendar, so the bounds are
+    // local midnights (see AUD-130 below) — a fixed UTC string would only hold
+    // on a UTC machine
+    expect(day.gte).toEqual(new Date(2026, 9, 1, 0, 0, 0, 0));
+    expect(day.lt).toEqual(new Date(2026, 9, 28, 0, 0, 0, 0));
     expect(day.lte).toBeUndefined();
 
     const instant = dateRangeFilter(null, '2026-10-27T12:00:00.000Z');
@@ -64,8 +67,12 @@ describe('AUD-215 — date-range upper bound includes the whole end day', () => 
       lines: [{ description: 'Morning line', qty: 1, rate: 100, gstRate: 18 }],
     });
     expect(morning.status, JSON.stringify(morning.body)).toBe(201);
+    // 18:30 on the 27th as the plant experiences it. Built in local time on
+    // purpose: "18:30Z" is already the 28th in IST, so a hard-coded Z instant
+    // would be asserting a different day's invoice on a server east of UTC.
+    const eveningInstant = new Date(2026, 9, 27, 18, 30, 0, 0).toISOString();
     const evening = await post('/api/invoices', {
-      partyId: customer.id, date: '2026-10-27T18:30:00.000Z', isIntraState: true,
+      partyId: customer.id, date: eveningInstant, isIntraState: true,
       lines: [{ description: 'Evening lot charge', qty: 1, rate: 500, gstRate: 18 }],
     });
     expect(evening.status, JSON.stringify(evening.body)).toBe(201);

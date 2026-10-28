@@ -1,72 +1,107 @@
-import { useEffect } from 'react';
+import { lazy, useEffect } from 'react';
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { Compass } from 'lucide-react';
 import Login from './pages/auth/Login.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
-import Dashboard from './pages/Dashboard.jsx';
-import OperatorDashboard from './pages/operator/OperatorDashboard.jsx';
-import UsersPage from './pages/users/UsersPage.jsx';
-import RolesPage from './pages/roles/RolesPage.jsx';
-import PartiesPage from './pages/parties/PartiesPage.jsx';
-import PartyForm from './pages/parties/PartyForm.jsx';
-import ItemsPage from './pages/items/ItemsPage.jsx';
-import ItemForm from './pages/items/ItemForm.jsx';
-import InvoicesPage from './pages/invoices/InvoicesPage.jsx';
-import InvoiceForm from './pages/invoices/InvoiceForm.jsx';
-import InvoiceView from './pages/invoices/InvoiceView.jsx';
-import JobcardsPage from './pages/jobcards/JobcardsPage.jsx';
-import JobcardForm from './pages/jobcards/JobcardForm.jsx';
-import JobcardView from './pages/jobcards/JobcardView.jsx';
-import TasksPage from './pages/tasks/TasksPage.jsx';
-import MyTasksPage from './pages/tasks/MyTasksPage.jsx';
-import JobworkPage from './pages/jobwork/JobworkPage.jsx';
-import JobworkForm from './pages/jobwork/JobworkForm.jsx';
-import DispatchPage from './pages/dispatch/DispatchPage.jsx';
-import DispatchForm from './pages/dispatch/DispatchForm.jsx';
-import ProcessPage from './pages/process/ProcessPage.jsx';
-import ExpensesPage from './pages/expense/ExpensesPage.jsx';
-import PurchaseOrdersPage from './pages/purchase/PurchaseOrdersPage.jsx';
-import PurchaseOrderForm from './pages/purchase/PurchaseOrderForm.jsx';
-import PurchaseOrderView from './pages/purchase/PurchaseOrderView.jsx';
-import GRNsPage from './pages/purchase/GRNsPage.jsx';
-import GRNForm from './pages/purchase/GRNForm.jsx';
-import GRNView from './pages/purchase/GRNView.jsx';
-import QualityPage from './pages/quality/QualityPage.jsx';
-import ProjectsPage from './pages/project/ProjectsPage.jsx';
-import ProjectView from './pages/project/ProjectView.jsx';
-import ReportsPage from './pages/reports/ReportsPage.jsx';
-import SalesAnalytics from './pages/analytics/SalesAnalytics.jsx';
-import ProductionAnalytics from './pages/analytics/ProductionAnalytics.jsx';
-import InventoryAnalytics from './pages/analytics/InventoryAnalytics.jsx';
-import SalesReturnsPage from './pages/salesReturns/SalesReturnsPage.jsx';
-import SalesReturnForm from './pages/salesReturns/SalesReturnForm.jsx';
-import PurchaseReturnsPage from './pages/purchaseReturns/PurchaseReturnsPage.jsx';
-import PurchaseReturnForm from './pages/purchaseReturns/PurchaseReturnForm.jsx';
-import BackOrdersPage from './pages/backOrders/BackOrdersPage.jsx';
-import BackOrderForm from './pages/backOrders/BackOrderForm.jsx';
-import ProductionPage from './pages/production/ProductionPage.jsx';
-import ProductionForm from './pages/production/ProductionForm.jsx';
-import ShiftsPage from './pages/production/ShiftsPage.jsx';
-import BomPage from './pages/bom/BomPage.jsx';
-import BomForm from './pages/bom/BomForm.jsx';
-import MachinesPage from './pages/machines/MachinesPage.jsx';
-import MachineForm from './pages/machines/MachineForm.jsx';
-import QuotationsPage from './pages/quotations/QuotationsPage.jsx';
-import QuotationForm from './pages/quotations/QuotationForm.jsx';
-import QuotationView from './pages/quotations/QuotationView.jsx';
-import CustomerMaterialPage from './pages/customerMaterial/CustomerMaterialPage.jsx';
-import CustomerMaterialForm from './pages/customerMaterial/CustomerMaterialForm.jsx';
-import CustomerMaterialView from './pages/customerMaterial/CustomerMaterialView.jsx';
-import VendorWorkOrdersPage from './pages/vendorWorkOrders/VendorWorkOrdersPage.jsx';
-import VendorWorkOrderForm from './pages/vendorWorkOrders/VendorWorkOrderForm.jsx';
-import VendorWorkOrderView from './pages/vendorWorkOrders/VendorWorkOrderView.jsx';
-import StockManagementPage from './pages/stock/StockManagementPage.jsx';
-import DepartmentsPage from './pages/departments/DepartmentsPage.jsx';
-import AssignmentsPage from './pages/assignments/AssignmentsPage.jsx';
-import DepartmentSubCategoryPage from './pages/departments/DepartmentSubCategoryPage.jsx';
-import MetalCalculatorPage from './pages/calculator/MetalCalculatorPage.jsx';
 import { useAuth } from './store/auth';
-import QualityCertificate from './pages/quality/QualityCertificate.jsx';
+
+// A route's code now arrives over the network when the route is opened, which
+// introduces two failure modes a single bundle did not have: the phone is
+// offline, or a deploy has replaced the file an already-open tab is still
+// asking for. Either way the import rejects, and React hands that to the error
+// boundary as "Something went wrong" — useless to someone standing on the shop
+// floor. Retry once (a deploy race usually succeeds on the second try), then
+// say what happened.
+function PageUnavailable() {
+  return (
+    <div className="card p-8 max-w-md mx-auto my-10 text-center">
+      <div className="text-lg font-semibold text-slate-900">This page could not be loaded</div>
+      <p className="mt-2 text-sm text-slate-500">
+        The app could not download this screen. You are most likely offline, or the app was
+        updated while this tab was open. Reconnect and reload to continue.
+      </p>
+      <button type="button" className="btn-primary mt-6 w-full" onClick={() => window.location.reload()}>
+        Reload
+      </button>
+    </div>
+  );
+}
+
+function lazyPage(load) {
+  return lazy(() => load().catch(() => load()).catch(() => ({ default: PageUnavailable })));
+}
+
+// Route code is fetched when a route is opened, not on first load. Before
+// this, App.jsx imported all 63 of them statically, so index.html
+// carried a modulepreload for every one of them (36 JS files, 1.8 MB) --
+// including the 526 kB charting library -- before the login form could
+// render. On the phones this is used on that is the whole of a slow
+// connection spent on screens the user may never open. AppLayout holds the
+// <Suspense> boundary, so the shell stays put while a page arrives.
+const Dashboard = lazyPage(() => import('./pages/Dashboard.jsx'));
+const OperatorDashboard = lazyPage(() => import('./pages/operator/OperatorDashboard.jsx'));
+const UsersPage = lazyPage(() => import('./pages/users/UsersPage.jsx'));
+const RolesPage = lazyPage(() => import('./pages/roles/RolesPage.jsx'));
+const PartiesPage = lazyPage(() => import('./pages/parties/PartiesPage.jsx'));
+const PartyForm = lazyPage(() => import('./pages/parties/PartyForm.jsx'));
+const ItemsPage = lazyPage(() => import('./pages/items/ItemsPage.jsx'));
+const ItemForm = lazyPage(() => import('./pages/items/ItemForm.jsx'));
+const InvoicesPage = lazyPage(() => import('./pages/invoices/InvoicesPage.jsx'));
+const InvoiceForm = lazyPage(() => import('./pages/invoices/InvoiceForm.jsx'));
+const InvoiceView = lazyPage(() => import('./pages/invoices/InvoiceView.jsx'));
+const JobcardsPage = lazyPage(() => import('./pages/jobcards/JobcardsPage.jsx'));
+const JobcardForm = lazyPage(() => import('./pages/jobcards/JobcardForm.jsx'));
+const JobcardView = lazyPage(() => import('./pages/jobcards/JobcardView.jsx'));
+const TasksPage = lazyPage(() => import('./pages/tasks/TasksPage.jsx'));
+const MyTasksPage = lazyPage(() => import('./pages/tasks/MyTasksPage.jsx'));
+const JobworkPage = lazyPage(() => import('./pages/jobwork/JobworkPage.jsx'));
+const JobworkForm = lazyPage(() => import('./pages/jobwork/JobworkForm.jsx'));
+const DispatchPage = lazyPage(() => import('./pages/dispatch/DispatchPage.jsx'));
+const DispatchForm = lazyPage(() => import('./pages/dispatch/DispatchForm.jsx'));
+const ProcessPage = lazyPage(() => import('./pages/process/ProcessPage.jsx'));
+const ExpensesPage = lazyPage(() => import('./pages/expense/ExpensesPage.jsx'));
+const PurchaseOrdersPage = lazyPage(() => import('./pages/purchase/PurchaseOrdersPage.jsx'));
+const PurchaseOrderForm = lazyPage(() => import('./pages/purchase/PurchaseOrderForm.jsx'));
+const PurchaseOrderView = lazyPage(() => import('./pages/purchase/PurchaseOrderView.jsx'));
+const GRNsPage = lazyPage(() => import('./pages/purchase/GRNsPage.jsx'));
+const GRNForm = lazyPage(() => import('./pages/purchase/GRNForm.jsx'));
+const GRNView = lazyPage(() => import('./pages/purchase/GRNView.jsx'));
+const QualityPage = lazyPage(() => import('./pages/quality/QualityPage.jsx'));
+const ProjectsPage = lazyPage(() => import('./pages/project/ProjectsPage.jsx'));
+const ProjectView = lazyPage(() => import('./pages/project/ProjectView.jsx'));
+const ReportsPage = lazyPage(() => import('./pages/reports/ReportsPage.jsx'));
+const SalesAnalytics = lazyPage(() => import('./pages/analytics/SalesAnalytics.jsx'));
+const ProductionAnalytics = lazyPage(() => import('./pages/analytics/ProductionAnalytics.jsx'));
+const InventoryAnalytics = lazyPage(() => import('./pages/analytics/InventoryAnalytics.jsx'));
+const SalesReturnsPage = lazyPage(() => import('./pages/salesReturns/SalesReturnsPage.jsx'));
+const SalesReturnForm = lazyPage(() => import('./pages/salesReturns/SalesReturnForm.jsx'));
+const PurchaseReturnsPage = lazyPage(() => import('./pages/purchaseReturns/PurchaseReturnsPage.jsx'));
+const PurchaseReturnForm = lazyPage(() => import('./pages/purchaseReturns/PurchaseReturnForm.jsx'));
+const BackOrdersPage = lazyPage(() => import('./pages/backOrders/BackOrdersPage.jsx'));
+const BackOrderForm = lazyPage(() => import('./pages/backOrders/BackOrderForm.jsx'));
+const ProductionPage = lazyPage(() => import('./pages/production/ProductionPage.jsx'));
+const ProductionForm = lazyPage(() => import('./pages/production/ProductionForm.jsx'));
+const ShiftsPage = lazyPage(() => import('./pages/production/ShiftsPage.jsx'));
+const BomPage = lazyPage(() => import('./pages/bom/BomPage.jsx'));
+const BomForm = lazyPage(() => import('./pages/bom/BomForm.jsx'));
+const MachinesPage = lazyPage(() => import('./pages/machines/MachinesPage.jsx'));
+const MachineForm = lazyPage(() => import('./pages/machines/MachineForm.jsx'));
+const QuotationsPage = lazyPage(() => import('./pages/quotations/QuotationsPage.jsx'));
+const QuotationForm = lazyPage(() => import('./pages/quotations/QuotationForm.jsx'));
+const QuotationView = lazyPage(() => import('./pages/quotations/QuotationView.jsx'));
+const CustomerMaterialPage = lazyPage(() => import('./pages/customerMaterial/CustomerMaterialPage.jsx'));
+const CustomerMaterialForm = lazyPage(() => import('./pages/customerMaterial/CustomerMaterialForm.jsx'));
+const CustomerMaterialView = lazyPage(() => import('./pages/customerMaterial/CustomerMaterialView.jsx'));
+const VendorWorkOrdersPage = lazyPage(() => import('./pages/vendorWorkOrders/VendorWorkOrdersPage.jsx'));
+const VendorWorkOrderForm = lazyPage(() => import('./pages/vendorWorkOrders/VendorWorkOrderForm.jsx'));
+const VendorWorkOrderView = lazyPage(() => import('./pages/vendorWorkOrders/VendorWorkOrderView.jsx'));
+const StockManagementPage = lazyPage(() => import('./pages/stock/StockManagementPage.jsx'));
+const DepartmentsPage = lazyPage(() => import('./pages/departments/DepartmentsPage.jsx'));
+const AssignmentsPage = lazyPage(() => import('./pages/assignments/AssignmentsPage.jsx'));
+const DepartmentSubCategoryPage = lazyPage(() => import('./pages/departments/DepartmentSubCategoryPage.jsx'));
+const MetalCalculatorPage = lazyPage(() => import('./pages/calculator/MetalCalculatorPage.jsx'));
+const QualityCertificate = lazyPage(() => import('./pages/quality/QualityCertificate.jsx'));
+
 
 // operators, project engineers, and department-scoped roles (Department
 // Head and anyone under them — any role with scopeToDepartment set) only

@@ -29,8 +29,11 @@ describe('stock and accounting safeguards', () => {
     expect(res.status).toBe(200);
     const { where } = getDb().calls('stockLedger.findMany')[0][0];
     expect(where.itemId).toBe(5);
-    expect(where.date.gte.toISOString()).toBe('2026-01-15T00:00:00.000Z');
-    expect(where.date.lt.toISOString()).toBe('2026-01-16T00:00:00.000Z');
+    // the bounds are that day's midnights where the server is, which is the
+    // day the report prints next to the row — asserting a fixed UTC string
+    // would only hold on a UTC machine
+    expect(where.date.gte).toEqual(new Date(2026, 0, 15, 0, 0, 0, 0));
+    expect(where.date.lt).toEqual(new Date(2026, 0, 16, 0, 0, 0, 0));
   });
 
   it('rejects an invalid ledger date rather than querying with Invalid Date', async () => {

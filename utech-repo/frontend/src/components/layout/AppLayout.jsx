@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../store/auth';
 import { hasPermission } from '../../lib/permissions';
@@ -188,6 +188,20 @@ const RESTRICTED_NAV_SECTIONS = [
     ],
   },
 ];
+
+// Shown for the moment a lazily-loaded page is being fetched. Deliberately
+// quiet and roughly the height of a page header, so switching pages does not
+// make the layout jump.
+function RouteLoading() {
+  return (
+    <div className="py-10" role="status" aria-live="polite">
+      <span className="sr-only">Loading page</span>
+      <div className="h-7 w-48 rounded-lg bg-slate-200/70 animate-pulse" />
+      <div className="mt-3 h-4 w-72 rounded bg-slate-200/50 animate-pulse" />
+      <div className="mt-6 h-40 rounded-xl bg-slate-100 animate-pulse" />
+    </div>
+  );
+}
 
 export default function AppLayout() {
   const user = useAuth((s) => s.user);
@@ -544,7 +558,15 @@ export default function AppLayout() {
         {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
 
         <main className="flex-1 min-w-0 p-3 sm:p-5 xl:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-          <div className="mx-auto max-w-[1600px]"><Outlet /></div>
+          <div className="mx-auto max-w-[1600px]">
+            {/* Routes are lazy (see App.jsx). The boundary sits here, around
+                the content only, so the sidebar and header stay on screen
+                while the next page's code arrives instead of the whole app
+                blinking out. */}
+            <Suspense fallback={<RouteLoading />}>
+              <Outlet />
+            </Suspense>
+          </div>
         </main>
       </div>
     </div>

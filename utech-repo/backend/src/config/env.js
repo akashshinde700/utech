@@ -66,7 +66,6 @@ module.exports = {
 
   JWT_SECRET,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1d',
-  REFRESH_EXPIRES_IN: process.env.REFRESH_EXPIRES_IN || '7d',
   BCRYPT_ROUNDS: parseInt(process.env.BCRYPT_ROUNDS || '10', 10),
 
   // OTP lifetime and how many wrong codes burn it (auth.controller enforces both)
