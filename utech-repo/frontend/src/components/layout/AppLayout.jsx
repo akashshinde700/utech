@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../store/auth';
 import { hasPermission } from '../../lib/permissions';
 import NotificationBell from './NotificationBell';
+import InstallPrompt from './InstallPrompt.jsx';
 import ChangePasswordModal from './ChangePasswordModal';
 import QuickActions from './QuickActions';
 import useClickOutside from '../../lib/useClickOutside';
@@ -472,7 +473,7 @@ export default function AppLayout() {
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* topbar */}
-        <header className="no-print relative z-30 h-14 bg-white border-b border-slate-200 px-3 sm:px-5 flex items-center justify-between">
+        <header className="no-print relative z-30 min-h-14 bg-white border-b border-slate-200 px-3 sm:px-5 flex items-center justify-between pt-[env(safe-area-inset-top)]">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
             <button type="button" className="lg:hidden shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-slate-700 hover:bg-slate-100" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}>
               <Menu className="w-5 h-5" />
@@ -483,6 +484,7 @@ export default function AppLayout() {
           </div>
           <div className="flex items-center gap-1 sm:gap-3 shrink-0">
             <QuickActions items={quickItems} open={quickActionsOpen} onOpenChange={setQuickActionsOpen} />
+            <InstallPrompt />
             <NotificationBell />
             <div className="relative" ref={userMenuRef}>
               <button
@@ -531,7 +533,7 @@ export default function AppLayout() {
 
         {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
 
-        <main className="flex-1 min-w-0 p-3 sm:p-5 xl:p-6">
+        <main className="flex-1 min-w-0 p-3 sm:p-5 xl:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
           <div className="mx-auto max-w-[1600px]"><Outlet /></div>
         </main>
       </div>

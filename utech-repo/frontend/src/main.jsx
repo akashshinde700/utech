@@ -43,6 +43,17 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// PWA: register the service worker (public/sw.js) in production builds only.
+// Dev stays SW-free so Vite's module server can never serve a stale shell.
+// The worker never caches /api responses — see sw.js.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
