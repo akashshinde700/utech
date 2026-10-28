@@ -6,7 +6,7 @@ const SIZES = {
   md: 'max-w-lg',
   lg: 'max-w-2xl',
   xl: 'max-w-4xl',
-  full: 'h-[92vh] max-w-[96vw] w-[96vw]',
+  full: 'h-[92dvh] max-w-[96vw] w-[96vw]',
 };
 
 // ref-counted body scroll lock so stacked modals restore correctly
@@ -98,7 +98,7 @@ export default function Modal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] grid animate-fade-in place-items-center bg-black/50 p-3 backdrop-blur-sm sm:p-6"
+      className="fixed inset-0 z-[70] grid animate-fade-in place-items-center bg-black/50 p-3 backdrop-blur-sm [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:p-6"
       onMouseDown={(e) => {
         if (closeOnOverlay && e.target === e.currentTarget) onClose?.();
       }}
@@ -109,7 +109,7 @@ export default function Modal({
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
         tabIndex={-1}
-        className={`flex max-h-[92vh] w-full ${SIZES[size] || SIZES.md} animate-scale-in flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl outline-none`}
+        className={`flex max-h-[92dvh] w-full ${SIZES[size] || SIZES.md} animate-scale-in flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl outline-none`}
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-6">
           <div className="min-w-0">
@@ -118,7 +118,7 @@ export default function Modal({
           </div>
           <button
             type="button"
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
             onClick={onClose}
             aria-label="Close dialog"
           >

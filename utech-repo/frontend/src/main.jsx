@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { Toaster } from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
 import App from './App.jsx';
 import '@fontsource-variable/manrope';
 import './styles.css';
@@ -25,7 +25,7 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.error) {
       return (
-        <div className="min-h-screen grid place-items-center bg-slate-50 p-6">
+        <div className="min-h-dvh grid place-items-center bg-slate-50 p-6">
           <div className="card p-8 max-w-md w-full text-center">
             <div className="text-3xl mb-3">⚠️</div>
             <div className="text-lg font-bold text-slate-900 mb-1">Something went wrong</div>
@@ -48,9 +48,44 @@ class ErrorBoundary extends React.Component {
 // The worker never caches /api responses — see sw.js.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
-      console.warn('Service worker registration failed:', err);
+    // If a previous worker controls this page, a controllerchange means the
+    // user just accepted an update — reload once into the fresh shell.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;
+      reloading = true;
+      window.location.reload();
     });
+
+    const promptToUpdate = (registration) => {
+      if (!registration.waiting) return;
+      toast('A new version of U-Tech ERP is available.', {
+        duration: Infinity,
+        id: 'sw-update',
+        action: {
+          label: 'Reload',
+          onClick: () => registration.waiting.postMessage({ type: 'SKIP_WAITING' }),
+        },
+      });
+    };
+
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+      .then((registration) => {
+        promptToUpdate(registration);
+        registration.addEventListener('updatefound', () => {
+          const worker = registration.installing;
+          if (!worker) return;
+          worker.addEventListener('statechange', () => {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+              promptToUpdate(registration);
+            }
+          });
+        });
+      })
+      .catch((err) => {
+        console.warn('Service worker registration failed:', err);
+      });
   });
 }
 

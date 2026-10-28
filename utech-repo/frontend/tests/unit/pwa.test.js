@@ -63,7 +63,20 @@ describe('PWA wiring in index.html / main.jsx / sw.js', () => {
 
   it('the worker is registered in production builds only', () => {
     const main = read('src/main.jsx');
-    expect(main).toContain("navigator.serviceWorker.register('/sw.js')");
+    expect(main).toContain("navigator.serviceWorker.register('/sw.js'");
     expect(main).toContain('import.meta.env.PROD');
+  });
+
+  it('updates wait for the user instead of reloading an open form away', () => {
+    const sw = read('public/sw.js');
+    const main = read('src/main.jsx');
+    // worker honours the page's explicit update request…
+    expect(sw).toContain("event.data.type === 'SKIP_WAITING'");
+    expect(sw).toContain('skipWaiting');
+    // …and only the FIRST install activates without asking
+    expect(sw).toContain('!self.registration.active');
+    // page offers the update instead of applying it silently
+    expect(main).toContain('SKIP_WAITING');
+    expect(main).toContain('controllerchange');
   });
 });

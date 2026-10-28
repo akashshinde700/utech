@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../store/auth';
 import { hasPermission } from '../../lib/permissions';
 import NotificationBell from './NotificationBell';
+import OfflineBanner from './OfflineBanner.jsx';
 import InstallPrompt from './InstallPrompt.jsx';
 import ChangePasswordModal from './ChangePasswordModal';
 import QuickActions from './QuickActions';
@@ -322,7 +323,14 @@ export default function AppLayout() {
     if (!mobileNavOpen) return undefined;
     const onKeyDown = (event) => { if (event.key === 'Escape') setMobileNavOpen(false); };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    // modal drawer: the page behind it must not scroll (or chain-scroll on
+    // touch) while the drawer is open; restored exactly on close/unmount.
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [mobileNavOpen]);
 
   return (
@@ -437,7 +445,7 @@ export default function AppLayout() {
                           to={item.to}
                           end={item.to === '/'}
                           className={({ isActive }) =>
-                            'relative flex items-center gap-2.5 rounded-lg py-1.5 pl-3 pr-2.5 ml-4 text-[13px] font-medium transition-all duration-200 ' +
+                            'relative flex min-h-11 items-center gap-2.5 rounded-lg py-1.5 pl-3 pr-2.5 ml-4 text-[13px] font-medium transition-all duration-200 lg:min-h-0 ' +
                             (linkActive(item, isActive)
                               ? 'bg-brand-600 text-white shadow-sm shadow-brand-950/30'
                               : 'text-slate-300 hover:bg-white/5 hover:text-white')
@@ -530,6 +538,8 @@ export default function AppLayout() {
             </div>
           </div>
         </header>
+
+        <OfflineBanner />
 
         {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
 

@@ -122,7 +122,7 @@ function HomeRoute() {
 // links/bookmarks — show an explicit, friendly 404 card instead
 function NotFound() {
   return (
-    <div className="min-h-screen grid place-items-center bg-gradient-to-br from-slate-50 via-brand-50/40 to-slate-100 p-6">
+    <div className="min-h-dvh grid place-items-center bg-gradient-to-br from-slate-50 via-brand-50/40 to-slate-100 p-6">
       <div className="card max-w-sm w-full p-10 text-center animate-slide-up">
         <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-brand-50 text-brand-600" aria-hidden="true">
           <Compass className="h-7 w-7" />
