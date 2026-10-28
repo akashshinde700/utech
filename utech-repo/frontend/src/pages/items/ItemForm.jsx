@@ -6,9 +6,11 @@ import PageHeader from '../../components/ui/PageHeader';
 import FormField from '../../components/ui/FormField';
 import FormSection from '../../components/ui/FormSection';
 import SearchableSelect from '../../components/ui/SearchableSelect';
+import MetalCalculatorPage from '../calculator/MetalCalculatorPage';
 import { styles } from '../../lib/formStyles';
 import { gstRate, hsn, positiveNumber, required, validateAll } from '../../lib/validation';
 import toast from 'react-hot-toast';
+import Decimal from 'decimal.js';
 
 
 const empty = {
@@ -41,6 +43,7 @@ const schema = {
   gstRate: (v) => gstRate(v),
   purchaseRate: (v) => optionalPositive(v, 'Purchase rate'),
   saleRate: (v) => optionalPositive(v, 'Sale rate'),
+  ratePerKg: (v) => nonNegative(v, 'Rate per kg') || (v !== '' && v != null && new Decimal(v).decimalPlaces() > 2 ? 'Use at most two decimal places' : null),
   openingStock: (v) => nonNegative(v, 'Opening stock'),
   minStock: (v) => nonNegative(v, 'Min stock'),
 };
@@ -52,6 +55,7 @@ export default function ItemForm() {
   const [lookups, setLookups] = useState({ uoms: [], categories: [] });
   const [projects, setProjects] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [showSizeCalculator, setShowSizeCalculator] = useState(false);
   const [errors, setErrors] = useState({});
 
   useEffect(() => { api.get('/items/lookups').then((r) => setLookups(r.data)); }, []);
@@ -82,6 +86,7 @@ export default function ItemForm() {
   );
 
   function set(k, v) {
+    if (['size', 'name', 'metal'].includes(k)) setWeight(null);
     setForm((f) => ({ ...f, [k]: v }));
     setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
   }
@@ -136,7 +141,8 @@ export default function ItemForm() {
       .catch(() => setMetals([]));
   }, []);
   useEffect(() => {
-    if (!form.size) { setWeight(null); return undefined; }
+    setWeight(null);
+    if (!form.size) return undefined;
     let cancelled = false;
     const t = setTimeout(() => {
       api.post('/items/weight-preview', { size: form.size, name: form.name, metal: form.metal || null })
@@ -147,7 +153,7 @@ export default function ItemForm() {
   }, [form.size, form.name, form.metal]);
 
   const computedRate = weight?.weightKg && form.ratePerKg !== '' && form.ratePerKg != null && Number(form.ratePerKg) > 0
-    ? weight.weightKg * Number(form.ratePerKg)
+    ? new Decimal(weight.weightKg).times(form.ratePerKg).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
     : null;
 
   const errCls = (k) => `${styles.input} ${err(k)}`;
@@ -176,6 +182,9 @@ export default function ItemForm() {
             </FormField>
             <FormField id="item-size" label="Material Size" hint="As written on the stock sheet / drawing, e.g. OD 60 X 5 mtr.">
               <input id="item-size" className={errCls('size')} value={form.size || ''} onChange={(e) => set('size', e.target.value)} />
+              <button type="button" className="mt-2 text-sm font-semibold text-brand-700 hover:underline" aria-expanded={showSizeCalculator} onClick={() => setShowSizeCalculator((v) => !v)}>
+                {showSizeCalculator ? 'Close calculator' : 'Calculate material size'}
+              </button>
             </FormField>
             <FormField id="item-hsn" label="HSN Code" hint="4, 6 or 8 digits" error={errors.hsnCode}>
               <input id="item-hsn" className={errCls('hsnCode')} value={form.hsnCode || ''} onChange={(e) => set('hsnCode', e.target.value)} onBlur={() => blur('hsnCode')} aria-invalid={!!errors.hsnCode} />
@@ -214,13 +223,14 @@ export default function ItemForm() {
               />
             </FormField>
           </div>
+          {showSizeCalculator && <div className="mt-4"><MetalCalculatorPage embedded initialMetal={form.metal} onApply={(size, metal, ratePerKg) => { set('size', size); set('metal', metal); if (ratePerKg != null) set('ratePerKg', ratePerKg); setShowSizeCalculator(false); }} /></div>}
         </FormSection>
 
         <FormSection icon={Tag} title="Pricing & Stock" description="Default rates pulled into documents, plus stock thresholds">
           {/* weight comes from the size with the plant's own formulas; rate per
               kg then gives the purchase rate — one tap, never silently */}
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
-            {weight?.weightKg ? (
+            {weight?.weightKg != null ? (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span className="text-slate-700">
                   Weight <span className="font-semibold tabular-nums">{weight.weightKg} kg</span>
@@ -230,9 +240,10 @@ export default function ItemForm() {
                 </span>
                 {computedRate != null && (
                   <>
-                    <span className="text-slate-700">
+                    <span className="text-slate-700" title="Calculated from the saved weight rounded to 3 decimals and rate per kg">
                       × ₹{form.ratePerKg}/kg = <span className="font-semibold tabular-nums">₹{computedRate.toFixed(2)}</span>
                     </span>
+                    <span className="text-xs text-slate-500">Uses weight rounded to 3 decimals; calculator total may differ slightly.</span>
                     <button
                       type="button"
                       className={`${styles.secondaryBtn} !h-8 !px-3 text-xs`}
@@ -247,7 +258,7 @@ export default function ItemForm() {
               <span className="text-slate-500">
                 {!form.size ? 'Enter a material size above to calculate the weight.'
                   : weight?.reason === 'metal-missing' ? 'Pick the metal below — density is what turns the size into a weight.'
-                    : weight?.reason === 'size-unreadable' ? 'This size could not be read as a round bar, hex, pipe, plate or flange.'
+                    : weight?.reason === 'size-unreadable' ? 'This size could not be read. Use the material size calculator or enter a supported stock-sheet size.'
                       : 'Weight cannot be calculated for this size yet.'}
               </span>
             )}
@@ -260,7 +271,7 @@ export default function ItemForm() {
               </select>
             </FormField>
             <FormField id="item-rate-per-kg" label="Rate per kg" hint="₹ — used with the weight above" error={errors.ratePerKg}>
-              <input id="item-rate-per-kg" type="number" step="0.01" min="0" className={errCls('ratePerKg')} value={form.ratePerKg ?? ''} onChange={(e) => set('ratePerKg', e.target.value)} />
+              <input id="item-rate-per-kg" type="number" step="0.01" min="0" className={errCls('ratePerKg')} value={form.ratePerKg ?? ''} onChange={(e) => set('ratePerKg', e.target.value)} onBlur={() => blur('ratePerKg')} aria-invalid={!!errors.ratePerKg} />
             </FormField>
             <FormField id="item-purchase-rate" label="Purchase Rate" hint="₹ per unit" error={errors.purchaseRate}>
               <input id="item-purchase-rate" type="number" step="0.01" min="0" className={errCls('purchaseRate')} value={form.purchaseRate ?? ''} onChange={(e) => set('purchaseRate', e.target.value)} onBlur={() => blur('purchaseRate')} aria-invalid={!!errors.purchaseRate} />

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
+import Decimal from 'decimal.js';
 import {
   Calculator, Circle, CircleDot, Square, Frame, RectangleHorizontal, Hexagon,
   Layers, CornerDownLeft, Columns3, Container, Type, Ruler, Scale, Copy,
-  RotateCcw, Save, History, Info, Loader2, Trash2,
+  RotateCcw, Save, History, Info, Loader2, Trash2, Search,
 } from 'lucide-react';
 import api from '../../lib/api';
 import PageHeader from '../../components/ui/PageHeader';
@@ -62,7 +63,7 @@ function writeHistory(rows) {
   }
 }
 
-export default function MetalCalculatorPage() {
+export default function MetalCalculatorPage({ embedded = false, initialMetal = '', onApply }) {
   const [catalog, setCatalog] = useState(null);
   const [families, setFamilies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +74,7 @@ export default function MetalCalculatorPage() {
   const [system, setSystem] = useState('metric');
   const [unit, setUnit] = useState('mm');
   const [weightUnit, setWeightUnit] = useState('kg');
-  const [metalName, setMetalName] = useState('Steel');
+  const [metalName, setMetalName] = useState(initialMetal || 'Steel');
   const [customDensity, setCustomDensity] = useState('');
   const [values, setValues] = useState({});
   const [pieces, setPieces] = useState('1');
@@ -87,6 +88,7 @@ export default function MetalCalculatorPage() {
   const [manualKgm, setManualKgm] = useState('');
 
   const [busy, setBusy] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState(readHistory);
 
@@ -218,6 +220,7 @@ export default function MetalCalculatorPage() {
       return;
     }
     setBusy(true);
+    setResult(null);
     try {
       const payload = {
         mode,
@@ -245,6 +248,46 @@ export default function MetalCalculatorPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function applyToItem(includeRate = false) {
+    if (!result || !onApply) return;
+    const itemMetal = metals.find((m) => m.name === result.metal?.name);
+    if (!itemMetal || Math.abs(itemMetal.density - result.density) > 1e-9 || result.standardProfile) {
+      toast.error('Item weight needs catalogue metal and dimensions. Custom density and profile table weights cannot be saved on an item.');
+      return;
+    }
+    const fields = result.dimensions.map((d) => {
+      const n = result.mode === 'length' && d.isLength ? result.lengthMm : d.value;
+      const u = result.mode === 'length' && d.isLength ? 'mm' : d.unit;
+      // The persisted size uses plain decimal notation, not scientific notation.
+      const text = String(n);
+      return Number.isFinite(n) && n > 0 && /^\d+(?:\.\d+)?$/.test(text) ? `${text} ${u}` : null;
+    });
+    if (fields.some((v) => !v)) {
+      toast.error('Dimensions or calculated length cannot be saved at this precision.');
+      return;
+    }
+    const size = `Calculator ${result.shape.id}: ${fields.join(' X ')}`;
+    if (size.length > 191) { toast.error('Dimensions are too long to save as a material size.'); return; }
+    setApplying(true);
+    try {
+      const preview = await api.post('/items/weight-preview', { size, metal: itemMetal.name });
+      if (preview.data.weightKg == null) {
+        toast.error('This size cannot be calculated as an item. Check the dimensions.');
+        return;
+      }
+      // The item stores INR/kg at two decimal places, regardless of the
+      // calculator's selected output weight unit. Do not overwrite an existing
+      // item rate unless the user explicitly requests it.
+      const ratePerKg = includeRate && result.rate != null
+        ? new Decimal(result.rate).times(result.rateUnit === 'lb' ? catalog.constants.kgToLb : 1).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)
+        : null;
+      onApply(size, itemMetal.name, ratePerKg);
+      toast.success('Material size and metal applied. Save the item to keep them.');
+    } catch {
+      toast.error('Could not verify item weight. Please try again.');
+    } finally { setApplying(false); }
   }
 
   function resultText(r) {
@@ -360,7 +403,7 @@ export default function MetalCalculatorPage() {
 
   return (
     <div>
-      <PageHeader
+      {!embedded && <PageHeader
         title="Metal Calculator"
         subtitle="Weight and price from shape + metal density — ported from the Metal Calculator APK"
         icon={Calculator}
@@ -371,11 +414,14 @@ export default function MetalCalculatorPage() {
             </button>
           </div>
         )}
-      />
+      />}
+      {embedded && <div className="mb-3 flex items-center justify-between gap-2"><p className="text-sm text-slate-600">Full Metal Calculator — apply dimensions and catalogue metal to one item piece.</p><button type="button" className={styles.secondaryBtn} disabled={busy || applying} onClick={resetAll}>Reset</button></div>}
 
       <div className="grid items-start gap-4 lg:grid-cols-5">
         {/* ---------------- inputs ---------------- */}
         <section className="card p-4 sm:p-5 lg:col-span-3">
+          <fieldset disabled={busy}>
+          {embedded && <div className="mb-3"><label className={styles.label} htmlFor="mc-shape">Material shape</label><select id="mc-shape" className={styles.input} value={shapeId} onChange={(e) => chooseShape(e.target.value)}>{shapes.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></div>}
           <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
             {shapes.map((s) => {
               const Icon = SHAPE_ICONS[s.id] || Calculator;
@@ -402,6 +448,7 @@ export default function MetalCalculatorPage() {
           <div className="mb-4 grid gap-3 sm:grid-cols-2">
             <div>
               <span className={styles.label}>Calculate</span>
+              {embedded && <select aria-label="Calculate" className={`${styles.input} mb-2`} value={mode} onChange={(e) => { setMode(e.target.value); setResult(null); }}><option value="weight">Weight (enter length)</option><option value="length" disabled={!canUseLengthMode}>Length (enter weight)</option></select>}
               <div className="flex gap-2">
                 {[
                   { id: 'weight', label: 'By weight' },
@@ -428,6 +475,7 @@ export default function MetalCalculatorPage() {
             </div>
             <div>
               <span className={styles.label}>Unit system</span>
+              {embedded && <select aria-label="Unit system" className={`${styles.input} mb-2`} value={system} onChange={(e) => switchSystem(e.target.value)}><option value="metric">Metric</option><option value="imperial">Imperial</option></select>}
               <div className="flex gap-2">
                 {[
                   { id: 'metric', label: 'Metric' },
@@ -644,6 +692,7 @@ export default function MetalCalculatorPage() {
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scale className="h-4 w-4" />}
               Calculate
             </button>
+            {embedded && <div><label className="sr-only" htmlFor="mc-weight-unit">Weight unit</label><select id="mc-weight-unit" className={styles.input} value={weightUnit} onChange={(e) => { setWeightUnit(e.target.value); setResult(null); }}>{catalog?.weightUnits?.map((w) => <option key={w} value={w}>{w}</option>)}</select></div>}
             <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
               {catalog?.weightUnits?.map((w) => (
                 <button
@@ -660,6 +709,7 @@ export default function MetalCalculatorPage() {
             </div>
             <span className="text-xs text-slate-400">{shape?.formula}</span>
           </div>
+          </fieldset>
         </section>
 
         {/* ---------------- result ---------------- */}
@@ -707,6 +757,10 @@ export default function MetalCalculatorPage() {
                   )}
                 </div>
 
+                {embedded && <div className="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-slate-600">
+                  <p>Apply saves size and catalogue metal for one piece. Item weight is recalculated in kg; quantity is not applied. Calculated length is rounded to 0.01 mm. You can optionally apply the rate per kg (rounded to ₹0.01).</p>
+                  {(result.standardProfile || !result.metal || Math.abs((metals.find((m) => m.name === result.metal?.name)?.density ?? -1) - result.density) > 1e-9) ? <p className="mt-2 text-amber-700">Custom density or standard profile results cannot be saved as item weight. Use catalogue density and dimensions to apply.</p> : <div className="mt-2 flex flex-wrap gap-2"><button type="button" className={styles.secondaryBtn} disabled={applying} onClick={() => applyToItem(false)}>{applying ? 'Checking…' : 'Use this material size'}</button>{result.rate != null && <button type="button" className={styles.secondaryBtn} disabled={applying} onClick={() => applyToItem(true)}>Use size and rate per kg</button>}</div>}
+                </div>}
                 <dl className="mt-3 space-y-1.5 text-sm">
                   {result.pieceWeight != null && (
                     <Row label="Piece weight" value={`${fmt(result.pieceWeight)} ${result.weightUnit}`} />
@@ -764,6 +818,7 @@ export default function MetalCalculatorPage() {
                     <button
                       type="button"
                       className="flex w-full items-center justify-between gap-2 py-2 text-left text-xs hover:text-brand-700"
+                      disabled={busy || applying}
                       onClick={() => restore(h)}
                     >
                       <span className="min-w-0">

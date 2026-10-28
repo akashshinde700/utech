@@ -200,6 +200,13 @@ describe('rejects nonsense instead of returning NaN', () => {
     expect(() => calc({ shape: 'pipe', values: { od: 100, L: 1000 }, ...steel })).toThrow(/Wall Thickness/);
   });
 
+  it('rejects impossible hollow and profile dimensions', () => {
+    expect(() => calc({ shape: 'pipe', values: { od: 20, t: 11, L: 100 }, ...steel })).toThrow(/Wall thickness/);
+    expect(() => calc({ mode: 'length', shape: 'squaretube', totalWeight: 10, values: { a: 20, t: 10 }, ...steel })).toThrow(/Wall thickness/);
+    expect(() => calc({ shape: 'angle', values: { a: 10, b: 20, t: 10, L: 100 }, ...steel })).toThrow(/Thickness/);
+    expect(() => calc({ shape: 'beam', values: { h: 20, b: 20, tw: 2, tf: 11, L: 100 }, ...steel })).toThrow(/thickness/);
+  });
+
   it('refuses length mode for a plate', () => {
     expect(() => calc({ mode: 'length', shape: 'sheet', totalWeight: 10, values: {}, ...steel }))
       .toThrow(/no length dimension/);
