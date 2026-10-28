@@ -72,27 +72,35 @@ async function check(label, url) {
 
   // Drive it the whole way: a 100 mm round bar, 1 m long, in the default metal.
   // /api/metal-calculator/calculate only computes -- it writes nothing -- so the
-  // real in-form flow can be exercised right up to the point of applying.
+  // real in-form flow runs right up to the point of saving the item.
+  //
+  // Calculate IS apply: the embedded calculator hands the result straight back
+  // to the form and closes, so the thing to check is the form's own state, not
+  // the presence of an apply button (there is no longer one to press).
   let weightShown = '(not calculated)';
-  let applyPresent = false;
+  let sizeApplied = '(unchanged)';
   if (shapeVisible) {
     await page.selectOption('#mc-shape', 'roundbar').catch(() => {});
     await page.locator('#mc-d').fill('100').catch(() => {});
     await page.locator('#mc-L').fill('1000').catch(() => {});
     await page.getByRole('button', { name: 'Calculate', exact: true }).click().catch(() => {});
+    const size = page.locator('#item-size');
+    await page.waitForFunction(
+      () => (document.querySelector('#item-size')?.value || '').startsWith('Calculator'),
+      null, { timeout: 20000 },
+    ).catch(() => {});
+    sizeApplied = await size.inputValue().catch(() => '(unchanged)');
     const kg = page.getByText(/\d+\.\d+ kg/).first();
-    await kg.waitFor({ timeout: 20000 }).catch(() => {});
+    await kg.waitFor({ timeout: 10000 }).catch(() => {});
     weightShown = await kg.innerText().catch(() => '(not calculated)');
-    const apply = page.getByRole('button', { name: 'Use this material size' });
-    applyPresent = await apply.waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
   }
 
-  const closes = await page.getByRole('button', { name: 'Close calculator' }).isVisible().catch(() => false);
-  console.log(`${label.padEnd(12)} : opens inline, shape picker ${shapeVisible ? 'yes' : 'NO'}, `
-    + `100 mm round bar x 1 m -> ${weightShown.trim()}, apply button ${applyPresent ? 'yes' : 'NO'}, close ${closes ? 'yes' : 'NO'}`);
+  const applied = sizeApplied.startsWith('Calculator');
+  console.log(`${label.padEnd(12)} : opens inline, shape picker ${shapeVisible ? 'yes' : 'NO'}`);
+  console.log(`${' '.repeat(12)}   100 mm round bar x 1 m -> ${weightShown.trim()}`);
+  console.log(`${' '.repeat(12)}   size written back     -> ${sizeApplied}`);
 
-  await page.getByRole('button', { name: 'Close calculator' }).click().catch(() => {});
-  return present && shapeVisible && applyPresent && closes;
+  return present && shapeVisible && applied && /\d/.test(weightShown);
 }
 
 const addOk = await check('add item', `${BASE}/items/new`);
