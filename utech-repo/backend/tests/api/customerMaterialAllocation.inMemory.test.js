@@ -19,7 +19,27 @@ beforeAll(async () => {
   customer = await db.party.create({ data: { name: 'Test Customer', code: 'ALLOC-C', type: 'CUSTOMER' } });
   token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
   app = (await import('../../src/server')).default;
+  managerToken = await makeManager();
 });
+
+// The guards below protect work in progress and someone else's material, so
+// they must still refuse a MANAGER. Only a SUPERADMIN gets the override, and
+// these tests need both identities to say that.
+let managerToken;
+const asManager = (r) => r.set('Authorization', `Bearer ${managerToken}`);
+
+async function makeManager() {
+  const role = await db.role.create({ data: { name: 'MANAGER', hierarchyLevel: 2 } });
+  for (const key of ['jobcard.read', 'jobcard.update', 'jobcard.delete', 'customerMaterial.read', 'customerMaterial.update', 'assignment.read']) {
+    const [module, action] = key.split('.');
+    const permission = await db.permission.create({ data: { key, module, action } });
+    await db.rolePermission.create({ data: { roleId: role.id, permissionId: permission.id } });
+  }
+  const user = await db.user.create({ data: {
+    name: 'Shop Manager', email: 'manager@example.invalid', passwordHash: 'not-used', roleId: role.id,
+  } });
+  return jwt.sign({ sub: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+}
 
 async function setupLot(weight = 50) {
   const lot = await auth(request(app).post('/api/customer-material')).send({
@@ -170,7 +190,7 @@ it('requires release before cancelling, completing or changing a reserved job ca
   const allocation = await reserve(lot.id, cards[0].id, 10, 5);
   expect(allocation.status).toBe(201);
   const id = cards[0].id;
-  const refused = await auth(request(app).delete(`/api/jobcards/${id}`));
+  const refused = await asManager(request(app).delete(`/api/jobcards/${id}`));
   expect(refused.status).toBe(400);
   // the refusal has to say HOW MUCH is in the way: "something is reserved" does
   // not tell anyone whether this is one stale row or live work
@@ -180,13 +200,54 @@ it('requires release before cancelling, completing or changing a reserved job ca
   expect((await auth(request(app).put(`/api/jobcards/${id}`)).send({ partyId: null })).status).toBe(400);
   const released = await auth(request(app).post(`/api/customer-material/${lot.id}/allocations/${allocation.body.id}/release`)).send({ reason: 'Work cancelled' });
   expect(released.status).toBe(200);
+  // a manager still cannot cancel a card they have no reservations to clear?
+  // they can now — the blocker is gone, so this is the ordinary path
+  expect((await asManager(request(app).get(`/api/jobcards/${id}`))).status).toBe(200);
   expect((await auth(request(app).put(`/api/jobcards/${id}`)).send({ status: 'COMPLETED' })).status).toBe(400);
   expect((await auth(request(app).put(`/api/jobcards/${id}`)).send({ status: 'CANCELLED' })).status).toBe(400);
   expect((await auth(request(app).delete(`/api/jobcards/${id}`))).status).toBe(200);
   expect((await auth(request(app).put(`/api/jobcards/${id}`)).send({ status: 'DRAFT' })).status).toBe(400);
-  // Reservation history is retained rather than deleted with a job card.
-  expect((await auth(request(app).delete(`/api/jobcards/${id}`))).status).toBe(400);
+  // A manager may not permanently delete a card that holds reservation history.
+  const historyRefused = await asManager(request(app).delete(`/api/jobcards/${id}`));
+  expect(historyRefused.status).toBe(400);
+  expect(historyRefused.body.message).toBe('Job card has allocation history and cannot be permanently deleted');
   expect((await get(lot.id)).body.allocations).toHaveLength(1);
+});
+
+it('the owner can cancel a reserved job card, and the reservation is released rather than abandoned', async () => {
+  const { lot, cards } = await setupLot();
+  const id = cards[0].id;
+  const allocation = await reserve(lot.id, id, 10, 5);
+  expect(allocation.status).toBe(201);
+  expect((await get(lot.id)).body.reservedQty).toBe(10);
+
+  // a manager is stopped; the owner is not
+  expect((await asManager(request(app).delete(`/api/jobcards/${id}`))).status).toBe(400);
+  const cancelled = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+  expect(cancelled.body).toMatchObject({ deleted: false, cleaned: { reservationsReleased: 1, assignmentsCancelled: 0 } });
+
+  // released, not deleted: the quantity is free again and the row says why
+  const saved = (await get(lot.id)).body;
+  expect(saved.reservedQty).toBe(0);
+  expect(saved.unallocatedQty).toBe(100);
+  expect(saved.allocations).toHaveLength(1);
+  expect(saved.allocations[0].releasedAt).not.toBeNull();
+  expect(saved.allocations[0].releaseReason).toMatch(/cancelled by/i);
+  expect((await db.jobcard.findUnique({ where: { id } })).status).toBe('CANCELLED');
+
+  // and the permanent delete takes the history with it, after recording it
+  const deleted = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(deleted.status, JSON.stringify(deleted.body)).toBe(200);
+  expect(deleted.body).toMatchObject({ deleted: true, cleaned: { reservationHistoryRemoved: 1 } });
+  expect(await db.jobcard.findUnique({ where: { id } })).toBeNull();
+  expect(await db.customerMaterialAllocation.count({ where: { jobcardId: id } })).toBe(0);
+  // the lot itself is untouched -- the material never moved
+  const after = (await get(lot.id)).body;
+  expect([after.availableQty, after.reservedQty, after.unallocatedQty]).toEqual([100, 0, 100]);
+  // what was removed is in the audit trail, not gone
+  const logged = await db.auditLog.findMany({ where: { entity: 'Jobcard', entityId: id } });
+  expect(logged.some((row) => row.action === 'deleteAllocationHistory')).toBe(true);
 });
 
 it('prevents new or reopened drawing assignments after job-card completion', async () => {
@@ -240,7 +301,8 @@ it('protects drawing work from job-card line removal and cancellation', async ()
   expect((await auth(request(app).put(`/api/jobcards/${cardId}`)).send({ lines: [] })).status).toBe(400);
   expect(await db.jobcardLine.findUnique({ where: { id: line.id } })).not.toBeNull();
   expect(await db.attachment.findUnique({ where: { id: attachment.id } })).not.toBeNull();
-  expect((await auth(request(app).delete(`/api/jobcards/${cardId}`))).status).toBe(400);
+  // a manager cannot cancel the card while the drawing is still assigned
+  expect((await asManager(request(app).delete(`/api/jobcards/${cardId}`))).status).toBe(400);
   expect((await db.assignment.findUnique({ where: { id: assigned.body.id } })).status).toBe('ASSIGNED');
   expect((await auth(request(app).delete(`/api/assignments/${assigned.body.id}`))).status).toBe(200);
   expect((await auth(request(app).delete(`/api/jobcards/${cardId}`))).status).toBe(200);
@@ -287,21 +349,62 @@ it('names how many open drawing assignments are blocking a job-card cancellation
     expect(created.status, JSON.stringify(created.body)).toBe(201);
   }
 
-  const refused = await auth(request(app).delete(`/api/jobcards/${id}`));
+  const refused = await asManager(request(app).delete(`/api/jobcards/${id}`));
   expect(refused.status).toBe(400);
   expect(refused.body.message).toBe('Finish or cancel the 2 open drawing assignments on this job card before cancelling it');
 
   // one down, and the message follows the count rather than repeating itself
   const open = await db.assignment.findMany({ where: { attachmentId: attachment.id } });
   await db.assignment.update({ where: { id: open[0].id }, data: { status: 'CANCELLED' } });
-  const stillRefused = await auth(request(app).delete(`/api/jobcards/${id}`));
+  const stillRefused = await asManager(request(app).delete(`/api/jobcards/${id}`));
   expect(stillRefused.status).toBe(400);
   expect(stillRefused.body.message).toBe('Finish or cancel the 1 open drawing assignment on this job card before cancelling it');
 
   // with none open the cancellation goes through, and the job card is kept
   await db.assignment.update({ where: { id: open[1].id }, data: { status: 'CANCELLED' } });
-  const cancelled = await auth(request(app).delete(`/api/jobcards/${id}`));
+  const cancelled = await asManager(request(app).delete(`/api/jobcards/${id}`));
   expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
   expect(cancelled.body.deleted).toBe(false);
   expect((await db.jobcard.findUnique({ where: { id } })).status).toBe('CANCELLED');
+});
+
+it('the owner cancels straight through, and the open assignments are cancelled with the card', async () => {
+  const { cards } = await setupLot();
+  const id = cards[0].id;
+  const assignee = await db.user.findUnique({ where: { email: 'allocation@example.invalid' } });
+  const attachment = await db.attachment.create({ data: {
+    refType: 'JOBCARD', refId: id, filename: 'drawing.pdf', storedName: 'drawing.pdf',
+    mimeType: 'application/pdf', size: 1,
+  } });
+  for (const page of [1, 2, 3]) {
+    const created = await auth(request(app).post('/api/assignments'))
+      .send({ attachmentId: attachment.id, assignedToId: assignee.id, pageNumbers: [page] });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+  }
+  // one is already finished: it must be left alone, not "re-cancelled"
+  const all = await db.assignment.findMany({ where: { attachmentId: attachment.id } });
+  await db.assignment.update({ where: { id: all[2].id }, data: { status: 'COMPLETED' } });
+
+  expect((await asManager(request(app).delete(`/api/jobcards/${id}`))).status).toBe(400);
+
+  const cancelled = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+  expect(cancelled.body).toMatchObject({ deleted: false, cleaned: { assignmentsCancelled: 2, reservationsReleased: 0 } });
+
+  const after = await db.assignment.findMany({ where: { attachmentId: attachment.id } });
+  expect(after.filter((a) => a.status === 'CANCELLED')).toHaveLength(2);
+  expect(after.find((a) => a.id === all[2].id).status).toBe('COMPLETED');
+  expect((await db.jobcard.findUnique({ where: { id } })).status).toBe('CANCELLED');
+
+  // each cancellation is on the record against the operator it was taken from
+  const logged = await db.auditLog.findMany({ where: { entity: 'Assignment' } });
+  expect(logged.filter((row) => row.action === 'cancel').length).toBeGreaterThanOrEqual(2);
+
+  // the second delete removes it for good, drawings and all
+  const deleted = await auth(request(app).delete(`/api/jobcards/${id}`));
+  expect(deleted.status, JSON.stringify(deleted.body)).toBe(200);
+  expect(deleted.body.deleted).toBe(true);
+  expect(await db.jobcard.findUnique({ where: { id } })).toBeNull();
+  expect(await db.attachment.findMany({ where: { refType: 'JOBCARD', refId: id } })).toHaveLength(0);
+  expect(await db.assignment.findMany({ where: { attachmentId: attachment.id } })).toHaveLength(0);
 });

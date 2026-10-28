@@ -54,6 +54,12 @@ export default function JobcardsPage() {
       ? { to: '/customer-material', label: 'Open Customer Material' }
       : null;
 
+  // A SUPERADMIN is never refused: the API releases open customer-material
+  // reservations and cancels open drawing assignments in the same transaction.
+  // Say so before the click, because "cancel" quietly doing two other things is
+  // worse than a refusal.
+  const isOwner = user?.role === 'SUPERADMIN' || user?.role?.name === 'SUPERADMIN';
+
   const deleteMessage = !confirmDelete ? '' : deleteBlocked ? (
     <>
       <span className="font-medium text-danger-700">{deleteBlocked}</span>
@@ -69,9 +75,28 @@ export default function JobcardsPage() {
         Jobcard {confirmDelete.number} has not been changed.
       </span>
     </>
-  ) : isCancelledDelete
-    ? `Permanently delete jobcard ${confirmDelete.number}? This cannot be undone.`
-    : `Delete jobcard ${confirmDelete.number}? This will mark it as CANCELLED — delete again to remove it for good.`;
+  ) : isCancelledDelete ? (
+    <>
+      Permanently delete jobcard {confirmDelete.number}? This cannot be undone.
+      {isOwner && (
+        <span className="mt-2 block text-slate-500">
+          Its drawings, assignments and Task Progress items go with it. Any customer-material
+          reservation history is written to the audit log first.
+        </span>
+      )}
+    </>
+  ) : (
+    <>
+      Delete jobcard {confirmDelete.number}? This will mark it as CANCELLED — delete again to
+      remove it for good.
+      {isOwner && (
+        <span className="mt-2 block text-slate-500">
+          Open customer-material reservations on it will be released and open drawing
+          assignments cancelled.
+        </span>
+      )}
+    </>
+  );
 
   async function doDelete() {
     if (!confirmDelete) return;
@@ -79,7 +104,16 @@ export default function JobcardsPage() {
     setDeleting(true);
     try {
       const { data: res } = await api.delete(`/jobcards/${confirmDelete.id}`);
-      toast.success(res.deleted ? 'Jobcard permanently deleted' : 'Jobcard marked as cancelled');
+      // what the API had to clear on the way through — a cancel that silently
+      // released someone's material reservation would be a surprise later
+      const cleaned = res.cleaned || {};
+      const also = [
+        cleaned.assignmentsCancelled && `${cleaned.assignmentsCancelled} drawing assignment${cleaned.assignmentsCancelled === 1 ? '' : 's'} cancelled`,
+        cleaned.reservationsReleased && `${cleaned.reservationsReleased} material reservation${cleaned.reservationsReleased === 1 ? '' : 's'} released`,
+        cleaned.reservationHistoryRemoved && `${cleaned.reservationHistoryRemoved} reservation record${cleaned.reservationHistoryRemoved === 1 ? '' : 's'} removed`,
+      ].filter(Boolean);
+      const headline = res.deleted ? 'Jobcard permanently deleted' : 'Jobcard marked as cancelled';
+      toast.success(also.length ? `${headline} — ${also.join(', ')}` : headline, { duration: also.length ? 7000 : 3000 });
       setConfirmDelete(null);
       load();
     } catch (err) {

@@ -12,6 +12,9 @@ const env = require('../config/env');
 const { hasAssignmentAccess, assertJobcardAccess, jobcardIdsAssignedTo } = require('../utils/jobcardAccess');
 const { lockJobcard } = require('../utils/transactionLocks');
 const productionOutput = require('../services/productionOutput');
+// the owner's cancel releases customer-material reservations, which take the
+// same lot lock as every other writer
+const stockService = require('../services/stockService');
 
 const uploadBaseDir = path.resolve(env.UPLOAD_DIR);
 
@@ -300,54 +303,136 @@ async function revert(req, res) {
   res.json(jc);
 }
 
+/**
+ * Cancel a job card, or permanently delete one that is already cancelled.
+ *
+ * A job card has things hanging off it that outlive it: customer material
+ * reserved against it, drawing pages assigned to operators, production batches.
+ * For everyone except a SUPERADMIN those are a hard stop, and the refusal names
+ * how many are in the way — a supervisor must not be able to cancel work that
+ * someone is standing at a machine doing.
+ *
+ * A SUPERADMIN is never stuck. The owner cancels, and the dependants are dealt
+ * with in the same transaction rather than being left for them to chase: open
+ * reservations are RELEASED (which frees the quantity back to the customer's
+ * lot) and open assignments are CANCELLED. Neither is a silent row deletion —
+ * both are the same state change the normal screens make, each audited, so the
+ * lot still reconciles and the operator's history still says what happened.
+ *
+ * On a permanent delete the reservation rows themselves go, because nothing may
+ * be left pointing at a job card that no longer exists. Their contents are
+ * written to the audit log first: that is where a deletion belongs, and it keeps
+ * the record that a customer's material was once held for this work.
+ */
 async function remove(req, res) {
   const id = parseInt(req.params.id, 10);
+  // Only the owner may override. Not hierarchyLevel <= 1: this bypasses
+  // protections on someone else's material and on work in progress, so it is
+  // deliberately the narrowest possible door.
+  const isOwner = req.user && req.user.role === 'SUPERADMIN';
   let attachments = [];
   const result = await prisma.$transaction(async (tx) => {
     await lockJobcard(tx, id);
     const jc = await tx.jobcard.findUnique({ where: { id } });
     if (!jc) throw new HttpError(404, 'Jobcard not found');
     await assertJobcardAccess(req.user, jc, tx);
-    // Both refusals below are the system protecting records that are still in
-    // use, and both used to say only that something was in the way. Someone
-    // looking at a job card they cannot cancel needs to know HOW MUCH is in the
-    // way to judge whether it is a stale leftover or live work, so the count
-    // goes in the message.
-    const openReservations = await tx.customerMaterialAllocation.count({
+
+    // what the owner's override had to clean up, reported back so the screen
+    // can say what happened instead of just "done"
+    const cleaned = { reservationsReleased: 0, assignmentsCancelled: 0, reservationHistoryRemoved: 0 };
+
+    const openReservations = await tx.customerMaterialAllocation.findMany({
       where: { jobcardId: id, releasedAt: null },
+      select: { id: true, lotId: true, qty: true, weight: true },
     });
-    if (openReservations) {
-      throw new HttpError(400, `Release the ${openReservations} customer-material reservation${openReservations === 1 ? '' : 's'} on this job card before cancelling it`);
+    if (openReservations.length) {
+      if (!isOwner) {
+        throw new HttpError(400, `Release the ${openReservations.length} customer-material reservation${openReservations.length === 1 ? '' : 's'} on this job card before cancelling it`);
+      }
+      for (const allocation of openReservations) {
+        // same lock order as every other customer-lot writer: job card first
+        // (taken above), then the lot
+        await stockService.lockCustomerLot(tx, allocation.lotId);
+        await tx.customerMaterialAllocation.update({
+          where: { id: allocation.id },
+          data: {
+            releasedAt: new Date(),
+            releasedById: req.user.id,
+            releaseReason: `Job card ${jc.number} cancelled by ${req.user.name || 'an administrator'}`,
+          },
+        });
+        await audit(req, 'releaseAllocation', 'CustomerMaterialLot', allocation.lotId, {
+          allocationId: allocation.id, jobcardId: id, qty: allocation.qty, weight: allocation.weight,
+          reason: 'job card cancelled',
+        }, tx, { required: true });
+      }
+      cleaned.reservationsReleased = openReservations.length;
     }
-    const openAssignments = await tx.assignment.count({ where: {
-      status: { notIn: ['COMPLETED', 'CANCELLED'] }, attachment: { refType: 'JOBCARD', refId: id },
-    } });
-    if (openAssignments) {
-      throw new HttpError(400, `Finish or cancel the ${openAssignments} open drawing assignment${openAssignments === 1 ? '' : 's'} on this job card before cancelling it`);
+
+    // updateMany cannot filter through a relation, so the ids are read first
+    const openAssignments = await tx.assignment.findMany({
+      where: { status: { notIn: ['COMPLETED', 'CANCELLED'] }, attachment: { refType: 'JOBCARD', refId: id } },
+      select: { id: true, assignedToId: true },
+    });
+    if (openAssignments.length) {
+      if (!isOwner) {
+        throw new HttpError(400, `Finish or cancel the ${openAssignments.length} open drawing assignment${openAssignments.length === 1 ? '' : 's'} on this job card before cancelling it`);
+      }
+      await tx.assignment.updateMany({
+        where: { id: { in: openAssignments.map((a) => a.id) } },
+        data: { status: 'CANCELLED' },
+      });
+      for (const assignment of openAssignments) {
+        await audit(req, 'cancel', 'Assignment', assignment.id, {
+          jobcardId: id, assignedToId: assignment.assignedToId, reason: 'job card cancelled',
+        }, tx, { required: true });
+      }
+      cleaned.assignmentsCancelled = openAssignments.length;
     }
+
     if (jc.status === 'CANCELLED') {
-      if (await tx.customerMaterialAllocation.count({ where: { jobcardId: id } })) {
-        throw new HttpError(400, 'Job card has allocation history and cannot be permanently deleted');
+      const history = await tx.customerMaterialAllocation.findMany({
+        where: { jobcardId: id },
+        select: { id: true, lotId: true, qty: true, weight: true, createdAt: true, releasedAt: true, releaseReason: true },
+      });
+      if (history.length) {
+        if (!isOwner) {
+          throw new HttpError(400, 'Job card has allocation history and cannot be permanently deleted');
+        }
+        // the rows are about to go; put their contents somewhere permanent
+        await audit(req, 'deleteAllocationHistory', 'Jobcard', id, {
+          number: jc.number, allocations: history,
+        }, tx, { required: true });
+        await tx.customerMaterialAllocation.deleteMany({ where: { jobcardId: id } });
+        cleaned.reservationHistoryRemoved = history.length;
       }
       attachments = await tx.attachment.findMany({ where: { refType: 'JOBCARD', refId: id } });
       const attachmentIds = attachments.map((a) => a.id);
+      // Records that reference the job card but are not part of it: keep the
+      // record, drop the link. Lines, Task Progress items, notes and reverts
+      // belong to the card and cascade with it in the schema.
       await tx.productionBatch.updateMany({ where: { jobcardId: id }, data: { jobcardId: null } });
       await tx.customerMaterialLot.updateMany({ where: { jobcardId: id }, data: { jobcardId: null } });
+      // the database detaches this one too (optional relation); doing it here
+      // keeps the behaviour the same everywhere, adapters included
+      await tx.vendorWorkOrder.updateMany({ where: { jobcardId: id }, data: { jobcardId: null } });
       if (attachmentIds.length) {
         await tx.assignment.deleteMany({ where: { attachmentId: { in: attachmentIds } } });
         await tx.attachment.deleteMany({ where: { id: { in: attachmentIds } } });
       }
       await tx.jobcard.delete({ where: { id } });
-      return { deleted: true, number: jc.number };
+      return { deleted: true, number: jc.number, cleaned };
     }
     await tx.jobcard.update({ where: { id }, data: { status: 'CANCELLED' } });
-    return { deleted: false, number: jc.number };
+    return { deleted: false, number: jc.number, cleaned };
   }, { isolationLevel: 'ReadCommitted' });
   for (const a of attachments) {
     try { fs.unlinkSync(path.join(uploadBaseDir, a.storedName)); } catch (_) { /* file may already be gone */ }
   }
-  await audit(req, result.deleted ? 'delete' : 'cancel', 'Jobcard', id, { number: result.number });
-  res.json({ ok: true, deleted: result.deleted });
+  await audit(req, result.deleted ? 'delete' : 'cancel', 'Jobcard', id, {
+    number: result.number, ...result.cleaned, forced: isOwner,
+  });
+  res.json({ ok: true, deleted: result.deleted, cleaned: result.cleaned });
 }
 
 async function updateProgress(req, res) {

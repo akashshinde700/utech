@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Screenshot capture for the Hinglish user manual
 // (docs/user-guide/Utech-ERP-User-Guide-Hinglish.docx).
@@ -10,12 +11,23 @@ import path from 'node:path';
 // manifest (step number, file, Hinglish heading + caption) that the docx builder
 // reads from ../scripts/build-user-guide-docx.js.
 //
-// Run it only against a disposable demo database:
-//   SHOTS_DIR=../docs/user-guide/screenshots npx playwright test user-guide-capture.spec.js
+// Run it only against a disposable demo database, and only when the manual is
+// being rebuilt:
+//   E2E_CAPTURE_GUIDE=1 npx playwright test user-guide-capture.spec.js
 // It creates customers, items, a PO, a GRN, a dispatch, an invoice with a
 // payment, a BOM, a production batch and a customer-material lot in that demo DB.
+//
+// It is skipped by default for three reasons, all of them its own words above:
+// it is tooling rather than a regression check, it takes over two minutes of the
+// suite's six, and it writes fifty files. Left on, every `npm run test:e2e`
+// rewrote those files and left the working tree dirty.
+test.skip(process.env.E2E_CAPTURE_GUIDE !== '1', 'documentation tooling — run with E2E_CAPTURE_GUIDE=1 to rebuild the manual');
 
-const SHOTS_DIR = path.resolve(process.env.SHOTS_DIR || path.join(process.cwd(), 'docs/user-guide/screenshots'));
+// The default used to be relative to the frontend directory, which put the PNGs
+// in frontend/docs/user-guide/screenshots — a tree nothing reads. The docx
+// builder and the committed images both live at the repository's docs/.
+const SHOTS_DIR = path.resolve(process.env.SHOTS_DIR
+  || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs/user-guide/screenshots'));
 const manifest = [];
 let step = 0;
 

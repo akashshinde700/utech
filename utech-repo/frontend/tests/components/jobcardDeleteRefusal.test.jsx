@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+// the toast text is part of what this page tells the user, so it is asserted
+// rather than left to a real toast renderer that no test mounts
+vi.mock('react-hot-toast', () => {
+  const api = { success: vi.fn(), error: vi.fn(), loading: vi.fn(), dismiss: vi.fn() };
+  const fn = Object.assign(vi.fn(), api);
+  return { default: fn, toast: fn, Toaster: () => null };
+});
+
+import toastSpy from 'react-hot-toast';
 import JobcardsPage from '../../src/pages/jobcards/JobcardsPage';
 import { useAuth } from '../../src/store/auth';
 
@@ -25,7 +34,7 @@ const JOBCARD = {
   progressPercent: 0,
 };
 
-const OWNER = { id: 1, name: 'Owner', role: 'OWNER', permissions: ['jobcard.read', 'jobcard.delete'] };
+const OWNER = { id: 1, name: 'Owner', role: 'SUPERADMIN', permissions: ['jobcard.read', 'jobcard.delete'] };
 
 function renderPage() {
   // the store reads localStorage once at module load, which already happened
@@ -51,6 +60,8 @@ describe('a refused job-card delete', () => {
     localStorage.clear();
     globalThis.__apiMock.get.mockReset();
     globalThis.__apiMock.delete.mockReset();
+    toastSpy.success.mockReset();
+    toastSpy.error.mockReset();
     globalThis.__apiMock.get.mockResolvedValue({
       data: { items: [JOBCARD], pagination: { total: 1, page: 1, pageSize: 10, totalPages: 1 } },
     });
@@ -137,5 +148,58 @@ describe('a refused job-card delete', () => {
 
     expect(screen.queryByText(/Finish or cancel/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark as cancelled' })).toBeInTheDocument();
+  });
+});
+
+describe("the owner's cancel", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    globalThis.__apiMock.get.mockReset();
+    globalThis.__apiMock.delete.mockReset();
+    toastSpy.success.mockReset();
+    toastSpy.error.mockReset();
+    globalThis.__apiMock.get.mockResolvedValue({
+      data: { items: [JOBCARD], pagination: { total: 1, page: 1, pageSize: 10, totalPages: 1 } },
+    });
+  });
+
+  it('warns what will be cleaned up before the click, not after', async () => {
+    await openDeleteDialog();
+    // a cancel that quietly releases someone's material reservation is worse
+    // than a refusal, so the dialog says it first
+    expect(screen.getByText(/released and open drawing/i)).toBeInTheDocument();
+  });
+
+  it('reports what the cancel actually cleared', async () => {
+    globalThis.__apiMock.delete.mockResolvedValue({
+      data: { ok: true, deleted: false, cleaned: { assignmentsCancelled: 2, reservationsReleased: 1, reservationHistoryRemoved: 0 } },
+    });
+
+    const user = await openDeleteDialog();
+    await user.click(screen.getByRole('button', { name: 'Mark as cancelled' }));
+
+    await vi.waitFor(() => {
+      expect(globalThis.__apiMock.delete).toHaveBeenCalledWith('/jobcards/1');
+    });
+    const toasted = toastSpy.success.mock.calls.map((c) => String(c[0])).join(' | ');
+    expect(toasted).toMatch(/Jobcard marked as cancelled/);
+    expect(toasted).toMatch(/2 drawing assignments cancelled/);
+    expect(toasted).toMatch(/1 material reservation released/);
+  });
+
+  it('says nothing extra when there was nothing to clear', async () => {
+    globalThis.__apiMock.delete.mockResolvedValue({
+      data: { ok: true, deleted: false, cleaned: { assignmentsCancelled: 0, reservationsReleased: 0, reservationHistoryRemoved: 0 } },
+    });
+
+    const user = await openDeleteDialog();
+    await user.click(screen.getByRole('button', { name: 'Mark as cancelled' }));
+
+    await vi.waitFor(() => {
+      expect(globalThis.__apiMock.delete).toHaveBeenCalledWith('/jobcards/1');
+    });
+    const toasted = toastSpy.success.mock.calls.map((c) => String(c[0])).join(' | ');
+    expect(toasted).toContain('Jobcard marked as cancelled');
+    expect(toasted).not.toMatch(/—/);
   });
 });
