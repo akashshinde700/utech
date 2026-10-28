@@ -1,0 +1,302 @@
+[
+  {
+    "step": 1,
+    "file": "01-login-screen.png",
+    "title": "Login screen",
+    "caption": "App kholein — sabse pehle yeh login screen aayegi. Admin se mila hua email aur password daalein, phir \"Sign in\" dabayein."
+  },
+  {
+    "step": 2,
+    "file": "02-dashboard.png",
+    "title": "Dashboard (ghar ka panna)",
+    "caption": "Login karne ke baad yahi Dashboard khulta hai: sales, active jobcard, pending jobwork, total parties aur total items ek nazar me. Left ka dark menu poore software ka rasta hai. Upar search box se kisi bhi page par seedha ja sakte hain."
+  },
+  {
+    "step": 3,
+    "file": "03-sidebar-sections.png",
+    "title": "Left menu ke 8 section",
+    "caption": "Menu 8 hisson me bata hua hai: Masters, Task Management, Sales, Company Inventory, Customer Inventory, Stock Management, Analytics aur Admin. Section par click karne se uske pages khulte hain — jaise Company Inventory me Items, BOMs, Production Batches, Purchase Orders aur GRN."
+  },
+  {
+    "step": 4,
+    "file": "04-customers-list.png",
+    "title": "Masters → Customers (customer list)",
+    "caption": "Customer yani jise maal bechte hain. List me naam, phone aur GST detail dikhti hai. Naya customer banane ke liye upar right ka \"New customer\" button dabayein."
+  },
+  {
+    "step": 5,
+    "file": "05-customer-form.png",
+    "title": "Naya customer banana",
+    "caption": "Sirf naam aur type zaroori hai, baaki detail baad me bhi bhar sakte hain. GST wala customer ho to GSTIN daalein — state code aur PAN apne aap bhar jaate hain. Save dabane par customer list me chala jayega."
+  },
+  {
+    "step": 6,
+    "file": "06-customer-saved.png",
+    "title": "Customer list me naya customer",
+    "caption": "Save karne ke baad customer list me sabse upar naya customer dikhta hai. Row par click karne se uski detail aur ledger khulti hai."
+  },
+  {
+    "step": 7,
+    "file": "07-vendor-form.png",
+    "title": "Naya vendor banana",
+    "caption": "Vendor yani jisse maal kharidte hain ya jobwork karwate hain. Type me \"Vendor\" chuna hua hona chahiye, naam aur phone bharein, phir Save."
+  },
+  {
+    "step": 8,
+    "file": "08-items-list.png",
+    "title": "Company Inventory → Items",
+    "caption": "Company ke apne saare items — 73 raw-material items pehle se bhare hue hain (RB, PP, PL, FL codes). Har row me current stock aur min stock dikhta hai. Naya item \"New item\" se banta hai."
+  },
+  {
+    "step": 9,
+    "file": "09-item-form.png",
+    "title": "Naya item banana",
+    "caption": "Item ka naam, UoM, rate aur GST % bharein. \"Opening Stock\" me aaj physically jitna maal hai woh daalein — item save hone ke baad opening stock lock ho jata hai, isliye ek baar dhyan se bharein. \"Min Stock\" low-stock alert ka level hai."
+  },
+  {
+    "step": 10,
+    "file": "10-item-detail.png",
+    "title": "Item ki detail — stock kitna hai",
+    "caption": "Row par click karne se item ki detail khulti hai. Yahan Current Stock 50 hai — yahi opening stock tha. Neeche ledger me OPENING ki entry dikhti hai. Item rate/GST yahin se badle ja sakte hain (stock opening nahi)."
+  },
+  {
+    "step": 11,
+    "file": "11-stock-overview.png",
+    "title": "Stock Management → Stock Overview & Ledger",
+    "caption": "Upar company stock ka summary (kitne item, kitne low stock, kitna maal kitne rupaye ka). Neeche \"Stock Ledger\" me har movement ki history hai: kitna andar aaya (In), kitna bahar gaya (Out) aur uske baad Balance kitna raha."
+  },
+  {
+    "step": 12,
+    "file": "12-stock-adjustment-form.png",
+    "title": "Stock adjustment (correction) bharna",
+    "caption": "Physical ginti me farak mile to right side ke \"Manual Adjustment\" form me item choose karein. Quantity me +5 likhne par stock 5 badhega, −3 likhne par 3 ghat jayega. Reason likhna zaroori hai — woh audit log me jata hai."
+  },
+  {
+    "step": 13,
+    "file": "13-stock-adjustment-confirm.png",
+    "title": "Confirm dialog",
+    "caption": "System ek baar poochhta hai — kis item par kitna adjustment lagega. Sahi lage to \"Apply adjustment\" dabayein, warna Cancel."
+  },
+  {
+    "step": 14,
+    "file": "14-stock-ledger-after-adjustment.png",
+    "title": "Ledger me entry aa gayi",
+    "caption": "Ab ledger me sabse upar ADJUSTMENT ki row hai: In = 5 aur Balance = 55 (50 + 5). Har row ke baad ka balance yahin dikhta hai, isliye galti pakadna aasan hai."
+  },
+  {
+    "step": 15,
+    "file": "15-po-list.png",
+    "title": "Company Inventory → Purchase Orders",
+    "caption": "Vendor ko maal mangwane ka order (PO). Naya PO \"New PO\" se banega. Dhyan rakhein: PO banane se stock nahi badhta — stock GRN se badhta hai."
+  },
+  {
+    "step": 16,
+    "file": "16-po-form.png",
+    "title": "Naya Purchase Order bharna",
+    "caption": "Date, vendor aur item bharein. Item choose karte hi uska rate aur GST apne aap aa jaata hai (yahan 72 aur 18%). Quantity badalne par neeche subtotal/GST/amount apne aap calculate hota hai."
+  },
+  {
+    "step": 17,
+    "file": "17-po-detail-pending.png",
+    "title": "PO detail — approve karna baaki hai",
+    "caption": "PO save hone par \"PENDING_APPROVAL\" me jati hai. Upar right me Approve aur Reject button hain. Jis user ke paas approve permission hai wahi approve karega (maker-checker)."
+  },
+  {
+    "step": 18,
+    "file": "18-po-approve-dialog.png",
+    "title": "PO approve karne ki confirmation",
+    "caption": "Confirm dialog me \"Approve\" dabane par PO approved ho jati hai. Ab vendor ko PO bhej sakte hain aur maal aane par isi PO se GRN banega."
+  },
+  {
+    "step": 19,
+    "file": "19-po-approved.png",
+    "title": "PO approved ho gayi",
+    "caption": "Status badal kar APPROVED ho gaya. Ab \"Create GRN\" se seedha receipt bana sakte hain, ya GRN page se yeh PO choose kar sakte hain."
+  },
+  {
+    "step": 20,
+    "file": "20-grn-form.png",
+    "title": "GRN — maal aaya (Stock In)",
+    "caption": "Vendor se maal aane par GRN banayein. Qty 10 me se 2 reject hue, to Accepted apne aap 8 ho gaya — sirf yehi 8 stock me judega, reject ki hui 2 nahi. PO se aaye maal ke liye upar Purchase Order choose karein, lines apne aap bhar jaati hain."
+  },
+  {
+    "step": 21,
+    "file": "21-grn-saved.png",
+    "title": "GRN save — list me dikh raha hai",
+    "caption": "GRN list me naya GRN \"ACCEPTED\" status ke saath aata hai. Row par click karke detail, PDF aur \"Cancel GRN\" milta hai."
+  },
+  {
+    "step": 22,
+    "file": "22-grn-detail.png",
+    "title": "GRN detail — accepted quantity",
+    "caption": "Detail me accepted quantity (8) aur status dikhta hai. Galti ho to yahin se \"Cancel GRN\" + reason de sakte hain — cancel karne par woh 8 stock wapas kam ho jayega."
+  },
+  {
+    "step": 23,
+    "file": "23-dispatch-list.png",
+    "title": "Sales → Dispatch",
+    "caption": "Customer ko physical maal bhejne ka record (Delivery Challan). Naya challan \"New dispatch\" se banta hai. Row me status aur \"Delivered\"/cancel ka option hota hai."
+  },
+  {
+    "step": 24,
+    "file": "24-dispatch-form.png",
+    "title": "Naya Delivery Challan (dispatch)",
+    "caption": "Customer, item aur quantity bharein — vehicle, driver aur e-way bill optional hain. Dhyan rakhein: Save karte hi 4 quantity stock se kam ho jayegi. Available stock se zyada quantity save nahi hogi."
+  },
+  {
+    "step": 25,
+    "file": "25-dispatch-saved.png",
+    "title": "Challan ban gaya — stock kam ho gaya",
+    "caption": "Naya challan list me aa gaya. Galti ho to row ke \"Cancel dispatch\" se cancel karein — stock wapas jud jayega. Delivered challan yahan se cancel nahi hota."
+  },
+  {
+    "step": 26,
+    "file": "26-invoices-list.png",
+    "title": "Sales → Invoices",
+    "caption": "Saare bills ki list — number, party, total, balance aur status (ISSUED / PAID). Naya bill \"New Invoice\" se banta hai."
+  },
+  {
+    "step": 27,
+    "file": "27-invoice-form.png",
+    "title": "Naya Invoice (bill) banana",
+    "caption": "Party, item, qty aur rate bharein — GST % item se aa jata hai. \"GST Type\" same state (CGST+SGST) ya doosre state (IGST) ka hota hai. Neeche total apne aap calculate hota hai. Invoice banane se stock nahi ghatta — uske liye dispatch hota hai."
+  },
+  {
+    "step": 28,
+    "file": "28-invoice-view.png",
+    "title": "Banaya hua Invoice",
+    "caption": "Invoice detail: line items, subtotal, CGST/SGST (same state) aur total. ₹380 par 18% GST = ₹68.40, round off ke baad total ₹448. Upar PDF, Edit aur \"Record payment\" ke button hain."
+  },
+  {
+    "step": 29,
+    "file": "29-payment-form.png",
+    "title": "Payment record karna",
+    "caption": "Customer ne paisa diya to \"Record payment\" me amount, date aur mode (Cash / Bank / UPI) daalein. Balance due se zyada amount nahi daal sakte; paise 2 decimal tak hi."
+  },
+  {
+    "step": 30,
+    "file": "30-payment-saved.png",
+    "title": "Payment jud gaya",
+    "caption": "Invoice par \"Paid\" badh gaya aur \"Balance\" kam ho gaya. Poora paisa aane par status PAID ho jata hai. Payment ke baad invoice edit/cancel par rok lagti hai — galti ho to accounts se correction karayein."
+  },
+  {
+    "step": 31,
+    "file": "31-bom-list.png",
+    "title": "BOM (Bill of Materials)",
+    "caption": "BOM yani recipe: ek finished product banane me kaun-kaun sa raw material aur kitna lagega. BOM banane se stock nahi badalta — sirf plan banta hai."
+  },
+  {
+    "step": 32,
+    "file": "32-bom-form.png",
+    "title": "Naya BOM banana",
+    "caption": "Code aur naam dein, \"Finished Item\" choose karein (jo banta hai), phir \"Add Component\" dabakar raw material aur uski quantity daalein. Yahan 1 bracket me 0.5 kg bar lagegi."
+  },
+  {
+    "step": 33,
+    "file": "33-bom-saved.png",
+    "title": "BOM save ho gaya",
+    "caption": "Recipe list me save ho gayi. Ab production batch banate waqt isi BOM ko choose karenge — material lines apne aap aa jayengi."
+  },
+  {
+    "step": 34,
+    "file": "34-production-list.png",
+    "title": "Production Batches",
+    "caption": "Ek batch yani ek shift me bana hua maal. Status PLANNED → IN_PROGRESS → COMPLETED. Batch complete karne par raw material ghatta hai aur finished item badhta hai."
+  },
+  {
+    "step": 35,
+    "file": "35-production-form.png",
+    "title": "Naya production batch",
+    "caption": "Shift, date, item aur planned quantity bharein. BOM choose karne par material ki lines (kitna raw material lagega) apne aap aa jaati hain."
+  },
+  {
+    "step": 36,
+    "file": "36-production-batch-open.png",
+    "title": "Batch khul gaya",
+    "caption": "Batch PLANNED status me hai. Pehle \"Start\" dabayein, phir actual material consumption (kitna material really laga) check karke \"Save Changes\" karein, aur ant me \"Complete\" me produced quantity daalein."
+  },
+  {
+    "step": 37,
+    "file": "37-production-start-confirm.png",
+    "title": "Start ki confirmation",
+    "caption": "\"Start\" dabane par system confirm karta hai — theek hai to \"Start batch\" dabayein. Iske baad batch IN_PROGRESS ho jata hai."
+  },
+  {
+    "step": 38,
+    "file": "38-production-batch-started.png",
+    "title": "Batch IN_PROGRESS — actual material bharein",
+    "caption": "Ab actual quantities edit ho sakti hain. Material jo use nahi hua uski quantity 0 kar dein, phir \"Save Changes\" karein."
+  },
+  {
+    "step": 39,
+    "file": "39-customer-material-list.png",
+    "title": "Customer Inventory → Customer Material",
+    "caption": "Customer ka apna maal jo kaam ke liye aapke paas aaya hai. Yeh company stock se bilkul alag ledger hai — yahan ki quantity company item ke stock me nahi milti."
+  },
+  {
+    "step": 40,
+    "file": "40-customer-material-form.png",
+    "title": "Customer ka maal inward karna",
+    "caption": "Customer, material ka description aur quantity bharein. Heat/lot number aur location likhna acchi practice hai taaki maal trace ho sake. Yeh 40 pcs company stock me NAHI judengi — alag customer lot ledger me jayengi."
+  },
+  {
+    "step": 41,
+    "file": "41-jobwork-list.png",
+    "title": "Jobwork — vendor ko maal bhejna",
+    "caption": "Maal vendor ko process karwane bhejna. Bhejne par quantity stock/lot se kam hoti hai, wapas aane par \"Receive\" karke badhti hai."
+  },
+  {
+    "step": 42,
+    "file": "42-purchase-returns.png",
+    "title": "Purchase Returns",
+    "caption": "Kharab ya galat maal vendor ko wapas bhejne ka record. Return process hone par hi stock par asar padta hai."
+  },
+  {
+    "step": 43,
+    "file": "43-sales-returns.png",
+    "title": "Sales Returns",
+    "caption": "Customer se maal wapas aana. Dhyan rakhein: sirf tab stock badhta hai jab \"Physical Receipt\" record ho chuka ho (return challan number + received date ke saath)."
+  },
+  {
+    "step": 44,
+    "file": "44-reports.png",
+    "title": "Analytics → Reports",
+    "caption": "Yahan se business reports dekhi ja sakti hain aur Excel/PDF me download hoti hain — sales, purchase, stock jaise sabhi reports."
+  },
+  {
+    "step": 45,
+    "file": "45-inventory-analytics.png",
+    "title": "Inventory Analytics",
+    "caption": "Grafik me dikhta hai kaunsa maal zyada pada hai, kaunsa khatam ho raha hai aur kitna paisa stock me fasa hai."
+  },
+  {
+    "step": 46,
+    "file": "46-users.png",
+    "title": "Admin → Users",
+    "caption": "Naya user banana, uska role set karna aur password reset karna yahin se hota hai. Har user ko sirf uske kaam ka access dein."
+  },
+  {
+    "step": 47,
+    "file": "47-roles.png",
+    "title": "Admin → Roles",
+    "caption": "Role me permissions set hoti hain — read / create / update / delete. Kisi user ko koi link ya button na dikhe to samajh lijiye ki uske role me woh permission nahi hai."
+  },
+  {
+    "step": 48,
+    "file": "48-metal-calculator.png",
+    "title": "Masters → Metal Calculator",
+    "caption": "Weight aur price nikaalne ka tool — round bar, pipe, plate jaise 11 shapes aur 22 metals. Sirf calculation hai, stock par koi asar nahi hota; number copy karke apne document me use karein."
+  },
+  {
+    "step": 49,
+    "file": "49-global-search.png",
+    "title": "Global search (Ctrl + K)",
+    "caption": "Kisi bhi page ka naam ya action type karke seedha wahan pahunch sakte hain — jaise \"invoice\" likhne par invoice, naya invoice aur dispatch ke options milte hain. Shortcut: Ctrl + K."
+  },
+  {
+    "step": 50,
+    "file": "50-mobile-dashboard.png",
+    "title": "Mobile par software",
+    "caption": "Mobile par bhi sab screens chalti hain. Upar left ka ☰ menu button dabakar sidebar khulega; tables ko side me scroll kiya ja sakta hai."
+  }
+]

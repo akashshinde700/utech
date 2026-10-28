@@ -4,6 +4,12 @@ Manufacturing ERP with an Express/Prisma/MySQL backend and a React/Vite frontend
 
 **New to the software?** Start with [the step-by-step Hinglish beginner guide](./BEGINNER_GUIDE_HINGLISH.md). It covers stock effects, invoice versus dispatch, roles, a practice scenario and known limitations.
 
+For training someone who has never used an ERP, use the illustrated manual:
+[docs/user-guide/Utech-ERP-User-Guide-Hinglish.docx](./docs/user-guide/Utech-ERP-User-Guide-Hinglish.docx)
+(19 chapters, 50 annotated screenshots taken from the running app, Hinglish). The
+capture spec and the docx builder are documented in
+[docs/user-guide/README.md](./docs/user-guide/README.md).
+
 ## Quick start: temporary demo
 
 Requires Node.js 20+ and npm. From this directory, use two terminals:
