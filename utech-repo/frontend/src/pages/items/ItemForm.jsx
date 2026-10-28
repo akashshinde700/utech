@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Package, Tag, Save } from 'lucide-react';
 import api from '../../lib/api';
@@ -41,7 +41,7 @@ const schema = {
   name: (v) => required(v, 'Item name'),
   hsnCode: (v) => hsn(v),
   gstRate: (v) => gstRate(v),
-  purchaseRate: (v) => optionalPositive(v, 'Purchase rate'),
+  purchaseRate: (v) => nonNegative(v, 'Purchase rate'),
   saleRate: (v) => optionalPositive(v, 'Sale rate'),
   ratePerKg: (v) => nonNegative(v, 'Rate per kg') || (v !== '' && v != null && new Decimal(v).decimalPlaces() > 2 ? 'Use at most two decimal places' : null),
   openingStock: (v) => nonNegative(v, 'Opening stock'),
@@ -56,6 +56,9 @@ export default function ItemForm() {
   const [projects, setProjects] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showSizeCalculator, setShowSizeCalculator] = useState(false);
+  const [autoPrice, setAutoPrice] = useState(false);
+  const [calculatorSeed, setCalculatorSeed] = useState(null);
+  const appliedPreview = useRef(null);
   const [errors, setErrors] = useState({});
 
   useEffect(() => { api.get('/items/lookups').then((r) => setLookups(r.data)); }, []);
@@ -100,11 +103,19 @@ export default function ItemForm() {
 
   async function save(e) {
     e.preventDefault();
+    if (showSizeCalculator) {
+      toast.error('Calculate or close the material calculator before saving.');
+      return;
+    }
     const { errors: errs, ok } = validateAll(form, schema);
     if (!ok) {
       setErrors(errs);
       toast.error('Please fix the highlighted fields');
       document.getElementById(FIELD_IDS[Object.keys(errs)[0]])?.focus();
+      return;
+    }
+    if (autoPrice && form.ratePerKg !== '' && form.ratePerKg != null && weight?.weightKg == null) {
+      toast.error('Wait for a valid weight before saving the automatic purchase rate, or enter the rate manually.');
       return;
     }
     setSaving(true);
@@ -141,6 +152,12 @@ export default function ItemForm() {
       .catch(() => setMetals([]));
   }, []);
   useEffect(() => {
+    const preview = appliedPreview.current;
+    appliedPreview.current = null;
+    if (preview && preview.size === form.size && preview.metal === form.metal && preview.name === form.name) {
+      setWeight(preview.data);
+      return undefined;
+    }
     setWeight(null);
     if (!form.size) return undefined;
     let cancelled = false;
@@ -152,9 +169,17 @@ export default function ItemForm() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [form.size, form.name, form.metal]);
 
-  const computedRate = weight?.weightKg && form.ratePerKg !== '' && form.ratePerKg != null && Number(form.ratePerKg) > 0
+  const computedRate = weight?.weightKg != null && form.ratePerKg !== '' && form.ratePerKg != null && Number.isFinite(Number(form.ratePerKg)) && Number(form.ratePerKg) >= 0 && !schema.ratePerKg(form.ratePerKg)
     ? new Decimal(weight.weightKg).times(form.ratePerKg).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
     : null;
+
+  useEffect(() => {
+    if (autoPrice && computedRate != null) {
+      const price = computedRate.toFixed(2);
+      setForm((f) => f.purchaseRate === price ? f : { ...f, purchaseRate: price });
+      setErrors((e) => e.purchaseRate ? { ...e, purchaseRate: undefined } : e);
+    }
+  }, [autoPrice, computedRate]);
 
   const errCls = (k) => `${styles.input} ${err(k)}`;
 
@@ -182,7 +207,7 @@ export default function ItemForm() {
             </FormField>
             <FormField id="item-size" label="Material Size" hint="As written on the stock sheet / drawing, e.g. OD 60 X 5 mtr.">
               <input id="item-size" className={errCls('size')} value={form.size || ''} onChange={(e) => set('size', e.target.value)} />
-              <button type="button" className="mt-2 text-sm font-semibold text-brand-700 hover:underline" aria-expanded={showSizeCalculator} onClick={() => setShowSizeCalculator((v) => !v)}>
+              <button type="button" className="mt-2 text-sm font-semibold text-brand-700 hover:underline" aria-expanded={showSizeCalculator} onClick={() => { if (!showSizeCalculator) setCalculatorSeed(weight); setShowSizeCalculator((v) => !v); }}>
                 {showSizeCalculator ? 'Close calculator' : 'Calculate material size'}
               </button>
             </FormField>
@@ -223,7 +248,21 @@ export default function ItemForm() {
               />
             </FormField>
           </div>
-          {showSizeCalculator && <div className="mt-4"><MetalCalculatorPage embedded initialMetal={form.metal} onApply={(size, metal, ratePerKg) => { set('size', size); set('metal', metal); if (ratePerKg != null) set('ratePerKg', ratePerKg); setShowSizeCalculator(false); }} /></div>}
+          {showSizeCalculator && <div className="mt-4"><MetalCalculatorPage embedded initialMetal={form.metal} initialSize={form.size || ''} initialParsed={calculatorSeed} initialRatePerKg={form.ratePerKg} onApply={(size, metal, ratePerKg, preview) => {
+            appliedPreview.current = { size, metal, name: form.name, data: preview };
+            setForm((f) => {
+              const rate = ratePerKg ?? f.ratePerKg;
+              const validRate = rate !== '' && rate != null && !schema.ratePerKg(rate);
+              const purchaseRate = validRate && preview.weightKg != null
+                ? new Decimal(preview.weightKg).times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)
+                : f.purchaseRate;
+              return { ...f, size, metal, ratePerKg: rate, purchaseRate };
+            });
+            setErrors((e) => ({ ...e, size: undefined, metal: undefined, ratePerKg: undefined, purchaseRate: undefined }));
+            setWeight(preview);
+            setAutoPrice(true);
+            setShowSizeCalculator(false);
+          }} /></div>}
         </FormSection>
 
         <FormSection icon={Tag} title="Pricing & Stock" description="Default rates pulled into documents, plus stock thresholds">
@@ -244,13 +283,8 @@ export default function ItemForm() {
                       × ₹{form.ratePerKg}/kg = <span className="font-semibold tabular-nums">₹{computedRate.toFixed(2)}</span>
                     </span>
                     <span className="text-xs text-slate-500">Uses weight rounded to 3 decimals; calculator total may differ slightly.</span>
-                    <button
-                      type="button"
-                      className={`${styles.secondaryBtn} !h-8 !px-3 text-xs`}
-                      onClick={() => set('purchaseRate', String(computedRate.toFixed(2)))}
-                    >
-                      Use as purchase rate
-                    </button>
+                    {!autoPrice && <button type="button" className={`${styles.secondaryBtn} !h-8 !px-3 text-xs`} onClick={() => { setAutoPrice(true); set('purchaseRate', computedRate.toFixed(2)); }}>Use as purchase rate</button>}
+                    {autoPrice && <span className="text-xs font-medium text-brand-700">Purchase rate updates automatically</span>}
                   </>
                 )}
               </div>
@@ -273,8 +307,8 @@ export default function ItemForm() {
             <FormField id="item-rate-per-kg" label="Rate per kg" hint="₹ — used with the weight above" error={errors.ratePerKg}>
               <input id="item-rate-per-kg" type="number" step="0.01" min="0" className={errCls('ratePerKg')} value={form.ratePerKg ?? ''} onChange={(e) => set('ratePerKg', e.target.value)} onBlur={() => blur('ratePerKg')} aria-invalid={!!errors.ratePerKg} />
             </FormField>
-            <FormField id="item-purchase-rate" label="Purchase Rate" hint="₹ per unit" error={errors.purchaseRate}>
-              <input id="item-purchase-rate" type="number" step="0.01" min="0" className={errCls('purchaseRate')} value={form.purchaseRate ?? ''} onChange={(e) => set('purchaseRate', e.target.value)} onBlur={() => blur('purchaseRate')} aria-invalid={!!errors.purchaseRate} />
+            <FormField id="item-purchase-rate" label="Purchase Rate" hint={autoPrice ? "₹ per piece — calculated from weight × rate/kg; edit to override" : "₹ per unit — enter manually or use the calculated rate above"} error={errors.purchaseRate}>
+              <input id="item-purchase-rate" type="number" step="0.01" min="0" className={errCls('purchaseRate')} value={form.purchaseRate ?? ''} onChange={(e) => { setAutoPrice(false); set('purchaseRate', e.target.value); }} onBlur={() => blur('purchaseRate')} aria-invalid={!!errors.purchaseRate} />
             </FormField>
             <FormField id="item-sale-rate" label="Sale Rate" hint="₹ per unit" error={errors.saleRate}>
               <input id="item-sale-rate" type="number" step="0.01" min="0" className={errCls('saleRate')} value={form.saleRate ?? ''} onChange={(e) => set('saleRate', e.target.value)} onBlur={() => blur('saleRate')} aria-invalid={!!errors.saleRate} />
@@ -290,9 +324,10 @@ export default function ItemForm() {
             </FormField>
           </div>
 
+          {showSizeCalculator && <p className="mt-3 text-xs text-slate-500">Calculate or close the material calculator before saving.</p>}
           <div className={styles.actionsBar}>
             <button type="button" className={styles.ghostBtn} onClick={() => navigate('/items')}>Cancel</button>
-            <button type="submit" className={styles.primaryBtn} disabled={saving}>
+            <button type="submit" className={styles.primaryBtn} disabled={saving || showSizeCalculator}>
               <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save'}
             </button>
           </div>

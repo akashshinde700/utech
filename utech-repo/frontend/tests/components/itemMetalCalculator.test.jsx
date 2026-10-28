@@ -6,7 +6,7 @@ import ItemForm from '../../src/pages/items/ItemForm';
 const shape = { id: 'roundbar', label: 'Round Bar', formula: 'π/4 × D² × L × ρ', supportsLengthMode: true,
   fields: [{ id: 'd', label: 'Diameter (D)', symbol: 'D' }, { id: 'L', label: 'Length (L)', symbol: 'L', isLength: true }] };
 const metal = { name: 'Steel', density: 7.85, group: 'Steel' };
-const catalog = { shapes: [shape], metals: [metal], units: { metric: ['mm', 'cm', 'm'], imperial: ['in', 'ft', 'yd'] }, weightUnits: ['kg', 'lb'], constants: { kgToLb: 2.204622 } };
+const catalog = { shapes: [shape], metals: [metal], units: { metric: ['mm', 'cm', 'm'], imperial: ['in', 'ft', 'yd'], factorsToMm: { mm: 1, cm: 10, m: 1000, in: 25.4, ft: 304.8, yd: 914.4 } }, weightUnits: ['kg', 'lb'], constants: { kgToLb: 2.204622 } };
 
 beforeEach(() => {
   const api = globalThis.__apiMock;
@@ -50,12 +50,10 @@ describe('item metal calculator', () => {
     fireEvent.change(document.getElementById('mc-weight-unit'), { target: { value: 'lb' } });
     fireEvent.change(document.getElementById('mc-rate'), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Use size and rate per kg' }));
     await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm'));
     expect(document.getElementById('item-metal')).toHaveValue('Steel');
     expect(document.getElementById('item-rate-per-kg')).toHaveValue(22.05);
     await waitFor(() => expect(screen.getByText('61.654 kg')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Use as purchase rate' }));
     expect(document.getElementById('item-purchase-rate')).toHaveValue(1359.47);
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(globalThis.__apiMock.post).toHaveBeenCalledWith('/items', expect.objectContaining({
@@ -68,17 +66,44 @@ describe('item metal calculator', () => {
     fireEvent.change(screen.getByLabelText('Calculate'), { target: { value: 'length' } });
     fireEvent.change(document.getElementById('mc-total-weight'), { target: { value: '61.654' } });
     fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Use this material size' }));
     await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm'));
     expect(globalThis.__apiMock.post).toHaveBeenCalledWith('/metal-calculator/calculate', expect.objectContaining({ mode: 'length', totalWeight: 61.654 }));
   });
 
-  it('does not apply a result based on a custom density', async () => {
+  it('updates the purchase rate as rate/kg changes, while a manual override stays untouched', async () => {
     await openCalculator();
     fireEvent.change(document.getElementById('mc-L'), { target: { value: '1000' } });
-    fireEvent.change(document.getElementById('mc-density'), { target: { value: '8' } });
+    fireEvent.change(document.getElementById('mc-rate'), { target: { value: '100' } });
     fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
-    expect(await screen.findByText(/Custom density or standard profile results cannot be saved/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Use this material size' })).not.toBeInTheDocument();
+    await waitFor(() => expect(document.getElementById('item-purchase-rate')).toHaveValue(6165.4));
+    fireEvent.change(document.getElementById('item-rate-per-kg'), { target: { value: '75' } });
+    await waitFor(() => expect(document.getElementById('item-purchase-rate')).toHaveValue(4624.05));
+    fireEvent.change(document.getElementById('item-purchase-rate'), { target: { value: '4500' } });
+    fireEvent.change(document.getElementById('item-rate-per-kg'), { target: { value: '80' } });
+    expect(document.getElementById('item-purchase-rate')).toHaveValue(4500);
   });
+
+  it('restores saved calculator dimensions and rate when reopened', async () => {
+    await openCalculator();
+    fireEvent.change(document.getElementById('mc-L'), { target: { value: '1000' } });
+    fireEvent.change(document.getElementById('mc-rate'), { target: { value: '100' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
+    await waitFor(() => expect(document.getElementById('item-purchase-rate')).toHaveValue(6165.4));
+    fireEvent.click(screen.getByRole('button', { name: 'Calculate material size' }));
+    await screen.findByLabelText('Material shape');
+    await waitFor(() => expect(document.getElementById('mc-d')).toHaveValue(100));
+    expect(document.getElementById('mc-L')).toHaveValue(1000);
+    expect(document.getElementById('mc-rate')).toHaveValue(100);
+  });
+
+  it('calculates the purchase rate when a rate is entered after dimensions', async () => {
+    await openCalculator();
+    fireEvent.change(document.getElementById('mc-L'), { target: { value: '1000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
+    await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm'));
+    expect(document.getElementById('item-purchase-rate')).toHaveValue(null);
+    fireEvent.change(document.getElementById('item-rate-per-kg'), { target: { value: '75' } });
+    await waitFor(() => expect(document.getElementById('item-purchase-rate')).toHaveValue(4624.05));
+  });
+
 });

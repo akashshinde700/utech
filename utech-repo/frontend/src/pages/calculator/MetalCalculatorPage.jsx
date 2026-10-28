@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import Decimal from 'decimal.js';
 import {
@@ -63,7 +63,9 @@ function writeHistory(rows) {
   }
 }
 
-export default function MetalCalculatorPage({ embedded = false, initialMetal = '', onApply }) {
+export default function MetalCalculatorPage({ embedded = false, initialMetal = '', initialSize = '', initialParsed = null, initialRatePerKg = '', onApply }) {
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [catalog, setCatalog] = useState(null);
   const [families, setFamilies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -78,7 +80,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
   const [customDensity, setCustomDensity] = useState('');
   const [values, setValues] = useState({});
   const [pieces, setPieces] = useState('1');
-  const [rate, setRate] = useState('');
+  const [rate, setRate] = useState(initialRatePerKg == null ? '' : String(initialRatePerKg));
   const [totalWeight, setTotalWeight] = useState('');
   const [errors, setErrors] = useState({});
 
@@ -113,6 +115,35 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!embedded || !catalog || !initialSize) return;
+    const match = /^Calculator ([a-z]+): (.+)$/i.exec(initialSize.trim());
+    if (!match) {
+      const savedShape = catalog.shapes.find((s) => s.id === initialParsed?.shape);
+      const dimensions = initialParsed?.dimensionsMm;
+      if (savedShape && dimensions && savedShape.fields.every((f) => Number(dimensions[f.id]) > 0)) {
+        setShapeId(savedShape.id);
+        setUnit('mm');
+        setSystem('metric');
+        setValues(Object.fromEntries(savedShape.fields.map((f) => [f.id, String(dimensions[f.id])])));
+      }
+      return;
+    }
+    const savedShape = catalog.shapes.find((s) => s.id === match[1].toLowerCase());
+    const parts = match[2].split(' X ').map((part) => /^(\d+(?:\.\d+)?) (mm|cm|m|in|ft|yd)$/i.exec(part));
+    if (!savedShape || parts.length !== savedShape.fields.length || parts.some((p) => !p)) return;
+    const unitNames = parts.map((p) => p[2].toLowerCase());
+    const selectedUnit = unitNames.every((u) => u === unitNames[0]) ? unitNames[0] : 'mm';
+    const factors = catalog.units.factorsToMm;
+    if (!factors || parts.some((p) => !factors[p[2].toLowerCase()])) return;
+    const restored = Object.fromEntries(savedShape.fields.map((f, i) => [f.id,
+      new Decimal(parts[i][1]).times(factors[unitNames[i]]).div(factors[selectedUnit]).toString()]));
+    setShapeId(savedShape.id);
+    setSystem(catalog.units.imperial.includes(selectedUnit) ? 'imperial' : 'metric');
+    setUnit(selectedUnit);
+    setValues(restored);
+  }, [embedded, catalog, initialSize, initialParsed]);
 
   const shapes = useMemo(() => catalog?.shapes || [], [catalog]);
   const metals = useMemo(() => catalog?.metals || [], [catalog]);
@@ -164,10 +195,19 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
     if (mode === 'length' && !next?.supportsLengthMode) setMode('weight');
   }
 
+  function changeWeightUnit(next) {
+    if (embedded && next !== weightUnit && rate.trim() !== '' && Number.isFinite(Number(rate)) && Number(rate) >= 0 && catalog?.constants?.kgToLb) {
+      const converted = next === 'lb' ? new Decimal(rate).div(catalog.constants.kgToLb) : new Decimal(rate).times(catalog.constants.kgToLb);
+      setRate(converted.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString());
+    }
+    setWeightUnit(next);
+    setResult(null);
+  }
+
   function switchSystem(next) {
     setSystem(next);
     setUnit(next === 'metric' ? 'mm' : 'in');
-    setWeightUnit(next === 'metric' ? 'kg' : 'lb');
+    changeWeightUnit(next === 'metric' ? 'kg' : 'lb');
     setValues({});
     setErrors({});
     setResult(null);
@@ -241,7 +281,9 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
       if (usingTable) payload.standardProfile = { name: manualKgm.trim() !== '' ? `Manual — ${tableKgm} kg/m` : selectedProfile?.name || 'Table value', kgm: tableKgm };
 
       const res = await api.post('/metal-calculator/calculate', payload);
+      if (!mounted.current) return;
       setResult(res.data);
+      if (embedded && onApply) await applyToItem(res.data);
     } catch (err) {
       // api.js already toasted the server message; keep the page state intact
       console.error(err);
@@ -250,7 +292,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
     }
   }
 
-  async function applyToItem(includeRate = false) {
+  async function applyToItem(result) {
     if (!result || !onApply) return;
     const itemMetal = metals.find((m) => m.name === result.metal?.name);
     if (!itemMetal || Math.abs(itemMetal.density - result.density) > 1e-9 || result.standardProfile) {
@@ -273,6 +315,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
     setApplying(true);
     try {
       const preview = await api.post('/items/weight-preview', { size, metal: itemMetal.name });
+      if (!mounted.current) return;
       if (preview.data.weightKg == null) {
         toast.error('This size cannot be calculated as an item. Check the dimensions.');
         return;
@@ -280,11 +323,11 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
       // The item stores INR/kg at two decimal places, regardless of the
       // calculator's selected output weight unit. Do not overwrite an existing
       // item rate unless the user explicitly requests it.
-      const ratePerKg = includeRate && result.rate != null
+      const ratePerKg = result.rate != null
         ? new Decimal(result.rate).times(result.rateUnit === 'lb' ? catalog.constants.kgToLb : 1).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)
         : null;
-      onApply(size, itemMetal.name, ratePerKg);
-      toast.success('Material size and metal applied. Save the item to keep them.');
+      onApply(size, itemMetal.name, ratePerKg, preview.data);
+      toast.success(ratePerKg != null ? 'Size, metal and purchase rate calculated. Save the item to keep them.' : 'Size and metal applied. Enter a rate per kg to calculate the purchase rate.');
     } catch {
       toast.error('Could not verify item weight. Please try again.');
     } finally { setApplying(false); }
@@ -415,14 +458,14 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
           </div>
         )}
       />}
-      {embedded && <div className="mb-3 flex items-center justify-between gap-2"><p className="text-sm text-slate-600">Full Metal Calculator — apply dimensions and catalogue metal to one item piece.</p><button type="button" className={styles.secondaryBtn} disabled={busy || applying} onClick={resetAll}>Reset</button></div>}
+      {embedded && <div className="mb-3 flex items-center justify-between gap-2"><p className="text-sm text-slate-600">Enter dimensions and price once. Calculate fills the item size, metal and purchase rate for one piece.</p><button type="button" className={styles.secondaryBtn} disabled={busy || applying} onClick={resetAll}>Reset</button></div>}
 
       <div className="grid items-start gap-4 lg:grid-cols-5">
         {/* ---------------- inputs ---------------- */}
         <section className="card p-4 sm:p-5 lg:col-span-3">
-          <fieldset disabled={busy}>
+          <fieldset disabled={busy || applying}>
           {embedded && <div className="mb-3"><label className={styles.label} htmlFor="mc-shape">Material shape</label><select id="mc-shape" className={styles.input} value={shapeId} onChange={(e) => chooseShape(e.target.value)}>{shapes.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></div>}
-          <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+          {!embedded && <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
             {shapes.map((s) => {
               const Icon = SHAPE_ICONS[s.id] || Calculator;
               const active = s.id === shapeId;
@@ -443,13 +486,13 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
                 </button>
               );
             })}
-          </div>
+          </div>}
 
           <div className="mb-4 grid gap-3 sm:grid-cols-2">
             <div>
               <span className={styles.label}>Calculate</span>
               {embedded && <select aria-label="Calculate" className={`${styles.input} mb-2`} value={mode} onChange={(e) => { setMode(e.target.value); setResult(null); }}><option value="weight">Weight (enter length)</option><option value="length" disabled={!canUseLengthMode}>Length (enter weight)</option></select>}
-              <div className="flex gap-2">
+              {!embedded && <div className="flex gap-2">
                 {[
                   { id: 'weight', label: 'By weight' },
                   { id: 'length', label: 'By length', disabled: !canUseLengthMode },
@@ -468,7 +511,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
                     {m.label}
                   </button>
                 ))}
-              </div>
+              </div>}
               {isLengthMode && (
                 <p className="mt-1 text-[11px] text-slate-400">Enter the weight you have; length is calculated.</p>
               )}
@@ -476,7 +519,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
             <div>
               <span className={styles.label}>Unit system</span>
               {embedded && <select aria-label="Unit system" className={`${styles.input} mb-2`} value={system} onChange={(e) => switchSystem(e.target.value)}><option value="metric">Metric</option><option value="imperial">Imperial</option></select>}
-              <div className="flex gap-2">
+              {!embedded && <div className="flex gap-2">
                 {[
                   { id: 'metric', label: 'Metric' },
                   { id: 'imperial', label: 'Imperial' },
@@ -494,7 +537,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
                     {s.label}
                   </button>
                 ))}
-              </div>
+              </div>}
             </div>
           </div>
 
@@ -518,7 +561,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
           </div>
 
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
-            <div>
+            {!embedded && <div>
               <label className={styles.label} htmlFor="mc-density">
                 Density <span className="normal-case text-slate-400">(g/cm³)</span>
               </label>
@@ -533,8 +576,8 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
                 onChange={(e) => { setCustomDensity(e.target.value); setResult(null); }}
               />
               {errors.density && <p className={styles.errorText}>{errors.density}</p>}
-            </div>
-            <div>
+            </div>}
+            {!embedded && <div>
               <label className={styles.label} htmlFor="mc-pieces">Pieces</label>
               <input
                 id="mc-pieces"
@@ -546,7 +589,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
                 disabled={isLengthMode}
                 onChange={(e) => { setPieces(e.target.value); setResult(null); }}
               />
-            </div>
+            </div>}
             <div>
               <label className={styles.label} htmlFor="mc-rate">
                 Rate <span className="normal-case text-slate-400">(₹ per {weightUnit})</span>
@@ -565,7 +608,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
           </div>
 
           {/* standard profile picker */}
-          {shape?.standard && (
+          {!embedded && shape?.standard && (
             <div className="mt-4 rounded-xl border border-dashed border-brand-300 bg-brand-50/40 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5 text-xs font-semibold text-brand-700">
@@ -692,8 +735,8 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scale className="h-4 w-4" />}
               Calculate
             </button>
-            {embedded && <div><label className="sr-only" htmlFor="mc-weight-unit">Weight unit</label><select id="mc-weight-unit" className={styles.input} value={weightUnit} onChange={(e) => { setWeightUnit(e.target.value); setResult(null); }}>{catalog?.weightUnits?.map((w) => <option key={w} value={w}>{w}</option>)}</select></div>}
-            <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
+            {embedded && <div><label className="sr-only" htmlFor="mc-weight-unit">Weight unit</label><select id="mc-weight-unit" className={styles.input} value={weightUnit} onChange={(e) => changeWeightUnit(e.target.value)}>{catalog?.weightUnits?.map((w) => <option key={w} value={w}>{w}</option>)}</select></div>}
+            {!embedded && <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
               {catalog?.weightUnits?.map((w) => (
                 <button
                   key={w}
@@ -706,7 +749,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
                   {w}
                 </button>
               ))}
-            </div>
+            </div>}
             <span className="text-xs text-slate-400">{shape?.formula}</span>
           </div>
           </fieldset>
@@ -757,10 +800,6 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
                   )}
                 </div>
 
-                {embedded && <div className="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-slate-600">
-                  <p>Apply saves size and catalogue metal for one piece. Item weight is recalculated in kg; quantity is not applied. Calculated length is rounded to 0.01 mm. You can optionally apply the rate per kg (rounded to ₹0.01).</p>
-                  {(result.standardProfile || !result.metal || Math.abs((metals.find((m) => m.name === result.metal?.name)?.density ?? -1) - result.density) > 1e-9) ? <p className="mt-2 text-amber-700">Custom density or standard profile results cannot be saved as item weight. Use catalogue density and dimensions to apply.</p> : <div className="mt-2 flex flex-wrap gap-2"><button type="button" className={styles.secondaryBtn} disabled={applying} onClick={() => applyToItem(false)}>{applying ? 'Checking…' : 'Use this material size'}</button>{result.rate != null && <button type="button" className={styles.secondaryBtn} disabled={applying} onClick={() => applyToItem(true)}>Use size and rate per kg</button>}</div>}
-                </div>}
                 <dl className="mt-3 space-y-1.5 text-sm">
                   {result.pieceWeight != null && (
                     <Row label="Piece weight" value={`${fmt(result.pieceWeight)} ${result.weightUnit}`} />
@@ -798,7 +837,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
           </div>
 
           {/* history */}
-          <div className="card p-4">
+          {!embedded && <div className="card p-4">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                 <History className="h-4 w-4 text-brand-600" /> Recent (this browser)
@@ -839,7 +878,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
             <p className="mt-2 text-[11px] leading-snug text-slate-400">
               History is stored in this browser only. It is not a ledger and is not shared with other users.
             </p>
-          </div>
+          </div>}
         </aside>
       </div>
     </div>
