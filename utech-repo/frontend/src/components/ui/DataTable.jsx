@@ -1,5 +1,8 @@
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, FileX, RotateCcw } from 'lucide-react';
 import EmptyState from './EmptyState';
+import useMediaQuery from '../../lib/useMediaQuery';
+
+const isActionsColumn = (c) => c.key === 'actions' || /^\s*actions?\s*$/i.test(String(c.title ?? ''));
 
 // align → tailwind class for optional column header alignment (additive; most
 // callers don't pass it and keep the table-th default left alignment)
@@ -61,7 +64,15 @@ export default function DataTable({
   emptyAction, // { label, onClick, icon }
   // zebra striping — default ON so every existing table looks unchanged.
   striped = true,
+  // mobileCards: below `sm` a wide multi-column table forces factory-floor
+  // users to pinch/scroll sideways for every row. Instead each record becomes
+  // a stacked card (first column = heading, the rest labelled rows, the
+  // actions column as a footer) reusing the exact same column renderers, so
+  // no data or row action is lost. Opt out per table with mobileCards={false}
+  // for genuinely tabular data (matrices, print sheets).
+  mobileCards = true,
 }) {
+  const isMobile = useMediaQuery('(max-width: 639px)');
   const scrollStyle = maxHeight != null ? { maxHeight: typeof maxHeight === 'number' ? `${maxHeight}px` : maxHeight } : undefined;
   const sticky = maxHeight != null;
 
@@ -117,6 +128,86 @@ export default function DataTable({
             </tbody>
           </table>
         </div>
+      </div>
+    );
+  }
+
+  const errorBanner = error ? (
+    <div className="flex items-center justify-between gap-3 bg-danger-50 border-b border-danger-100 px-4 py-3">
+      <div className="flex items-center gap-2 text-sm text-danger-700">
+        <AlertTriangle className="w-4 h-4 shrink-0" />
+        <span>{error}</span>
+      </div>
+      {onRetry && (
+        <button className="btn-secondary !px-3 !py-1 text-xs" onClick={onRetry}>
+          <RotateCcw className="w-3.5 h-3.5" /> Retry
+        </button>
+      )}
+    </div>
+  ) : null;
+
+  // ---- mobile record cards (<sm) ------------------------------------------
+  if (isMobile && mobileCards && !loading) {
+    const actionsCol = columns.find(isActionsColumn);
+    const primaryCol = columns.find((c) => !isActionsColumn(c));
+    const detailCols = columns.filter((c) => c !== actionsCol && c !== primaryCol && !c.hideOnMobile);
+    const cellValue = (c, row) => (c.render ? c.render(row) : row[c.key]);
+    return (
+      <div className="animate-fade-in">
+        {errorBanner && <div className="card-flat mb-3 overflow-hidden shadow-sm">{errorBanner}</div>}
+        {rows.length === 0 ? (
+          <div className="card-flat shadow-sm">
+            <EmptyState
+              icon={FileX}
+              title={emptyTitleText}
+              description={emptyDescriptionText}
+              action={emptyAction}
+            />
+          </div>
+        ) : (
+          <ul className="space-y-3" aria-label="Records">
+            {rows.map((row, i) => (
+              <li
+                key={row.id ?? i}
+                className={`card-flat p-3.5 shadow-sm ${onRowClick ? 'cursor-pointer active:bg-slate-50' : ''}`}
+                onClick={onRowClick ? (e) => {
+                  // buttons/links inside the card keep their own behaviour
+                  if (e.target.closest('button, a, input, select, textarea, [role="menu"]')) return;
+                  onRowClick(row);
+                } : undefined}
+              >
+                {primaryCol && (
+                  <div className="min-w-0 break-words text-sm font-semibold text-slate-800">
+                    {cellValue(primaryCol, row)}
+                  </div>
+                )}
+                {detailCols.length > 0 && (
+                  <dl className="mt-2 space-y-1.5">
+                    {detailCols.map((c) => {
+                      const value = cellValue(c, row);
+                      if (value == null || value === '') return null;
+                      return (
+                        <div key={c.key} className="flex items-start justify-between gap-3 text-[13px]">
+                          <dt className="shrink-0 pt-px text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                            {typeof c.title === 'string' ? c.title : c.key}
+                          </dt>
+                          <dd className="min-w-0 text-right font-medium text-slate-700 [overflow-wrap:anywhere]">
+                            {value}
+                          </dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+                )}
+                {actionsCol && (
+                  <div className="mt-3 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-2.5">
+                    {cellValue(actionsCol, row)}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     );
   }

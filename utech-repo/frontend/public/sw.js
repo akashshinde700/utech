@@ -10,7 +10,7 @@
  * Bump CACHE_VERSION whenever this file's strategy changes; old caches are
  * deleted on activate.
  */
-const CACHE_VERSION = 'utech-erp-v1';
+const CACHE_VERSION = 'utech-erp-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 const PRECACHE_URLS = [
@@ -28,8 +28,18 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
       .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => self.skipWaiting()),
+      // First install activates immediately; an UPDATE waits until the page
+      // asks (SKIP_WAITING message) so an open form is never reloaded away.
+      .then(() => { if (!self.registration.active) return self.skipWaiting(); return undefined; }),
   );
+});
+
+// Update flow: a new worker installs but (unlike the very first install)
+// does NOT skipWaiting on its own — the page detects `registration.waiting`,
+// shows "New version available", and posts SKIP_WAITING only when the user
+// accepts, so nobody loses a half-filled ERP form to a surprise reload.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

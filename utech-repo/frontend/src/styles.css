@@ -21,6 +21,15 @@
   html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
   body { @apply bg-slate-50 text-slate-800; font-family: 'Manrope Variable', system-ui, sans-serif; }
 
+  /* A form control must never be wider than the box that contains it: filter
+     bars set max-w-[180px]-style widths that exceed a 320px viewport once
+     page padding is added, which is how selects got clipped on small phones.
+     Capping at the container (not the viewport) fixes the cause everywhere. */
+  input, select, textarea { max-width: 100%; }
+  /* touch: no grey tap flash, no double-tap-zoom delay on controls */
+  button, a, input, select, textarea, label { -webkit-tap-highlight-color: transparent; }
+  button, a[href], select, input[type="checkbox"], input[type="radio"] { touch-action: manipulation; }
+
   /* App-wide guard: nothing may make the page itself scroll sideways on a
      tablet/phone. Wide content (data tables, the A4 print sheet) scrolls
      inside its own overflow-x-auto box, never the viewport. */
