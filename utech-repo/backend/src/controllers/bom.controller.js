@@ -20,7 +20,7 @@ async function list(req, res) {
   }
   const [items, total] = await Promise.all([
     prisma.bom.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { 
         finishedItem: { select: { id: true, code: true, name: true } },
         items: { include: { item: true } }

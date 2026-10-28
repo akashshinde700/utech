@@ -30,7 +30,7 @@ async function list(req, res) {
   }
   const [items, total] = await Promise.all([
     prisma.backOrder.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { 
         party: { select: { id: true, name: true } }, 
         invoice: { select: { id: true, number: true } }

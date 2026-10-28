@@ -36,7 +36,7 @@ async function list(req, res) {
   if (req.query.projectId) where.projectId = parseInt(req.query.projectId, 10);
   const [items, total] = await Promise.all([
     prisma.item.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { uom: true, category: true, project: { select: { id: true, code: true, name: true } } },
     }),
     prisma.item.count({ where }),

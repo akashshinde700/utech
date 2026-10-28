@@ -73,7 +73,7 @@ async function listBatches(req, res) {
   }
   const [items, total] = await Promise.all([
     prisma.productionBatch.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { 
         shift: { select: { id: true, code: true, name: true } },
         item: { select: { id: true, code: true, name: true } },

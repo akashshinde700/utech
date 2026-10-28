@@ -341,7 +341,7 @@ export default function AppLayout() {
         className={`no-print fixed inset-y-0 left-0 z-50 w-[248px] max-w-[85vw] bg-[#1d1437] text-white flex flex-col border-r border-white/5 transform transition-[transform,width] duration-200 lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0 lg:z-auto ${sidebarCollapsed ? 'lg:w-16' : 'lg:w-[248px]'} ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className={`border-b border-white/10 px-4 py-4 ${sidebarCollapsed ? 'lg:px-2' : ''}`}>
-          <div className="flex items-center justify-between gap-2">
+          <div className={`flex items-center justify-between gap-2 ${sidebarCollapsed ? 'lg:flex-col lg:justify-center' : ''}`}>
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-9 h-9 shrink-0 rounded-[10px] bg-brand-600 flex items-center justify-center">
                 <Box className="w-5 h-5 text-white" aria-hidden="true" />
@@ -350,7 +350,7 @@ export default function AppLayout() {
                 <div className="text-[15px] font-bold tracking-tight text-white truncate">
                   U-Tech <span className="text-brand-300">ERP</span>
                 </div>
-                <div className="text-[9px] text-slate-400 font-semibold tracking-[0.12em] uppercase truncate">
+                <div className="text-[8px] text-slate-400 font-semibold tracking-[0.08em] uppercase">
                   Manufacturing workspace
                 </div>
               </div>

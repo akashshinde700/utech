@@ -43,7 +43,7 @@ async function list(req, res) {
   if (search) where.OR = [{ number: { contains: search } }];
   const [items, total] = await Promise.all([
     prisma.gRN.findMany({
-      where, skip, take, orderBy: { [sortBy]: sortDir },
+      where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }],
       include: { po: true, party: true, vendorWorkOrder: { select: { id: true, number: true } } },
     }),
     prisma.gRN.count({ where }),

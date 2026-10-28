@@ -42,7 +42,7 @@ async function list(req, res) {
     ];
   }
   const [items, total] = await Promise.all([
-    prisma.party.findMany({ where, skip, take, orderBy: { [sortBy]: sortDir } }),
+    prisma.party.findMany({ where, skip, take, orderBy: [{ [sortBy]: sortDir }, { id: sortDir }] }),
     prisma.party.count({ where }),
   ]);
   res.json(paginated(items, total, page, pageSize));
