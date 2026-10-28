@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens — the violet brand scale mirrored from tailwind.config.js
+   for the few places that need a raw value (focus outline, scrollbars,
+   print). Components should prefer `brand-*` utilities over these vars. */
+:root {
+  --brand-50: #f5f3ff;
+  --brand-100: #ede9fe;
+  --brand-500: #8b5cf6;
+  --brand-600: #7c3aed;
+  --brand-700: #6d28d9;
+  --brand-900: #4c1d95;
+  --app-bg: #f6f5fa;
+  --sidebar-bg: #1d1437;
+  --sidebar-active: #7c3aed;
+}
+
 @layer base {
   html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
   body { @apply bg-slate-50 text-slate-800; font-family: 'Manrope Variable', system-ui, sans-serif; }
@@ -22,8 +37,8 @@
 }
 
 @layer components {
-  .btn { 
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-primary { 
     @apply btn bg-brand-600 text-white hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 focus-visible:ring-offset-2;
@@ -44,11 +59,11 @@
     @apply inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors duration-150;
   }
 
-  .input { 
-    @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 transition-all duration-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none hover:border-slate-400;
+  .input {
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 transition-all duration-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none hover:border-slate-400;
   }
   .input:focus { @apply shadow-sm; }
-  .label { @apply block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wider; }
+  .label { @apply block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wider; }
   
   .card { 
     @apply bg-white border border-slate-200/80 rounded-xl shadow-sm;
@@ -57,11 +72,11 @@
     @apply bg-white border border-slate-200/80 rounded-xl;
   }
 
-  .table-th { 
-    @apply px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50/80 border-b border-slate-200 select-none;
+  .table-th {
+    @apply px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50/80 border-b border-slate-200 select-none;
   }
-  .table-td { 
-    @apply px-4 py-3 text-sm text-slate-700 border-b border-slate-100 hover:bg-slate-50/50 transition-colors;
+  .table-td {
+    @apply px-3 py-2 text-sm text-slate-700 border-b border-slate-100 hover:bg-slate-50/50 transition-colors;
   }
   .badge { 
     @apply inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold;
@@ -131,7 +146,7 @@
 html, body, #root { min-height: 100%; }
 
 /* Respect reduced motion and retain a clear keyboard focus indicator. */
-:focus-visible { outline: 2px solid #0f766e; outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--brand-600); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
 }
@@ -212,5 +227,5 @@ html, body, #root { min-height: 100%; }
 }
 
 @media screen {
-  .print-doc { box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06); margin-top: 1.5rem; margin-bottom: 2rem; }
+  .print-doc { box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06); margin-top: 1rem; margin-bottom: 1rem; }
 }

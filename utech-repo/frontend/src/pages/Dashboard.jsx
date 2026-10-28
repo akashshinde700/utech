@@ -84,7 +84,7 @@ function ChartCard({ title, description, children, icon: Icon }) {
 
 // slate-400 replaces the old sky-blue fifth slice — chart series stick to the
 // violet/amber/pink/green/slate family the rest of the app uses.
-const PIE_COLORS = ['#0f766e', '#60a5a0', '#d9a441', '#637a94', '#a9bec7'];
+const PIE_COLORS = ['#7c3aed', '#a78bfa', '#d9a441', '#637a94', '#a9bec7'];
 
 // No-data placeholder inside a chart card's fixed-height body — the shared
 // EmptyState, vertically centered and with slimmer padding than the page-level
@@ -119,8 +119,8 @@ function SalesChart({ data }) {
         <Area
           type="monotone"
           dataKey="sales"
-          stroke="#0f766e"
-          fill="#42b6a1"
+          stroke="#7c3aed"
+          fill="#8b5cf6"
           fillOpacity={0.16}
         />
       </AreaChart>
@@ -146,7 +146,7 @@ function ProductionChart({ data }) {
             boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
           }}
         />
-        <Bar dataKey="completed" fill="#42b6a1" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="completed" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
         <Bar dataKey="planned" fill="#d9a441" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>

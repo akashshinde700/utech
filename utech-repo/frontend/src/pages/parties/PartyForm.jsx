@@ -171,7 +171,12 @@ export default function PartyForm() {
             onClick={async () => {
               setLedgerBusy(true);
               try {
-                await downloadFile(`/reports/party-ledger/${id}.xlsx`, `party-ledger-${form.name || id}.xlsx`);
+                const result = await downloadFile(`/reports/party-ledger/${id}.xlsx`, `party-ledger-${form.name || id}.xlsx`);
+                if (result?.truncated) {
+                  toast.error(`Ledger downloaded but is incomplete — capped at ${result.rowLimit ?? 5000} rows.`, { duration: 8000 });
+                } else {
+                  toast.success('Party ledger downloaded');
+                }
               } catch (err) {
                 if (!err.response?.status) toast.error('Download failed — check your connection');
                 else if (err.response.status !== 401 && err.response.status !== 403) {

@@ -4,17 +4,22 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Brand = violet (the ERP's original identity). Every `brand-*`
+        // utility across the app resolves here, so this scale is the single
+        // place the primary colour is defined — do not hard-code brand hexes
+        // in components. 600 (#7c3aed) on white ≈ 5.9:1, 700 ≈ 7.5:1.
         brand: {
-          50: '#eff9f7',
-          100: '#d8f2ed',
-          200: '#b2e5da',
-          300: '#7acfc0',
-          400: '#43b6a5',
-          500: '#199987',
-          600: '#0f766e',
-          700: '#115e59',
-          800: '#134e4a',
-          900: '#123f3d',
+          50: '#f5f3ff',
+          100: '#ede9fe',
+          200: '#ddd6fe',
+          300: '#c4b5fd',
+          400: '#a78bfa',
+          500: '#8b5cf6',
+          600: '#7c3aed',
+          700: '#6d28d9',
+          800: '#5b21b6',
+          900: '#4c1d95',
+          950: '#2e1065',
         },
         success: {
           50: '#f0fdf4',

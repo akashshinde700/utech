@@ -6,7 +6,7 @@ import api from './api';
 //
 // `endpoint` is relative to the API base (`/reports/items.xlsx`).
 export async function downloadFile(endpoint, filename) {
-  const { data } = await api.get(endpoint, { responseType: 'blob' });
+  const { data, headers } = await api.get(endpoint, { responseType: 'blob' });
   const url = URL.createObjectURL(data);
   const a = document.createElement('a');
   a.href = url;
@@ -17,6 +17,14 @@ export async function downloadFile(endpoint, filename) {
   a.remove();
   // revoke after the browser has had a tick to start the download
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // Capped exports say so in X-Export-* headers (see report.controller.js);
+  // surface that to callers so a partial workbook is never presented as a
+  // complete one.
+  return {
+    truncated: headers?.['x-export-truncated'] === 'true',
+    rows: headers?.['x-export-rows'] != null ? Number(headers['x-export-rows']) : null,
+    rowLimit: headers?.['x-export-row-limit'] != null ? Number(headers['x-export-row-limit']) : null,
+  };
 }
 
 export default downloadFile;
