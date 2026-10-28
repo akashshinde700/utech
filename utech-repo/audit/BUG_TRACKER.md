@@ -23,8 +23,8 @@
 > **AUD-110**, **AUD-111**, **AUD-109**, **AUD-128**, and the money half of **AUD-115**
 > (`POST`/`PUT /api/expenses` accepted a non-numeric amount, and `PUT` accepted a negative
 > one). **AUD-124** was found to be 2 real missing indexes, not 7. **AUD-113** is pinned by
-> a test with the reason for each of the 17 dead keys; two of them need a decision from the
-> owner.
+> a test with the reason for each of the 17 dead keys (each names an action no endpoint
+> performs, so nothing is under-protected).
 
 **Severity key:** P0 = data loss / security breach / production down · P1 = core workflow
 broken for users · P2 = degraded or risky, workaround exists · P3 = hygiene / hardening

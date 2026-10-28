@@ -287,7 +287,8 @@ command, and the whole rollback plan — and otherwise to roll *forward*.
   Pinned in `tests/security/permissionKeyContract.test.js` with the reason for
   each, so a new dead key fails CI and wiring one up has to be deliberate. The
   mirror check — a route requiring a key no role can be granted — is clean.
-  **Two of the 17 need your decision, see below.**
+  Each of the 17 names an action no endpoint performs, so nothing is
+  under-protected; see section 10.
 - **AUD-119 (extension)** — CI gained the two jobs that would have caught
   today's findings: a MySQL migration-replay-and-diff job, and the Playwright
   e2e suite.
@@ -316,14 +317,16 @@ command, and the whole rollback plan — and otherwise to roll *forward*.
 
 ## 10. Needs your decision
 
-1. **`assignment.delete` and `vendorWorkOrder.delete`.** Both DELETE routes are
-   gated on `.update`, so anyone who may edit may also delete, and the separate
-   "delete" checkbox in the Roles screen does nothing. Should deleting an
-   assignment or a vendor work order need its own permission? That is a decision
-   about who may do what in the plant, so it was not changed quietly. The other
-   15 dead keys describe actions the API has no endpoint for at all and are
-   harmless, but they could be dropped from the seed so the Roles screen stops
-   offering them.
+1. **The 17 decorative permission keys.** Every one of them names an action no
+   endpoint performs, so nothing is under-protected — but the Roles screen offers
+   a checkbox that changes nothing, which reads as a decision that was made and
+   enforced. They can be dropped from the seed so the screen stops offering
+   them; that is cosmetic and needs no migration, but it changes what the Roles
+   screen shows, so it is your call. (Note: `assignment.delete` and
+   `vendorWorkOrder.delete` are **not** a privilege gap — both DELETE routes call
+   `cancel()`, which moves the record to CANCELLED and keeps it, so `.update` is
+   the correct gate. An earlier draft of this report read the route verb instead
+   of the handler and got that wrong.)
 2. **Password reset still does not work.** `nodemailer` is installed, OTP
    delivery only `console.log`s, and `verifyOtp` issues a token only for
    `purpose: 'login'`, so even a manually read code would not complete a reset.

@@ -10,9 +10,8 @@
 // decorative, it fails if a NEW dead key is added, and it fails if one of these
 // is wired up without the list being updated on purpose.
 //
-// None of the 17 leaves anything under-protected. Two of them are the
-// interesting ones (see KNOWN_DEAD_KEYS), and both are a decision about who may
-// delete what, not a code defect.
+// None of the 17 leaves anything under-protected: every one of them names an
+// action no endpoint performs. They are decorative, not dangerous.
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -59,11 +58,10 @@ function enforcedKeys() {
 //                       through its status endpoint
 //   customerMaterial.delete  same — a lot is disposed of, never deleted
 //
-//   assignment.delete        DELETE /api/assignments/:id is gated on
-//   vendorWorkOrder.delete   .update, so anyone who may edit may also delete.
-//                            Deciding whether those two should need their own
-//                            key is a permissions decision for the plant, not
-//                            something to change quietly.
+//   assignment.delete        both DELETE routes call cancel(), not a delete:
+//   vendorWorkOrder.delete   they move the record to CANCELLED and keep it, so
+//                            .update is the right gate and these two keys stay
+//                            reserved for a hard delete the API does not offer
 const KNOWN_DEAD_KEYS = [
   'assignment.delete',
   'attachment.create',
