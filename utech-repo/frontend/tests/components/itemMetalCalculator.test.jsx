@@ -50,14 +50,14 @@ describe('item metal calculator', () => {
     fireEvent.change(document.getElementById('mc-weight-unit'), { target: { value: 'lb' } });
     fireEvent.change(document.getElementById('mc-rate'), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
-    await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm'));
+    await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('100 mm X 1000 mm'));
     expect(document.getElementById('item-metal')).toHaveValue('Steel');
     expect(document.getElementById('item-rate-per-kg')).toHaveValue(22.05);
     await waitFor(() => expect(screen.getByText('61.654 kg')).toBeInTheDocument());
     expect(document.getElementById('item-purchase-rate')).toHaveValue(1359.47);
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(globalThis.__apiMock.post).toHaveBeenCalledWith('/items', expect.objectContaining({
-      name: 'Steel round bar', size: 'Calculator roundbar: 100 mm X 1000 mm', metal: 'Steel', ratePerKg: 22.05, purchaseRate: 1359.47,
+      name: 'Steel round bar', size: '100 mm X 1000 mm', shape: 'roundbar', metal: 'Steel', ratePerKg: 22.05, purchaseRate: 1359.47,
     })));
   });
 
@@ -66,7 +66,7 @@ describe('item metal calculator', () => {
     fireEvent.change(screen.getByLabelText('Calculate'), { target: { value: 'length' } });
     fireEvent.change(document.getElementById('mc-total-weight'), { target: { value: '61.654' } });
     fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
-    await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm'));
+    await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('100 mm X 1000 mm'));
     expect(globalThis.__apiMock.post).toHaveBeenCalledWith('/metal-calculator/calculate', expect.objectContaining({ mode: 'length', totalWeight: 61.654 }));
   });
 
@@ -100,7 +100,7 @@ describe('item metal calculator', () => {
     await openCalculator();
     fireEvent.change(document.getElementById('mc-L'), { target: { value: '1000' } });
     fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
-    await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm'));
+    await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('100 mm X 1000 mm'));
     expect(document.getElementById('item-purchase-rate')).toHaveValue(null);
     fireEvent.change(document.getElementById('item-rate-per-kg'), { target: { value: '75' } });
     await waitFor(() => expect(document.getElementById('item-purchase-rate')).toHaveValue(4624.05));

@@ -27,7 +27,7 @@ function fmt(v) {
 async function main() {
   const prisma = require('../src/config/prisma');
   const items = await prisma.item.findMany({
-    select: { id: true, code: true, name: true, size: true, metal: true, weightKg: true },
+    select: { id: true, code: true, name: true, size: true, metal: true, shape: true, weightKg: true },
     orderBy: { code: 'asc' },
   });
 

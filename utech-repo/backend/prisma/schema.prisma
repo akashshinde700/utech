@@ -308,6 +308,16 @@ model Item {
   // "OD 60 X 5 mtr." or "1500 x 3000 x 12 th" — free text on purpose, the
   // register uses a different convention per material family
   size          String?
+  // When the size came from the material size calculator, the shape it was
+  // calculated as — 'pipe', 'roundbar', 'sheet'. The dimensions in `size` are
+  // then that shape's fields IN ORDER, which is what makes them readable: for a
+  // pipe, "145 mm X 25 mm X 145 mm" is outer diameter, wall thickness and
+  // length, where the stock sheet's own convention would read the second number
+  // as an inner diameter and give a different weight. It used to be carried as
+  // a "Calculator pipe: " prefix inside `size` itself, which put machine
+  // bookkeeping in a field people read. Null means `size` is free text from the
+  // stock sheet and is read by its wording, as it always was.
+  shape         String?       @db.VarChar(32)
   // which metal this is, by the metal calculator's catalogue name
   // ("SS 304/310", "Steel", "Brass", ...). Density comes from there, so this
   // is what makes a weight possible at all.

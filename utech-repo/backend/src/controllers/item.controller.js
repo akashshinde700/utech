@@ -59,17 +59,25 @@ async function get(req, res) {
 // Unknown size or a family with no agreed formula (pipe, flange) -> null.
 function withDerivedWeight(data, existing = {}) {
   const pick = (k) => (data[k] !== undefined ? data[k] : existing[k]);
-  const weight = weightForItem({ size: pick('size'), name: pick('name'), metal: pick('metal') });
-  return { ...data, weightKg: weight ? weight.kg : null };
+  // A shape belongs to the size it was calculated with. If the size is being
+  // changed and no shape comes with it, the text was typed by hand, so the old
+  // shape must go -- otherwise free-text would be read in the calculator's
+  // field order and a pipe's inner diameter would be taken for a wall
+  // thickness.
+  const shape = data.size !== undefined && data.shape === undefined ? null : pick('shape');
+  const weight = weightForItem({
+    size: pick('size'), name: pick('name'), metal: pick('metal'), shape,
+  });
+  return { ...data, shape: shape || null, weightKg: weight ? weight.kg : null };
 }
 
 // What the item form shows while someone is typing: the shape the size was
 // read as, and the weight the metal calculator gives it. Parsing stays on the
 // server so the form and the saved row can never disagree.
 async function weightPreview(req, res) {
-  const { size, name, metal } = req.body;
-  const parsed = shapeFromSize(size, name || '');
-  const weight = weightForItem({ size, name: name || '', metal });
+  const { size, name, metal, shape } = req.body;
+  const parsed = shapeFromSize(size, name || '', shape || null);
+  const weight = weightForItem({ size, name: name || '', metal, shape: shape || null });
   res.json({
     shape: parsed ? parsed.shape : null,
     dimensionsMm: parsed ? parsed.values : null,

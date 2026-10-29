@@ -15,7 +15,7 @@ import Decimal from 'decimal.js';
 
 
 const empty = {
-  name: '', description: '', type: 'RAW_MATERIAL', size: '', hsnCode: '', projectNumber: '', projectId: '',
+  name: '', description: '', type: 'RAW_MATERIAL', size: '', shape: null, hsnCode: '', projectNumber: '', projectId: '',
   purchaseRate: '', ratePerKg: '', saleRate: '', gstRate: 18, metal: '',
   openingStock: 0, minStock: 0,
   uomId: '', categoryId: '',
@@ -94,6 +94,9 @@ export default function ItemForm() {
 
   function set(k, v) {
     if (['size', 'name', 'metal'].includes(k)) setWeight(null);
+    // typing a size by hand drops the calculated shape with it: the numbers are
+    // then stock-sheet wording, not the calculator's field order
+    if (k === 'size') setForm((f) => (f.shape ? { ...f, shape: null } : f));
     setForm((f) => ({ ...f, [k]: v }));
     setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
   }
@@ -166,12 +169,12 @@ export default function ItemForm() {
     if (!form.size) return undefined;
     let cancelled = false;
     const t = setTimeout(() => {
-      api.post('/items/weight-preview', { size: form.size, name: form.name, metal: form.metal || null })
+      api.post('/items/weight-preview', { size: form.size, name: form.name, metal: form.metal || null, shape: form.shape || null })
         .then((r) => !cancelled && setWeight(r.data))
         .catch(() => !cancelled && setWeight(null));
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [form.size, form.name, form.metal]);
+  }, [form.size, form.name, form.metal, form.shape]);
 
   const computedRate = weight?.weightKg != null && form.ratePerKg !== '' && form.ratePerKg != null && Number.isFinite(Number(form.ratePerKg)) && Number(form.ratePerKg) >= 0 && !schema.ratePerKg(form.ratePerKg)
     ? new Decimal(weight.weightKg).times(form.ratePerKg).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
@@ -252,7 +255,7 @@ export default function ItemForm() {
               />
             </FormField>
           </div>
-          {showSizeCalculator && <div className="mt-4"><MetalCalculatorPage embedded initialMetal={form.metal} initialSize={form.size || ''} initialParsed={calculatorSeed} initialRatePerKg={form.ratePerKg} onApply={(size, metal, ratePerKg, preview) => {
+          {showSizeCalculator && <div className="mt-4"><MetalCalculatorPage embedded initialMetal={form.metal} initialSize={form.size || ''} initialShape={form.shape || ''} initialParsed={calculatorSeed} initialRatePerKg={form.ratePerKg} onApply={(size, metal, ratePerKg, preview, shapeId) => {
             appliedPreview.current = { size, metal, name: form.name, data: preview };
             setForm((f) => {
               const rate = ratePerKg ?? f.ratePerKg;
@@ -266,7 +269,7 @@ export default function ItemForm() {
               // exists here.
               const suggested = f.categoryId ? null : categoryIdForShape(preview.shape, lookups.categories);
               if (suggested) setCategoryFromShape(true);
-              return { ...f, size, metal, ratePerKg: rate, purchaseRate, categoryId: suggested || f.categoryId };
+              return { ...f, size, shape: shapeId || null, metal, ratePerKg: rate, purchaseRate, categoryId: suggested || f.categoryId };
             });
             setErrors((e) => ({ ...e, size: undefined, metal: undefined, ratePerKg: undefined, purchaseRate: undefined }));
             setWeight(preview);

@@ -58,7 +58,7 @@ async function calculateARoundBar() {
   fireEvent.change(document.getElementById('mc-d'), { target: { value: '100' } });
   fireEvent.change(document.getElementById('mc-L'), { target: { value: '1000' } });
   fireEvent.click(screen.getByRole('button', { name: 'Calculate', exact: true }));
-  await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm'));
+  await waitFor(() => expect(screen.getByLabelText('Material Size')).toHaveValue('100 mm X 1000 mm'));
 }
 
 describe('the category follows the calculated shape', () => {

@@ -109,7 +109,7 @@ test('calculate length from weight, then save a one-piece item', async ({ page }
   const expectedLength = Math.round((61.654 / (Math.PI / 4 * 100 ** 2 * 7.85e-3) * 1000) * 100) / 100;
   expect(calc.lengthMm).toBe(expectedLength);
   await expect(page.locator('#mc-shape')).toBeHidden();
-  await expect(page.locator('#item-size')).toHaveValue(`Calculator roundbar: 100 mm X ${expectedLength} mm`);
+  await expect(page.locator('#item-size')).toHaveValue(`100 mm X ${expectedLength} mm`);
   await expect(page.getByText('61.654 kg', { exact: true })).toBeVisible();
   await expect(page.locator('#item-purchase-rate')).toHaveValue('7706.75');
   await saveAndCheck(page, token, { metal: 'Steel', weight: 61.654, rate: 125, price: 7706.75 });
@@ -166,7 +166,7 @@ test('edit an item without re-entering dimensions, calculate a new price and sav
   expect(createdResponse.status()).toBe(201);
   const { id } = await createdResponse.json();
   await page.goto(`/items/${id}`);
-  await expect(page.locator('#item-size')).toHaveValue('Calculator roundbar: 100 mm X 1000 mm');
+  await expect(page.locator('#item-size')).toHaveValue('100 mm X 1000 mm');
   await page.getByRole('button', { name: 'Calculate material size' }).click();
   await expect(page.locator('#mc-d')).toHaveValue('100');
   await expect(page.locator('#mc-L')).toHaveValue('1000');

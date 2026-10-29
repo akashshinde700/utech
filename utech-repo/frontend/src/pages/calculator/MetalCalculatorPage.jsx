@@ -63,7 +63,7 @@ function writeHistory(rows) {
   }
 }
 
-export default function MetalCalculatorPage({ embedded = false, initialMetal = '', initialSize = '', initialParsed = null, initialRatePerKg = '', onApply }) {
+export default function MetalCalculatorPage({ embedded = false, initialMetal = '', initialSize = '', initialShape = '', initialParsed = null, initialRatePerKg = '', onApply }) {
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [catalog, setCatalog] = useState(null);
@@ -116,34 +116,52 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
     };
   }, []);
 
+  // Reopening the calculator on a saved item puts its dimensions back in the
+  // boxes. The shape says which field each number is; it now travels in the
+  // item's own shape column (initialParsed.shape), and until 29 Oct 2026 it was
+  // a "Calculator pipe: " prefix inside the size text, which a saved export may
+  // still carry.
   useEffect(() => {
     if (!embedded || !catalog || !initialSize) return;
-    const match = /^Calculator ([a-z]+): (.+)$/i.exec(initialSize.trim());
-    if (!match) {
-      const savedShape = catalog.shapes.find((s) => s.id === initialParsed?.shape);
-      const dimensions = initialParsed?.dimensionsMm;
-      if (savedShape && dimensions && savedShape.fields.every((f) => Number(dimensions[f.id]) > 0)) {
-        setShapeId(savedShape.id);
-        setUnit('mm');
-        setSystem('metric');
-        setValues(Object.fromEntries(savedShape.fields.map((f) => [f.id, String(dimensions[f.id])])));
-      }
+    const legacy = /^Calculator ([a-z]+):\s*(.+)$/i.exec(initialSize.trim());
+    // The item's own shape column is already in hand when the form loads.
+    // Reading it from the weight preview instead made restoring wait on a
+    // debounced request, so opening an item and going straight to the
+    // calculator found the boxes empty.
+    const shapeKey = legacy
+      ? legacy[1].toLowerCase()
+      : String(initialShape || initialParsed?.shape || '').toLowerCase();
+    const savedShape = catalog.shapes.find((sh) => sh.id === shapeKey);
+    if (!savedShape) return;
+
+    // Prefer reading the size text: it keeps the units each dimension was
+    // entered in, so a bar entered in metres comes back in metres rather than
+    // as 6000 mm.
+    const text = legacy ? legacy[2] : initialSize.trim();
+    const parts = text.split(/\s+X\s+/i).map((part) => /^(\d+(?:\.\d+)?)\s*(mm|cm|m|in|ft|yd)$/i.exec(part.trim()));
+    const factors = catalog.units.factorsToMm;
+    if (parts.length === savedShape.fields.length && parts.every((pt) => pt)
+        && factors && parts.every((pt) => factors[pt[2].toLowerCase()])) {
+      const unitNames = parts.map((pt) => pt[2].toLowerCase());
+      const selectedUnit = unitNames.every((u) => u === unitNames[0]) ? unitNames[0] : 'mm';
+      const restored = Object.fromEntries(savedShape.fields.map((f, i) => [f.id,
+        new Decimal(parts[i][1]).times(factors[unitNames[i]]).div(factors[selectedUnit]).toString()]));
+      setShapeId(savedShape.id);
+      setSystem(catalog.units.imperial.includes(selectedUnit) ? 'imperial' : 'metric');
+      setUnit(selectedUnit);
+      setValues(restored);
       return;
     }
-    const savedShape = catalog.shapes.find((s) => s.id === match[1].toLowerCase());
-    const parts = match[2].split(' X ').map((part) => /^(\d+(?:\.\d+)?) (mm|cm|m|in|ft|yd)$/i.exec(part));
-    if (!savedShape || parts.length !== savedShape.fields.length || parts.some((p) => !p)) return;
-    const unitNames = parts.map((p) => p[2].toLowerCase());
-    const selectedUnit = unitNames.every((u) => u === unitNames[0]) ? unitNames[0] : 'mm';
-    const factors = catalog.units.factorsToMm;
-    if (!factors || parts.some((p) => !factors[p[2].toLowerCase()])) return;
-    const restored = Object.fromEntries(savedShape.fields.map((f, i) => [f.id,
-      new Decimal(parts[i][1]).times(factors[unitNames[i]]).div(factors[selectedUnit]).toString()]));
-    setShapeId(savedShape.id);
-    setSystem(catalog.units.imperial.includes(selectedUnit) ? 'imperial' : 'metric');
-    setUnit(selectedUnit);
-    setValues(restored);
-  }, [embedded, catalog, initialSize, initialParsed]);
+
+    // Otherwise fall back to the millimetres the server parsed out of it.
+    const dimensions = initialParsed?.dimensionsMm;
+    if (dimensions && savedShape.fields.every((f) => Number(dimensions[f.id]) > 0)) {
+      setShapeId(savedShape.id);
+      setUnit('mm');
+      setSystem('metric');
+      setValues(Object.fromEntries(savedShape.fields.map((f) => [f.id, String(dimensions[f.id])])));
+    }
+  }, [embedded, catalog, initialSize, initialShape, initialParsed]);
 
   const shapes = useMemo(() => catalog?.shapes || [], [catalog]);
   const metals = useMemo(() => catalog?.metals || [], [catalog]);
@@ -310,11 +328,18 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
       toast.error('Dimensions or calculated length cannot be saved at this precision.');
       return;
     }
-    const size = `Calculator ${result.shape.id}: ${fields.join(' X ')}`;
+    // The size is only the dimensions -- "145 mm X 25 mm X 145 mm" -- because
+    // that is what people read on screen, on exports and on printed documents.
+    // Which shape they are the fields of travels beside it, in the item's own
+    // shape column, and it has to: for a pipe these are outer diameter, wall
+    // thickness and length, where the stock sheet's wording would read the
+    // second number as an inner diameter.
+    const size = fields.join(' X ');
+    const shapeId = result.shape.id;
     if (size.length > 191) { toast.error('Dimensions are too long to save as a material size.'); return; }
     setApplying(true);
     try {
-      const preview = await api.post('/items/weight-preview', { size, metal: itemMetal.name });
+      const preview = await api.post('/items/weight-preview', { size, metal: itemMetal.name, shape: shapeId });
       if (!mounted.current) return;
       if (preview.data.weightKg == null) {
         toast.error('This size cannot be calculated as an item. Check the dimensions.');
@@ -326,7 +351,7 @@ export default function MetalCalculatorPage({ embedded = false, initialMetal = '
       const ratePerKg = result.rate != null
         ? new Decimal(result.rate).times(result.rateUnit === 'lb' ? catalog.constants.kgToLb : 1).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)
         : null;
-      onApply(size, itemMetal.name, ratePerKg, preview.data);
+      onApply(size, itemMetal.name, ratePerKg, preview.data, shapeId);
       toast.success(ratePerKg != null ? 'Size, metal and purchase rate calculated. Save the item to keep them.' : 'Size and metal applied. Enter a rate per kg to calculate the purchase rate.');
     } catch {
       toast.error('Could not verify item weight. Please try again.');

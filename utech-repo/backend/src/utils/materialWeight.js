@@ -42,25 +42,55 @@ function parseDimensions(size) {
 }
 
 /**
+ * Dimensions written as the calculator writes them -- "145 mm X 25 mm X 145 mm"
+ * -- read in the given shape's field order. Returns null unless every field is
+ * present and readable, because a partial read of an ordered list would quietly
+ * assign numbers to the wrong dimensions.
+ */
+function orderedDimensions(size, shape) {
+  const parts = String(size || '').trim().split(/\s+X\s+/i);
+  if (parts.length !== shape.fields.length) return null;
+  const values = {};
+  for (let i = 0; i < parts.length; i += 1) {
+    const m = /^(\d+(?:\.\d+)?)\s*(mm|cm|m|in|ft|yd)$/i.exec(parts[i].trim());
+    if (!m) return null;
+    const factor = UNIT_TO_MM[m[2].toLowerCase()];
+    const value = Number(m[1]) * factor;
+    if (!factor || !Number.isFinite(value) || value <= 0) return null;
+    values[shape.fields[i].id] = value;
+  }
+  return values;
+}
+
+/**
  * Which calculator shape this item is, and the dimensions to feed it.
+ *
+ * `shape` is the item's own shape column, set when the size came from the
+ * material size calculator. It matters more than it looks: the dimensions are
+ * then that shape's fields IN ORDER, so a pipe's "145 X 25 X 145" is outer
+ * diameter, wall thickness and length -- while the stock sheet's wording would
+ * read the second number as an inner diameter and give a different weight.
+ * Without a shape the size is free text and is read by its wording, as the
+ * register has always been written.
+ *
  * @returns {{ shape: string, values: object, note: string } | null}
  */
-function shapeFromSize(size, name = '') {
-  // Structured sizes from the item calculator retain every shape and dimension
-  // in the same order as the shared calculator catalogue.
-  const structured = /^Calculator ([a-z]+): (.+)$/i.exec(String(size || '').trim());
-  if (structured) {
-    const shape = shapeById(structured[1].toLowerCase());
-    const parts = structured[2].split(' X ');
-    if (!shape || parts.length !== shape.fields.length) return null;
-    const dims = parts.map((part) => {
-      const m = /^(\d+(?:\.\d+)?) (mm|cm|m|in|ft|yd)$/i.exec(part);
-      if (!m || !UNIT_TO_MM[m[2].toLowerCase()]) return null;
-      const value = Number(m[1]) * UNIT_TO_MM[m[2].toLowerCase()];
-      return Number.isFinite(value) && value > 0 ? value : null;
-    });
-    if (dims.some((v) => v === null)) return null;
-    return { shape: shape.id, values: Object.fromEntries(shape.fields.map((f, i) => [f.id, dims[i]])), note: '' };
+function shapeFromSize(size, name = '', shape = null) {
+  const known = shapeById(String(shape || '').trim().toLowerCase());
+  if (known) {
+    const values = orderedDimensions(size, known);
+    return values ? { shape: known.id, values, note: '' } : null;
+  }
+
+  // Until 29 Oct 2026 the shape was written into the size text itself. The
+  // column replaced it and a migration moved every stored row, but a string
+  // kept outside the database (a saved export, a pasted size) still reads.
+  const legacy = /^Calculator ([a-z]+):\s*(.+)$/i.exec(String(size || '').trim());
+  if (legacy) {
+    const legacyShape = shapeById(legacy[1].toLowerCase());
+    if (!legacyShape) return null;
+    const values = orderedDimensions(legacy[2], legacyShape);
+    return values ? { shape: legacyShape.id, values, note: '' } : null;
   }
 
   // Explicit calculator-generated shape takes precedence over the item name.
@@ -118,9 +148,9 @@ function shapeFromSize(size, name = '') {
  * Weight of ONE piece, in kg, using the metal calculator.
  * @returns {{ kg: number, shape: string, metal: string, note: string } | null}
  */
-function weightForItem({ size, name, metal } = {}) {
+function weightForItem({ size, name, metal, shape } = {}) {
   if (!metal || !metalByName(metal)) return null;
-  const parsed = shapeFromSize(size, name);
+  const parsed = shapeFromSize(size, name, shape);
   if (!parsed) return null;
   try {
     const r = calculate({
@@ -139,4 +169,4 @@ function weightForItem({ size, name, metal } = {}) {
   }
 }
 
-module.exports = { parseDimensions, shapeFromSize, weightForItem };
+module.exports = { parseDimensions, orderedDimensions, shapeFromSize, weightForItem };

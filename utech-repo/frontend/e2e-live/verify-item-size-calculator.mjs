@@ -86,7 +86,7 @@ async function check(label, url) {
     await page.getByRole('button', { name: 'Calculate', exact: true }).click().catch(() => {});
     const size = page.locator('#item-size');
     await page.waitForFunction(
-      () => (document.querySelector('#item-size')?.value || '').startsWith('Calculator'),
+      () => /^\d/.test(document.querySelector('#item-size')?.value || ''),
       null, { timeout: 20000 },
     ).catch(() => {});
     sizeApplied = await size.inputValue().catch(() => '(unchanged)');
@@ -95,7 +95,9 @@ async function check(label, url) {
     weightShown = await kg.innerText().catch(() => '(not calculated)');
   }
 
-  const applied = sizeApplied.startsWith('Calculator');
+  // the size is the dimensions alone now; which shape they belong to travels
+  // in the item's own shape column, not in the text people read
+  const applied = /^\d+(\.\d+)?\s*(mm|cm|m|in|ft|yd)( X |$)/i.test(sizeApplied);
   console.log(`${label.padEnd(12)} : opens inline, shape picker ${shapeVisible ? 'yes' : 'NO'}`);
   console.log(`${' '.repeat(12)}   100 mm round bar x 1 m -> ${weightShown.trim()}`);
   console.log(`${' '.repeat(12)}   size written back     -> ${sizeApplied}`);

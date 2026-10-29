@@ -7,6 +7,10 @@ const itemBase = {
   description: z.string().optional().nullable(),
   type: z.enum(['RAW_MATERIAL', 'SEMI_FINISHED', 'FINISHED', 'CONSUMABLE', 'SERVICE']).default('RAW_MATERIAL'),
   size: z.string().max(191).optional().nullable(),
+  // set only by the material size calculator: which shape the dimensions in
+  // `size` are the fields of, in order. Hand-typed sizes carry no shape and are
+  // read by their wording instead.
+  shape: z.string().max(32).optional().nullable(),
   // the metal calculator's catalogue name — density, and therefore weight,
   // comes from it
   metal: z.string().max(60).optional().nullable(),
